@@ -246,6 +246,9 @@ if [[ -f "$OVL/usr/share/applications/install-decky.desktop" ]]; then
 fi
 
 # ── Plasma scale 125% (DSI-1 1080x1920 rotated; 250–300% is unusable) ───────
+# Single-screen devices go to 150 % with touch mode on their first Desktop
+# start (sm8550-prepare-plasma seed_touch_desktop), which also reaches updated
+# devices; the AYN Thor keeps its own layout.
 log "Plasma scale 125%"
 mkdir -p "$HOME_DST/.config" "$R/etc/xdg"
 install -m 0644 "$OVL/etc/xdg/kwinoutputconfig.json" \
