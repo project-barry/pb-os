@@ -2,7 +2,7 @@
 # Kernel for SteamOS ARM on Snapdragon handhelds, one SoC per build:
 #   SOC=sm8650 (default)  Snapdragon 8 Gen 3 / G3 Gen 3: KONKR Pocket FIT,
 #                         AYANEO Pocket S2 (same ROCKNIX dtsi)
-#   SOC=sm8550            Snapdragon 8 Gen 2: Retroid Pocket 6, AYN Thor
+#   SOC=sm8550            Snapdragon 8 Gen 2: Retroid Pocket 6 and Nova, AYN Thor
 #
 # Sources (pinned):
 #   linux-${KVER}             kernel.org
@@ -51,8 +51,9 @@ case "$SOC" in
     ;;
   sm8550)
     # ABL boots the DTB whose model matches "Set device model": "AYN Thor",
-    # "Retroid Pocket 6" and "Retroid Pocket 6 TOP-DPAD".
-    DTBS="${DTBS:-qcs8550-ayn-thor qcs8550-retroidpocket-rp6 qcs8550-retroidpocket-rp6-top-dpad}"
+    # "Retroid Pocket 6", "Retroid Pocket 6 TOP-DPAD" and "Retroid Pocket Nova"
+    # (ROCKNIX's Nova DTS is the RP6 one with its own panel, touch and sticks).
+    DTBS="${DTBS:-qcs8550-ayn-thor qcs8550-retroidpocket-rp6 qcs8550-retroidpocket-rp6-top-dpad qcs8550-retroidpocket-rpnova}"
     PORT_DIR="${HERE}/sm8550"
     ;;
   *) echo "unsupported SOC=${SOC} (sm8650, sm8550)" >&2; exit 1 ;;

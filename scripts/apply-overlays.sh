@@ -636,7 +636,7 @@ if [[ -d "$R/var/lib/overlays/etc/upper" ]]; then
 fi
 
 # ---------------------------------------------------------------------------
-# SM8550 device overlay (Retroid Pocket 6, AYN Thor): fan curve (Armada's, see
+# SM8550 device overlay (Retroid Pocket 6 and Nova, AYN Thor): fan curve (Armada's, see
 # sm8550-fand). ROCKNIX leaves the RP6 fan at full speed. A rootfs reused from
 # another target may carry a stale copy, so remove it on other SoCs.
 # ---------------------------------------------------------------------------
@@ -682,7 +682,7 @@ if [[ "$SOC" == sm8550 ]]; then
     "$R/usr/share/sm8550-fand/fan.conf" 0644
   install_file "$SM8550_OVL/usr/lib/systemd/system/sm8550-fand.service" \
     "$R/usr/lib/systemd/system/sm8550-fand.service" 0644
-  for t in retroid-pocket6.toml ayn-thor.toml; do
+  for t in retroid-pocket6.toml retroid-pocket-nova.toml ayn-thor.toml; do
     install_file "$SM8550_OVL/usr/share/steamos-manager/devices/$t" \
       "$R/usr/share/steamos-manager/devices/$t" 0644
   done
@@ -809,6 +809,7 @@ else
   rm -rf "$R/usr/lib/steamos-sm8550" "$R/usr/share/sm8550-fand" \
     "$R/usr/lib/barry_launcher" "$R/usr/share/barry_launcher"
   rm -f "$R/usr/share/steamos-manager/devices/retroid-pocket6.toml" \
+    "$R/usr/share/steamos-manager/devices/retroid-pocket-nova.toml" \
     "$R/usr/share/steamos-manager/devices/ayn-thor.toml" \
     "$R/usr/lib/udev/rules.d/72-sm8550-touch-inhibit.rules" \
     "$R/usr/lib/systemd/system/sm8550-powerbuttond.service" \

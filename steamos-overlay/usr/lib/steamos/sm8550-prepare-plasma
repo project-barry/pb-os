@@ -14,21 +14,24 @@ chmod 1777 /tmp/.X11-unix 2>/dev/null || true
 # panels with DT rotation 90 (Pocket FIT, AYN Thor); the Retroid Pocket 6
 # panel is rotation 270 and needs Rotated90 or the desktop is upside down
 # (Game Mode is fine: gamescope reads the DRM panel orientation itself).
+# The Retroid Pocket Nova panel is landscape-native (no DT rotation), so it
+# gets no rotation and its own 1280x960 mode in place of the 1080x1920 one.
 # Done once, before KWin starts, so a rotation chosen later in Display
 # Settings is kept.
 seed_rotation() {
-  local model want cfg marker
+  local model want mode="" cfg marker
   model="$(tr -d '\0' </sys/firmware/devicetree/base/model 2>/dev/null)"
   case "$model" in
     "Retroid Pocket 6"*) want=Rotated90 ;;
+    "Retroid Pocket Nova") want=Normal mode=1280x960 ;;
     *) return 0 ;;
   esac
   cfg="$HOME/.config/kwinoutputconfig.json"
   marker="${XDG_STATE_HOME:-$HOME/.local/state}/sm8550-kwin-rotation-seeded"
   [[ -f "$marker" || ! -f "$cfg" ]] && return 0
-  python3 - "$cfg" "$want" <<'PY2' && { mkdir -p "$(dirname "$marker")"; : >"$marker"; }
+  python3 - "$cfg" "$want" "$mode" <<'PY2' && { mkdir -p "$(dirname "$marker")"; : >"$marker"; }
 import json, sys
-path, want = sys.argv[1], sys.argv[2]
+path, want, mode = sys.argv[1], sys.argv[2], sys.argv[3]
 with open(path) as f:
     data = json.load(f)
 for section in data:
@@ -36,6 +39,9 @@ for section in data:
         for out in section.get("data", []):
             if out.get("connectorName") == "DSI-1":
                 out["transform"] = want
+                if mode:
+                    w, h = mode.split("x")
+                    out.setdefault("mode", {}).update(width=int(w), height=int(h))
 with open(path, "w") as f:
     json.dump(data, f, indent=4)
 PY2

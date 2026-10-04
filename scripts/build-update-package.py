@@ -29,7 +29,7 @@ if a.device == 'thor' and a.soc != 'sm8550': raise SystemExit('--device thor nee
 # from the plain SM8550 one, so each gets its own package.
 DEVICES = (['AYN Thor'] if a.device == 'thor' else
            {'sm8650': ['KONKR Pocket FIT', 'AYANEO Pocket S2'],
-            'sm8550': ['Retroid Pocket 6', 'Retroid Pocket 6 TOP-DPAD']}[a.soc])
+            'sm8550': ['Retroid Pocket 6', 'Retroid Pocket 6 TOP-DPAD', 'Retroid Pocket Nova']}[a.soc])
 root = Path(a.rootfs).resolve()
 stamped = root / 'usr/share/pb-os/version'
 version = a.version or (stamped.read_text().strip() if stamped.is_file() else '')

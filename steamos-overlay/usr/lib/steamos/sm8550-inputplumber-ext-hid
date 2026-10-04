@@ -88,8 +88,8 @@ for _ in $(seq 1 25); do
 done
 [[ "$ready" -eq 1 ]] || exit 0
 
-if grep -qa "retroidpocket,rp6" /sys/firmware/devicetree/base/compatible 2>/dev/null; then
-  # Retroid Pocket 6: volume up shares gpio-keys with the back paddles, so it
+if grep -qaE "retroidpocket,(rp6|rpnova)" /sys/firmware/devicetree/base/compatible 2>/dev/null; then
+  # Retroid Pocket 6 and Nova: volume up shares gpio-keys with the back paddles, so it
   # only reaches the system through InputPlumber's keyboard. Keep that target
   # even with a real keyboard attached, or plugging one in kills volume up.
   want_kb=1

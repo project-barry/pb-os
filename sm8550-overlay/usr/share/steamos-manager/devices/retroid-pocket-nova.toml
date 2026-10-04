@@ -1,0 +1,11 @@
+[[device]]
+dt.compatible = "retroidpocket,rpnova"
+device = "retroid_pocket_nova"
+variant = "RPNOVA"
+friendly_name = "Retroid Pocket Nova"
+
+[inputplumber]
+# The Nova DTS is the Retroid Pocket 6 one, so volume up shares gpio-keys
+# with the back paddles here too: InputPlumber owns it and only passes it on
+# through the keyboard target (see retroid-pocket6.toml).
+target_devices = ["deck-uhid", "keyboard"]

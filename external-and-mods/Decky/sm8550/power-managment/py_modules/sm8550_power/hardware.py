@@ -55,6 +55,8 @@ KNOWN_DEVICES = (
     ("qcs8550-ayn", "AYN Handheld"),
     ("thor", "AYN Thor"),
     ("portal", "AYN Portal"),
+    ("rpnova", "Retroid Pocket Nova"),
+    ("nova", "Retroid Pocket Nova"),
     ("retroid", "Retroid Pocket 6"),
     ("rp6", "Retroid Pocket 6"),
     ("rp-6", "Retroid Pocket 6"),

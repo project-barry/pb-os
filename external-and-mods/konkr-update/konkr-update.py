@@ -42,7 +42,8 @@ RELEASES = 'https://api.github.com/repos/project-barry/pb-os/releases'
 SIGNERS = Path('/usr/share/konkr-update/allowed_signers')
 SIGNER, NAMESPACE = 'pb-os-release', 'pb-os-update'
 IMAGES = {'KONKR Pocket FIT': 'pocketfit', 'AYANEO Pocket S2': 'pocketfit',
-          'Retroid Pocket 6': 'rp6', 'Retroid Pocket 6 TOP-DPAD': 'rp6', 'AYN Thor': 'thor'}
+          'Retroid Pocket 6': 'rp6', 'Retroid Pocket 6 TOP-DPAD': 'rp6', 'Retroid Pocket Nova': 'rp6',
+          'AYN Thor': 'thor'}
 
 
 def run(*args, **kwargs):

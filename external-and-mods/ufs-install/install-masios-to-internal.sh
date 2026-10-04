@@ -70,7 +70,7 @@ done
 
 # Both SoCs use the same ROCKNIX ABL layout (userdata, then ROCKNIX + STORAGE).
 tr '\0' '\n' </sys/firmware/devicetree/base/compatible | grep -qxE 'qcom,sm(8650|8550)' \
-  || die "this installer is for SM8650 (KONKR Pocket FIT, AYANEO Pocket S2) and SM8550 (Retroid Pocket 6, AYN Thor) devices"
+  || die "this installer is for SM8650 (KONKR Pocket FIT, AYANEO Pocket S2) and SM8550 (Retroid Pocket 6 and Nova, AYN Thor) devices"
 MODEL="$(tr -d '\0' </sys/firmware/devicetree/base/model)"
 
 # The initramfs carries no modules, so root on UFS needs the drivers built in.
