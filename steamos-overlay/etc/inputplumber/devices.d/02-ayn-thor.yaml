@@ -1,29 +1,21 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/ShadowBlip/InputPlumber/main/rootfs/usr/share/inputplumber/schema/composite_device_v1.json
-# SM8550 rsinput → virtual Steam Deck (deck-uhid) + keyboard (OSK haptic).
+# AYN Thor rsinput → virtual Steam Deck (deck-uhid) + keyboard (OSK haptic).
+# Same as 02-ayn-odin.yaml but with the Thor's Nintendo face buttons
+# (ayn_mcu_nintendo: the printed A is Steam's A).
 #
 # Do not list USB/BT as ignore sources: deck-uhid is USB (VID 28de) and
 # matching it as a source restarts the composite in a loop (cursor, no Steam).
 # External HID is handled by sm8550-inputplumber-ext-hid (drop keyboard target).
 version: 1
 kind: CompositeDevice
-name: AYN Odin 2
+name: AYN Thor
 
 matches:
   - udev:
       sys_path: /sys/firmware/devicetree/base
       attributes:
         - name: model
-          value: AYN Odin 2
-  - udev:
-      sys_path: /sys/firmware/devicetree/base
-      attributes:
-        - name: model
-          value: AYN Odin 2 Mini
-  - udev:
-      sys_path: /sys/firmware/devicetree/base
-      attributes:
-        - name: model
-          value: AYN Odin 2 Portal
+          value: AYN Thor
 
 single_source: false
 
@@ -32,7 +24,7 @@ source_devices:
     evdev:
       phys_path: rsinput-gamepad/input0
       handler: event*
-    capability_map_id: ayn_mcu
+    capability_map_id: ayn_mcu_nintendo
     passthrough: false
 
 options:
