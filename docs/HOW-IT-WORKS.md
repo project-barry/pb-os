@@ -109,7 +109,7 @@ which would fight `pbosd` over the fan and drive AYN-only LEDs.
 | DTB selection | 14-slot index chain | ROCKNIX ABL ≥ 1.1.8 matches the DTB `model` string |
 | Root | initramfs + `root=UUID=` | tiny busybox initramfs (writes `bootlog.txt` to the FAT partition), `root=PARTUUID=` patched at image pack |
 | GPU userspace | patched A740 Turnip | Frame's stock Turnip/zink (A750) |
-| Controller | `rsinput` serial MCU | USB XInput pad → InputPlumber `deck-uhid` (+ optional MCU link) |
+| Controller | `rsinput` serial MCU | USB pad → InputPlumber `deck` (USB/IP via `vhci_hcd`, a real Steam Deck pad `28de:1205` to Steam; set after steamos-manager by `sm8550-inputplumber-ext-hid`) (+ optional MCU link) |
 | Audio | `AYN-Odin2` | `SM8650-APS2`: WSA884x speakers + WCD939x, ROCKNIX UCM |
 | UFS installer | SM8550 layouts | rewritten for the Pocket FIT: keeps Android, backs up the partition table |
 

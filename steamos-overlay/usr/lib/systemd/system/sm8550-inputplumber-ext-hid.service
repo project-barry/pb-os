@@ -1,6 +1,7 @@
 [Unit]
 Description=Toggle InputPlumber keyboard when USB/BT HID is present
-After=inputplumber.service
+# After steamos-manager: it resets InputPlumber targets when it starts.
+After=inputplumber.service steamos-manager.service
 Wants=inputplumber.service
 
 [Service]

@@ -1,5 +1,6 @@
 # Real USB/BT keyboard or mouse only. Never match virtual devices (deck-uhid,
-# InputPlumber's own keyboard: uinput/uhid under /devices/virtual):
+# InputPlumber's own keyboard: uinput/uhid under /devices/virtual; the deck
+# target: USB/IP on vhci_hcd):
 # that restarted the composite in a loop and Steam never started.
 # systemd ignores SYSTEMD_WANTS on "remove", so unplugging the last external
 # keyboard never gave InputPlumber its virtual keyboard back (and with it the
@@ -7,15 +8,15 @@
 # the Retroid Pocket 6). Removal starts the service directly.
 ACTION=="add", SUBSYSTEM=="input", KERNEL=="event*", \
   ENV{ID_BUS}=="usb|bluetooth", ENV{ID_INPUT_KEYBOARD}=="1", \
-  ENV{ID_VENDOR_ID}!="28de", DEVPATH!="/devices/virtual/*", \
+  ENV{ID_VENDOR_ID}!="28de", DEVPATH!="/devices/virtual/*", DEVPATH!="*/vhci_hcd*", \
   TAG+="systemd", ENV{SYSTEMD_WANTS}+="sm8550-inputplumber-ext-hid.service"
 
 ACTION=="add", SUBSYSTEM=="input", KERNEL=="event*", \
   ENV{ID_BUS}=="usb|bluetooth", ENV{ID_INPUT_MOUSE}=="1", \
-  ENV{ID_VENDOR_ID}!="28de", DEVPATH!="/devices/virtual/*", \
+  ENV{ID_VENDOR_ID}!="28de", DEVPATH!="/devices/virtual/*", DEVPATH!="*/vhci_hcd*", \
   TAG+="systemd", ENV{SYSTEMD_WANTS}+="sm8550-inputplumber-ext-hid.service"
 
 # Any USB/BT input removal: the helper re-checks what is still attached.
 ACTION=="remove", SUBSYSTEM=="input", KERNEL=="event*", \
-  ENV{ID_BUS}=="usb|bluetooth", ENV{ID_VENDOR_ID}!="28de", DEVPATH!="/devices/virtual/*", \
+  ENV{ID_BUS}=="usb|bluetooth", ENV{ID_VENDOR_ID}!="28de", DEVPATH!="/devices/virtual/*", DEVPATH!="*/vhci_hcd*", \
   RUN+="/usr/bin/systemctl --no-block start sm8550-inputplumber-ext-hid.service"

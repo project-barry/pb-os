@@ -1,8 +1,9 @@
 #!/bin/bash
 # If a real USB/Bluetooth keyboard or mouse is present, drop InputPlumber's
 # virtual keyboard. Restore it when the last external HID is gone.
-# Never treat deck-uhid (Valve 28de / uhid) as external — that restarts the
-# composite in a loop and Steam never starts.
+# Never treat InputPlumber's virtual Deck (deck-uhid via uhid, or deck via
+# vhci_hcd; Valve 28de) as external — that restarts the composite in a loop
+# and Steam never starts.
 set -uo pipefail
 
 LOCK=/run/sm8550-inputplumber-ext-hid.lock
@@ -15,8 +16,10 @@ is_virtual_or_deck() {
   # uinput/uhid devices (InputPlumber's own keyboard and pads, deck-uhid) live
   # under /devices/virtual and report bus usb; real USB/BT HID never does.
   printf '%s\n' "$props" | grep -q '^DEVPATH=/devices/virtual/' && return 0
+  # The deck target is a USB/IP device on vhci_hcd: bus usb, not virtual.
+  printf '%s\n' "$props" | grep -q '^DEVPATH=.*/vhci_hcd' && return 0
   case "$name" in
-    InputPlumber*|*"Valve Steam Deck"*|*Gamepad*|*Motion*) return 0 ;;
+    InputPlumber*|*"Valve Steam Deck"*|"Valve Corporation Steam Controller"*|*Gamepad*|*Motion*) return 0 ;;
   esac
   printf '%s\n' "$props" | grep -qE '^ID_VENDOR_ID=28de$|^ID_USB_VENDOR_ID=28de$' && return 0
   printf '%s\n' "$props" | grep -qE 'DEVPATH=.*/uhid|/virtual/misc/uhid' && return 0
@@ -35,10 +38,11 @@ ext_hid_present() {
     mouse="$(printf '%s\n' "$props" | sed -n 's/^ID_INPUT_MOUSE=//p')"
     [[ "$kbd" == 1 || "$mouse" == 1 ]] || continue
     bus="$(printf '%s\n' "$props" | sed -n 's/^ID_BUS=//p' | head -1)"
-    case "$bus" in
-      usb|bluetooth) return 0 ;;
-    esac
-    printf '%s\n' "$props" | grep -q '/bluetooth/' && return 0
+    if [[ "$bus" == usb || "$bus" == bluetooth ]] \
+      || printf '%s\n' "$props" | grep -q '/bluetooth/'; then
+      logger -t sm8550-inputplumber-ext-hid "external HID: $name (${ev##*/})"
+      return 0
+    fi
   done
   return 1
 }
@@ -61,6 +65,16 @@ targets_have_keyboard() {
   local id="$1" listed
   listed="$(inputplumber device "$id" targets list 2>/dev/null)" || listed=""
   printf '%s\n' "$listed" | grep -qiE '(^|[[:space:]])keyboard([[:space:]]|$)'
+}
+
+# The composite's current gamepad target (deck or deck-uhid), so toggling the
+# keyboard never switches the pad type. Empty while the composite is still
+# bringing its targets up (the deck target's USB/IP device takes a moment).
+gamepad_target() {
+  local id="$1"
+  inputplumber device "$id" targets list 2>/dev/null \
+    | awk -F'│' 'NF > 3 { gsub(/ /, "", $2); print $2 }' \
+    | grep -vxE 'Id|keyboard' | head -1
 }
 
 set_targets() {
@@ -99,14 +113,62 @@ else
   want_kb=1
 fi
 
-while read -r id; do
-  [[ -n "$id" ]] || continue
-  have_kb=0
+# KONKR Pocket FIT: its built-in pad goes to Steam as a real Steam Deck
+# controller (InputPlumber "deck" target, USB/IP via vhci_hcd, 28de:1205)
+# instead of deck-uhid's generic 28de:12f0. Steam only names the pad
+# "Steam Deck Controller" (and only applies Deck layouts) for the real ID,
+# and emulator defaults such as EmuDeck's Dolphin profile bind to that name.
+# steamos-manager knows deck-uhid only and resets every composite to its
+# device file's list when the composite appears, so this runs after it.
+deck_pad=""
+if grep -qa "konkr,pocket-fit" /sys/firmware/devicetree/base/compatible 2>/dev/null \
+  && modinfo vhci-hcd >/dev/null 2>&1; then
+  deck_pad="KONKR Pocket FIT"
+fi
+
+composite_name() {
+  busctl --system get-property org.shadowblip.InputPlumber \
+    "/org/shadowblip/InputPlumber/CompositeDevice$1" \
+    org.shadowblip.Input.CompositeDevice Name 2>/dev/null \
+    | sed -n 's/^s "\(.*\)"$/\1/p'
+}
+
+apply() {
+  local id="$1" have_kb=0 pad="" want_pad
   targets_have_keyboard "$id" && have_kb=1
-  if [[ "$want_kb" -eq 0 && "$have_kb" -eq 1 ]]; then
-    set_targets "$id" deck-uhid || true
-  elif [[ "$want_kb" -eq 1 && "$have_kb" -eq 0 ]]; then
-    set_targets "$id" deck-uhid keyboard || true
+  for _ in $(seq 1 25); do
+    pad="$(gamepad_target "$id")"
+    [[ -n "$pad" ]] && break
+    sleep 0.4
+  done
+  if [[ -z "$pad" ]]; then
+    logger -t sm8550-inputplumber-ext-hid "composite $id: no gamepad target, left alone"
+    return 1
   fi
-done < <(composite_ids)
+  want_pad="$pad"
+  if [[ -n "$deck_pad" && "$(composite_name "$id")" == "$deck_pad" ]]; then
+    want_pad=deck
+  fi
+  [[ "$want_pad" == "$pad" && "$want_kb" -eq "$have_kb" ]] && return 0
+  if [[ "$want_kb" -eq 1 ]]; then
+    logger -t sm8550-inputplumber-ext-hid "composite $id: $want_pad + keyboard"
+    set_targets "$id" "$want_pad" keyboard || true
+  else
+    logger -t sm8550-inputplumber-ext-hid "composite $id: $want_pad without keyboard"
+    set_targets "$id" "$want_pad" || true
+  fi
+  return 1
+}
+
+# A second pass catches steamos-manager resetting a composite right after
+# this one (it handles new composites asynchronously).
+for pass in 1 2 3; do
+  changed=0
+  while read -r id; do
+    [[ -n "$id" ]] || continue
+    apply "$id" || changed=1
+  done < <(composite_ids)
+  [[ "$changed" -eq 0 ]] && break
+  sleep 2
+done
 exit 0
