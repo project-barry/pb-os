@@ -164,6 +164,8 @@ install_file "$OVL/usr/lib/steamos/sm8550-prepare-plasma" \
   "$R/usr/lib/steamos/sm8550-prepare-plasma" 0755
 install_file "$OVL/usr/lib/steamos/sm8550-startplasma" \
   "$R/usr/lib/steamos/sm8550-startplasma" 0755
+install_file "$OVL/usr/share/steamos-sm8550/kwinoutputconfig-thor.json" \
+  "$R/usr/share/steamos-sm8550/kwinoutputconfig-thor.json" 0644
 backup "$R/usr/bin/steamos-session-select" "$STOCK/usr/bin/steamos-session-select"
 install_file "$OVL/usr/bin/steamos-session-select" \
   "$R/usr/bin/steamos-session-select" 0755

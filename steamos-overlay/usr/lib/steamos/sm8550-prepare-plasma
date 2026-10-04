@@ -42,6 +42,25 @@ PY2
 }
 seed_rotation
 
+# AYN Thor: the shipped kwinoutputconfig knows one panel, so KWin meets two
+# outputs it has no setup for. Seed the Thor's two-panel layout (top DSI-2
+# primary, bottom DSI-1 centred under it) when the file has no DSI-2 yet; a
+# layout saved later in Display Settings is kept. kded's kscreen module also
+# keeps its own per-setup files, never saves them here, and then offers the
+# "how to use the new display" picker whenever a panel reconnects; KWin
+# restores the layout itself, so the module is switched off.
+seed_thor_layout() {
+  local cfg="$HOME/.config/kwinoutputconfig.json"
+  local thor=/usr/share/steamos-sm8550/kwinoutputconfig-thor.json
+  grep -qa 'ayn,thor' /sys/firmware/devicetree/base/compatible 2>/dev/null || return 0
+  if [[ -f "$thor" ]] && ! grep -qs '"DSI-2"' "$cfg"; then
+    mkdir -p "$HOME/.config"
+    cp -f "$thor" "$cfg"
+  fi
+  kwriteconfig6 --file kded5rc --group Module-kscreen --key autoload false 2>/dev/null || true
+}
+seed_thor_layout
+
 # AYN Thor: Game Mode silenced the bottom touchscreen; the desktop uses both.
 if [[ -x /usr/lib/steamos-sm8550/sm8550-touch-inhibit ]]; then
   /usr/lib/steamos-sm8550/sm8550-touch-inhibit bottom_touchscreen 0
