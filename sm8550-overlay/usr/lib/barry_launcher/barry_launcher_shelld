@@ -126,9 +126,11 @@ DATA = os.path.join(os.environ.get("XDG_DATA_HOME", f"{HOME}/.local/share"), "ba
 # name -> Firefox profile folder, extra arguments, zoom. The panel is about
 # 420 pixels per inch: 2.5 gives phone-sized pages; Discord's site has no
 # phone layout (it sends phones to the app), so it gets its desktop layout,
-# which needs about 1000 CSS pixels across.
+# which needs about 1000 CSS pixels across. desktop_zoom: Desktop Mode's,
+# for an app that is on the top screen there (-1: as the screen's scale says).
 APPS = {
-    "browser": {"name": "Firefox", "icon": "firefox", "profile": "browser", "args": [], "zoom": "2.5"},
+    "browser": {"name": "Firefox", "icon": "firefox", "profile": "browser", "args": [], "zoom": "2.5",
+                "desktop_zoom": "-1"},
     # Voice chat: this profile only runs Discord, so the microphone needs no
     # prompt (kiosk mode may not show one), and incoming voice may play
     # without a tap (Firefox's autoplay block would otherwise hold it back).
@@ -704,7 +706,9 @@ def launch(app: str) -> tuple[int, dict]:
         log(f"started {app} (pid {STATE.apps[app].pid})")
         return 200, {"ok": True, "running": False}
     profile = os.path.join(DATA, spec["profile"])  # a user web app's is a full path already
-    zoom = str(round(float(spec["zoom"]) / DESKTOP_SCALE, 3)) if DESKTOP else spec["zoom"]
+    zoom = spec["zoom"]
+    if DESKTOP:
+        zoom = spec.get("desktop_zoom") or str(round(float(zoom) / DESKTOP_SCALE, 3))
     write_firefox_prefs(profile, zoom, spec.get("prefs", {}))
     # Start clean: a session left by a killed instance makes Firefox offer
     # "Open previous tabs?", which a kiosk app cannot act on.

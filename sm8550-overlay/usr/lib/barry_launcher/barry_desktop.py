@@ -24,9 +24,10 @@ IM_SOCKET = os.path.join(RUNTIME, "barry_launcher_im.sock")
 KEYBOARD_TITLE = "Barry Launcher Keyboard"
 HOME_TITLE = "Barry Launcher"
 # Window classes (Wayland app ids) of the apps Barry keeps on the bottom
-# output: its Firefox profiles run with --name barry-<app>. Signal has one
-# window, wherever it was opened from: here it is a top screen app.
-APP_CLASSES = ["barry-browser", "barry-discord"]
+# output: its Firefox profiles run with --name barry-<app>. Signal and the
+# browser are top screen apps here: Signal has one window, wherever it was
+# opened from, and a browser wants the bigger screen.
+APP_CLASSES = ["barry-discord"]
 
 # Shared by the scripts: the bottom output, and which windows are Barry's.
 _COMMON = """
