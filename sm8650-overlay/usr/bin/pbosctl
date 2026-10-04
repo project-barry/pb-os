@@ -134,7 +134,7 @@ def sleep_mode(cmd: str) -> None:
 def speaker(cmd: str) -> None:
     off = SPEAKER_CONF + ".off"
     if cmd == "status":
-        print("speaker :", "boost (+8 dB, limited)" if os.path.exists(SPEAKER_CONF) else "flat")
+        print("speaker :", "boost (+12 dB, limited)" if os.path.exists(SPEAKER_CONF) else "flat")
         return
     need_root()
     if cmd == "flat" and os.path.exists(SPEAKER_CONF):
