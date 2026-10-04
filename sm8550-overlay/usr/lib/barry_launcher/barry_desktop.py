@@ -142,104 +142,142 @@ workspace.windowAdded.connect(function (w) {
 });
 """
 
-ACTIVATE_JS = _COMMON + """
-// Bring the first window matching forward.
-const M = %(match)s;
-for (const w of workspace.windowList()) {
-    if (!w.normalWindow) continue;
-    if (M.pid && w.pid !== M.pid) continue;
-    if (M.caption && !(new RegExp(M.caption)).test(w.caption || "")) continue;
-    if (M.classes && M.classes.indexOf(lower(w.resourceClass)) < 0 && M.classes.indexOf(lower(w.resourceName)) < 0) continue;
-    w.minimized = false;
-    workspace.raiseWindow(w);  // the tools refuse focus, so activating alone would not
-    workspace.activeWindow = w;
-    break;
+REQUESTS_JS = """
+// Barry's requests: bring a window forward, or fit the active app above
+// the keyboard. A script loaded and unloaded for each of them crashed KWin
+// (tearing down a script's engine; 2026-10-03), so this one script, never
+// unloaded, runs them all: barry_launcher_shelld queues them and fires a
+// shortcut with no keys, and the script takes the queue over D-Bus.
+function activate(M) {
+    for (const w of workspace.windowList()) {
+        if (!w.normalWindow) continue;
+        if (M.pid && w.pid !== M.pid) continue;
+        if (M.caption && !(new RegExp(M.caption)).test(w.caption || "")) continue;
+        if (M.classes && M.classes.indexOf(lower(w.resourceClass)) < 0 && M.classes.indexOf(lower(w.resourceName)) < 0) continue;
+        w.minimized = false;
+        workspace.raiseWindow(w);  // the tools refuse focus, so activating alone would not
+        workspace.activeWindow = w;
+        break;
+    }
 }
-"""
-
-INSET_JS = _COMMON + """
-// The keyboard is up (UP) or down: the active Barry app on the bottom
-// output shrinks to the space above the keyboard window (its height as KWin
-// has it, whatever scale the keyboard drew at), or goes back to full screen.
-const UP = %(up)s;
-const o = bottom(), w = workspace.activeWindow;
-let inset = 0;
-for (const k of workspace.windowList()) if (k.caption === KEYBOARD && k.output === o) inset = k.frameGeometry.height;
-if (o && w && barry(w) && w.caption !== KEYBOARD && w.caption !== "Barry Launcher" && w.output === o) {
+// The keyboard is up or down: the active Barry app on the bottom output
+// shrinks to the space above the keyboard window (its height as KWin has
+// it, whatever scale the keyboard drew at), or goes back to full screen.
+function inset(up) {
+    const o = bottom(), w = workspace.activeWindow;
+    let height = 0;
+    for (const k of workspace.windowList()) if (k.caption === KEYBOARD && k.output === o) height = k.frameGeometry.height;
+    if (!o || !w || !barry(w) || w.caption === KEYBOARD || w.caption === "Barry Launcher" || w.output !== o) return;
     const g = o.geometry;
-    if (UP && inset > 0) {
+    if (up && height > 0) {
         w.fullScreen = false;
-        w.frameGeometry = {x: g.x, y: g.y, width: g.width, height: g.height - inset};
+        w.frameGeometry = {x: g.x, y: g.y, width: g.width, height: g.height - height};
     } else {
         w.fullScreen = true;
     }
 }
+registerShortcut(%(shortcut)s, "Barry Launcher: run queued requests", "", function () {
+    callDBus(%(service)s, %(path)s, %(service)s, "Take", function (queued) {
+        for (const r of JSON.parse(queued)) {
+            if (r.activate) activate(r.activate);
+            else if ("inset" in r) inset(r.inset);
+        }
+    });
+});
 """
 
-_SERIAL = [0]
+SCRIPT_NAME = "barry-desktop"
+SERVICE = "org.barry_launcher.Desktop"
+SERVICE_PATH = "/org/barry_launcher/Desktop"
+SHORTCUT = "barry-launcher-requests"
+_SERVICE_XML = f"""<node><interface name="{SERVICE}">
+<method name="Take"><arg type="s" direction="out"/></method>
+</interface></node>"""
+_QUEUE: list[dict] = []
+_QUEUE_LOCK = threading.Lock()
+_SERVING = [False]
 
 
 def _js(template: str, **values) -> str:
     params = {"output": json.dumps(OUTPUT), "classes": json.dumps(APP_CLASSES),
-              "keyboard": json.dumps(KEYBOARD_TITLE)}
+              "keyboard": json.dumps(KEYBOARD_TITLE), "shortcut": json.dumps(SHORTCUT),
+              "service": json.dumps(SERVICE), "path": json.dumps(SERVICE_PATH)}
     params.update(values)
     return template % params
 
 
-def kwin_script(js: str, name: str, keep: bool = False) -> bool:
-    """Run js in KWin. keep: leave it loaded (it connects to signals)."""
-    _SERIAL[0] += 1
-    name = f"barry-{name}" if keep else f"barry-{name}-{_SERIAL[0]}"
-    path = os.path.join(RUNTIME, f"{name}.js")
-    try:
-        with open(path, "w", encoding="utf-8") as fh:
-            fh.write(js)
-        bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
-        call = lambda obj, iface, method, args, reply: bus.call_sync(
-            "org.kde.KWin", obj, iface, method, args, reply, Gio.DBusCallFlags.NONE, 3000, None)
-        if keep:
-            call("/Scripting", "org.kde.kwin.Scripting", "unloadScript",
-                 GLib.Variant("(s)", (name,)), GLib.VariantType("(b)"))
-        sid = call("/Scripting", "org.kde.kwin.Scripting", "loadScript",
-                   GLib.Variant("(ss)", (path, name)), GLib.VariantType("(i)")).unpack()[0]
-        if sid < 0:
-            return False
-        call(f"/Scripting/Script{sid}", "org.kde.kwin.Script", "run", None, None)
-    except GLib.Error as err:
-        print(f"kwin script {name}: {err.message}", flush=True)
-        return False
-    if not keep:
-        def unload() -> None:
-            try:
-                bus.call_sync("org.kde.KWin", "/Scripting", "org.kde.kwin.Scripting", "unloadScript",
-                              GLib.Variant("(s)", (name,)), GLib.VariantType("(b)"),
-                              Gio.DBusCallFlags.NONE, 3000, None)
-            except GLib.Error:
-                pass
-            try:
-                os.remove(path)
-            except OSError:
-                pass
-        threading.Timer(2.0, unload).start()
-    return True
+def _kwin(bus, obj: str, iface: str, method: str, args, reply):
+    return bus.call_sync("org.kde.KWin", obj, iface, method, args, reply,
+                         Gio.DBusCallFlags.NONE, 3000, None)
+
+
+def _serve(bus) -> None:
+    """Hand the queued requests to the script (on the GLib main loop)."""
+    if _SERVING[0]:
+        return
+    def on_call(_conn, _sender, _path, _iface, method, _params, invocation) -> None:
+        with _QUEUE_LOCK:
+            queued = json.dumps(_QUEUE)
+            _QUEUE.clear()
+        invocation.return_value(GLib.Variant("(s)", (queued,)))
+    node = Gio.DBusNodeInfo.new_for_xml(_SERVICE_XML)
+    bus.register_object(SERVICE_PATH, node.interfaces[0], on_call, None, None)
+    Gio.bus_own_name_on_connection(bus, SERVICE, Gio.BusNameOwnerFlags.REPLACE, None, None)
+    _SERVING[0] = True
 
 
 def place_windows() -> bool:
-    return kwin_script(_js(PLACE_JS), "place", keep=True)
+    """Load the script that places Barry's windows and runs its requests,
+    once per KWin session. It is never unloaded (see REQUESTS_JS): one
+    already loaded, by an earlier barry_launcher_shelld, stays, so a change
+    to it takes effect at the next login."""
+    path = os.path.join(RUNTIME, f"{SCRIPT_NAME}.js")
+    try:
+        bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+        _serve(bus)
+        loaded = _kwin(bus, "/Scripting", "org.kde.kwin.Scripting", "isScriptLoaded",
+                       GLib.Variant("(s)", (SCRIPT_NAME,)), GLib.VariantType("(b)")).unpack()[0]
+        if loaded:
+            return True
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(_js(PLACE_JS + REQUESTS_JS))
+        sid = _kwin(bus, "/Scripting", "org.kde.kwin.Scripting", "loadScript",
+                    GLib.Variant("(ss)", (path, SCRIPT_NAME)), GLib.VariantType("(i)")).unpack()[0]
+        if sid < 0:
+            return False
+        _kwin(bus, f"/Scripting/Script{sid}", "org.kde.kwin.Script", "run", None, None)
+    except (GLib.Error, OSError) as err:
+        print(f"kwin script {SCRIPT_NAME}: {err}", flush=True)
+        return False
+    return True
+
+
+def _request(request: dict) -> bool:
+    with _QUEUE_LOCK:
+        _QUEUE.append(request)
+    try:
+        bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+        bus.call_sync("org.kde.kglobalaccel", "/component/kwin", "org.kde.kglobalaccel.Component",
+                      "invokeShortcut", GLib.Variant("(s)", (SHORTCUT,)), None,
+                      Gio.DBusCallFlags.NONE, 3000, None)
+    except GLib.Error as err:
+        print(f"kwin request {request}: {err.message}", flush=True)
+        return False
+    return True
 
 
 def activate(caption: str | None = None, classes: list[str] | None = None, pid: int | None = None) -> bool:
     match = {"caption": caption, "classes": [c.lower() for c in classes] if classes else None, "pid": pid}
-    return kwin_script(_js(ACTIVATE_JS, match=json.dumps(match)), "activate")
+    return _request({"activate": match})
 
 
 def set_inset(inset: int) -> bool:
     """The keyboard is up (inset > 0) or down. The keyboard window may not
     be mapped yet when it goes up: again once it is."""
-    up = "true" if inset > 0 else "false"
-    ok = kwin_script(_js(INSET_JS, up=up), "inset")
-    if inset > 0:
-        threading.Timer(0.4, lambda: kwin_script(_js(INSET_JS, up=up), "inset")).start()
+    up = inset > 0
+    ok = _request({"inset": up})
+    if up:
+        threading.Timer(0.4, lambda: _request({"inset": up})).start()
     return ok
 
 
