@@ -37,9 +37,9 @@ lavachemist
 pb-os runs Valve's SteamOS for ARM (the Steam Frame build) on Snapdragon
 handhelds. It is a fork of hashtagbasit's
 [SteamOS-ARM-Handhelds](https://github.com/hashtagbasit/SteamOS-ARM-Handhelds).
-Alpha images for the Retroid Pocket 6 and the KONKR Pocket FIT are on the
-[Releases](https://github.com/project-barry/pb-os/releases) page, with
-flashing steps. The AYN Thor follows as alpha v0.2. You can also build your own.
+Alpha v0.3 images for the Retroid Pocket 6, the KONKR Pocket FIT and the AYN
+Thor are on the [Releases](https://github.com/project-barry/pb-os/releases)
+page, with flashing steps. You can also build your own.
 
 ## Tested devices
 
