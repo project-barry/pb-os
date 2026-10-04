@@ -47,9 +47,9 @@ Physical testing was done on one unit of each:
 
 | Device | Chip | Tested |
 |--------|------|--------|
-| Retroid Pocket 6 | Snapdragon 8 Gen 2 (SM8550) | Yes, daily: from microSD, and from internal storage for several days |
+| Retroid Pocket 6 | Snapdragon 8 Gen 2 (SM8550) | Yes: from microSD and internal storage |
 | AYN Thor | Snapdragon 8 Gen 2 (SM8550) | Yes, by a remote tester, from microSD (build with `--device thor`) |
-| KONKR Pocket FIT | Snapdragon 8 Gen 3 (SM8650) | Yes: from microSD, and from internal storage for several days |
+| KONKR Pocket FIT | Snapdragon 8 Gen 3 (SM8650) | Yes: from microSD and internal storage |
 
 Installing to internal storage (UFS, next to Android) has run for several
 days on the Retroid Pocket 6 and the KONKR Pocket FIT; see
