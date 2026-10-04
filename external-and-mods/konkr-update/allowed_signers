@@ -1,0 +1,2 @@
+# pb-os release key: SHA256SUMS.sig of releases with update packages (scripts/sign-release.sh).
+pb-os-release namespaces="pb-os-update" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIM17MVOiPqqKKegL49NCt9okeILfAy2M1FqZ/YZ8rR7k pb-os-release

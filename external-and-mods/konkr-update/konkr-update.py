@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Stage and recover offline SteamOS updates. Runs recovery from a private HOME root.
+"""Download, stage and recover offline SteamOS updates. Runs recovery from a private HOME root.
 No partitioning or formatting commands are used. Games and Steam account data are excluded.
 """
 from __future__ import annotations
@@ -20,20 +20,29 @@ from pathlib import Path, PurePosixPath
 FORMAT = 1
 ROOT_DIRS = ('usr', 'opt', 'etc')
 UPPER = 'var/lib/overlays/etc/upper'
-HOME_DIRS = ('homebrew/plugins/pbos-control', 'homebrew/plugins/decky-lsfg-vk')
+PLUGINS = 'homebrew/plugins'
 # Plugin folders from older images: removed on apply, restored on rollback.
-# Packages still carry an empty konkr-control folder, which updaters from
-# before the PB-OS Control rename require.
-LEGACY_HOME_DIRS = ('homebrew/plugins/konkr-control',)
-SNAPSHOT_HOME_DIRS = HOME_DIRS + LEGACY_HOME_DIRS
-# One package per SoC; `devices` must be exactly one of these (DTB models).
-KONKR_DEVICES = ['KONKR Pocket FIT', 'AYANEO Pocket S2']
-DEVICE_SETS = (KONKR_DEVICES, ['Retroid Pocket 6', 'Retroid Pocket 6 TOP-DPAD'])
-KONKR_ONLY = ('homebrew/plugins/pbos-control',)
+# SM8650 packages still carry an empty konkr-control folder, which updaters
+# from before the PB-OS Control rename require.
+LEGACY_PLUGINS = ('konkr-control',)
 PRESERVE = ('passwd', 'shadow', 'group', 'gshadow', 'machine-id', 'hostname', 'hosts',
             'fstab', 'crypttab', 'localtime', 'adjtime', 'resolv.conf', 'ssh',
             'NetworkManager/system-connections', 'sudoers.d')
 PENDING = 'var/lib/konkr-update/pending'
+# Per-install record written by the image build; not part of any package.
+OPT_KEEP = ('steamos-sm8650/IMAGE.txt',)
+UPDATER = 'usr/share/konkr-update/konkr-update.py'
+# Written by make-steamos-sm8650.sh: the release tag the image was built as.
+VERSION_FILE = 'usr/share/pb-os/version'
+RELEASES = 'https://api.github.com/repos/project-barry/pb-os/releases'
+# Release asset of each device's package: pb-os-<tag>-<image>.update.tar.gz,
+# split into .001, .002, ... parts under GitHub's 2 GiB limit.
+# Downloads install only when the release's SHA256SUMS carries a signature
+# (SHA256SUMS.sig, scripts/sign-release.sh) from a key in this file.
+SIGNERS = Path('/usr/share/konkr-update/allowed_signers')
+SIGNER, NAMESPACE = 'pb-os-release', 'pb-os-update'
+IMAGES = {'KONKR Pocket FIT': 'pocketfit', 'AYANEO Pocket S2': 'pocketfit',
+          'Retroid Pocket 6': 'rp6', 'Retroid Pocket 6 TOP-DPAD': 'rp6', 'AYN Thor': 'thor'}
 
 
 def run(*args, **kwargs):
@@ -111,8 +120,12 @@ def validate_archive(package):
         raise ValueError('required payload directories must be real directories')
     if not manifest or manifest.get('format') != FORMAT or manifest.get('architecture') != 'aarch64':
         raise ValueError('unsupported update format or architecture')
-    if manifest.get('devices') not in DEVICE_SETS:
+    devices = manifest.get('devices')
+    if not isinstance(devices, list) or not devices or not all(isinstance(d, str) and d for d in devices):
         raise ValueError('unsupported device list')
+    removed = manifest.get('remove_plugins', [])
+    if not isinstance(removed, list) or not all(isinstance(n, str) and re.fullmatch('[A-Za-z0-9_-][A-Za-z0-9._-]*', n) for n in removed):
+        raise ValueError('invalid plugin removal list')
     files = manifest.get('files', {})
     if not isinstance(files, dict): raise ValueError('invalid file manifest')
     # Every regular file must be covered, and file keys cannot escape extraction.
@@ -146,7 +159,7 @@ def bootimg_helper(payload=None):
     raise ValueError('boot image helper not found (ufs-bootimg.py)')
 
 
-def recovery_runtime(dst, helper=BOOTIMG):
+def recovery_runtime(dst, helper=BOOTIMG, updater=None):
     """Copy executables, Python stdlib, and all their resolved shared libraries."""
     dst.mkdir(parents=True, exist_ok=True)
     sources = [Path(shutil.which('python3')).resolve(), Path(shutil.which('rsync')).resolve(), Path(shutil.which('chown')).resolve(), Path(shutil.which('findmnt')).resolve()]
@@ -168,7 +181,7 @@ def recovery_runtime(dst, helper=BOOTIMG):
     if not rs.exists(): rs.symlink_to(str(sources[1]))
     for d in ('target', 'boot-target', 'home-target', 'transaction', 'dev', 'proc', 'tmp'):
         (dst / d).mkdir(parents=True, exist_ok=True)
-    shutil.copy2(__file__, dst / 'updater.py')
+    shutil.copy2(updater or __file__, dst / 'updater.py')
     shutil.copy2(helper, dst / 'bootimg.py')
     # Include NSS configuration for numeric lookup fallbacks; no credentials copied.
     (dst / 'etc').mkdir(exist_ok=True)
@@ -188,15 +201,34 @@ def retarget_kernel(src, dst, rootarg, helper=BOOTIMG):
     dst.write_bytes(image.build(module.retarget(image.cmdline, rootarg)))
 
 
-def stage(args):
+def device_model():
+    return Path('/sys/firmware/devicetree/base/model').read_text().rstrip('\0\n')
+
+
+def installed_version():
+    p = Path('/') / VERSION_FILE
+    return p.read_text().strip() if p.is_file() else ''
+
+
+def storage():
+    """Root-only update storage on HOME."""
+    base = Path('/home/.konkr-updates')
+    if base.is_symlink(): raise ValueError('invalid update storage directory')
+    base.mkdir(mode=0o700, exist_ok=True)
+    if base.stat().st_uid != 0: raise ValueError('update storage is not owned by root')
+    os.chmod(base, 0o700)
+    return base
+
+
+def stage(source_package, expected, move=False, version=None):
+    """Stage a package. move: it already sits in root-only storage, so take it instead of copying."""
     if os.geteuid() != 0: raise ValueError('staging needs administrator access')
-    model = Path('/sys/firmware/devicetree/base/model').read_text().rstrip('\0\n')
-    if not any(model in s for s in DEVICE_SETS): raise ValueError('unsupported device')
+    model = device_model()
     if os.uname().machine != 'aarch64': raise ValueError('requires ARM64 SteamOS')
     import pwd
     if pwd.getpwnam('steamos').pw_uid != 1000: raise ValueError('unsupported SteamOS account layout')
-    source_package = Path(args.package).resolve()
-    expected = args.sha256.lower()
+    source_package = Path(source_package).resolve()
+    expected = expected.lower()
     if not re.fullmatch('[0-9a-f]{64}', expected): raise ValueError('invalid expected SHA256')
     root_info, home_info, boot_info = [mount_info(x) for x in ('/', '/home', '/boot')]
     if root_info['fstype'] != 'ext4' or home_info['fstype'] != 'ext4' or boot_info['fstype'] != 'vfat':
@@ -204,19 +236,21 @@ def stage(args):
     if home_info['source'] == root_info['source']: raise ValueError('HOME must be a separate filesystem')
     pending = Path('/') / PENDING
     if pending.exists(): raise ValueError('an update is already pending; finish or recover it first')
-    base = Path('/home/.konkr-updates')
-    if base.is_symlink(): raise ValueError('invalid update storage directory')
-    base.mkdir(mode=0o700, exist_ok=True)
-    if base.stat().st_uid != 0: raise ValueError('update storage is not owned by root')
-    os.chmod(base, 0o700)
+    base = storage()
     work = base / str(uuid.uuid4()); work.mkdir(mode=0o700)
+    package = work / 'package.tar.gz'; corrupt = False
     try:
         # Validate and extract only a private, root-owned copy to avoid input races.
-        package = work / 'package.tar.gz'
-        shutil.copyfile(source_package, package); os.chmod(package, 0o600)
-        if digest(package) != expected: raise ValueError('package SHA256 mismatch')
+        if move: os.replace(source_package, package)
+        else: shutil.copyfile(source_package, package)
+        os.chmod(package, 0o600)
+        step('Checking the update')
+        if digest(package) != expected:
+            corrupt = True; raise ValueError('package SHA256 mismatch')
         manifest, size = validate_archive(package)
         if model not in manifest['devices']: raise ValueError(f'package is not for this device ({model})')
+        if version and manifest['version'] != version:
+            raise ValueError(f'package is version {manifest["version"]}, the release is {version}')
         used = shutil.disk_usage('/').total - shutil.disk_usage('/').free
         if shutil.disk_usage('/home').free < size + used + (512 << 20):
             raise ValueError('not enough HOME space for payload and rollback backup')
@@ -225,6 +259,7 @@ def stage(args):
         if shutil.disk_usage('/').free + managed < size + (512 << 20):
             raise ValueError('root partition is too small for this update')
         payload = work / 'payload'; payload.mkdir()
+        step('Unpacking the update')
         run('tar', '--xattrs', '--acls', '--numeric-owner', '-xzf', package, '-C', payload)
         verify_payload(payload, manifest)
         info = {'id': work.name, 'version': manifest['version'], 'sha256': expected,
@@ -236,7 +271,9 @@ def stage(args):
         if not rootarg: raise ValueError('cannot identify the boot root argument')
         helper = bootimg_helper(payload)
         retarget_kernel(payload / 'boot/KERNEL', work / 'next-KERNEL', rootarg, helper)
-        recovery_runtime(work / 'recovery', helper)
+        # The package's own updater applies it, so apply fixes need no reflash.
+        bundled = payload / 'root' / UPDATER
+        recovery_runtime(work / 'recovery', helper, bundled if bundled.is_file() else None)
         state(work, 'staged')
         pending.parent.mkdir(parents=True, exist_ok=True)
         pending.write_text(work.name + '\n'); os.chmod(pending, 0o600)
@@ -245,8 +282,114 @@ def stage(args):
         install_kernel(work / 'next-KERNEL', Path('/boot'))
         print('Update staged. Reboot to apply. Backup:', work)
     except BaseException:
-        if not pending.exists(): shutil.rmtree(work)
+        if not pending.exists():
+            # A good download stays for the next try.
+            if move and not corrupt and package.exists(): os.replace(package, source_package)
+            shutil.rmtree(work)
         raise
+
+
+def step(text):
+    print('STEP', text, flush=True)
+
+
+def fetch(url, **headers):
+    import urllib.request
+    request = urllib.request.Request(url, headers={'User-Agent': 'pb-os-update', **headers})
+    return urllib.request.urlopen(request, timeout=60)
+
+
+def find_update():
+    """Newest release with a package for this device, or None."""
+    model = device_model()
+    image = IMAGES.get(model)
+    if not image: raise ValueError(f'no update channel for {model}')
+    with fetch(RELEASES + '?per_page=30', Accept='application/vnd.github+json') as r:
+        releases = json.load(r)
+    for release in releases:  # newest first
+        if release.get('draft'): continue
+        name = f"pb-os-{release['tag_name']}-{image}.update.tar.gz"
+        parts = sorted((a for a in release['assets'] if re.fullmatch(re.escape(name) + r'\.\d{3}', a['name'])),
+                       key=lambda a: a['name'])
+        sums = next((a for a in release['assets'] if a['name'] == 'SHA256SUMS'), None)
+        sig = next((a for a in release['assets'] if a['name'] == 'SHA256SUMS.sig'), None)
+        if parts and sums and sig:
+            return {'version': release['tag_name'], 'title': release.get('name') or release['tag_name'],
+                    'page': release['html_url'], 'name': name, 'sums': sums['browser_download_url'],
+                    'sig': sig['browser_download_url'],
+                    'parts': [{'url': a['browser_download_url'], 'size': a['size']} for a in parts],
+                    'size': sum(a['size'] for a in parts)}
+    return None
+
+
+def check(args):
+    current = installed_version()
+    found = find_update()
+    print(json.dumps({'current': current, 'update': found,
+                      'available': bool(found) and found['version'] != current}, indent=2))
+
+
+def download(update, dest):
+    """Append every part to one file; a later run resumes where this one stopped."""
+    total = update['size']
+    have = dest.stat().st_size if dest.exists() else 0
+    if have > total: dest.unlink(); have = 0
+    shown = -1; offset = 0
+    with dest.open('ab') as out:
+        for part in update['parts']:
+            end = offset + part['size']
+            if have < end:
+                skip = have - offset
+                with fetch(part['url'], **({'Range': f'bytes={skip}-'} if skip else {})) as r:
+                    if skip and r.status != 206: raise ValueError('the download server cannot resume')
+                    while chunk := r.read(1 << 20):
+                        out.write(chunk); have += len(chunk)
+                        if have * 200 // total != shown:
+                            shown = have * 200 // total; print('PROGRESS', have, total, flush=True)
+                out.flush(); os.fsync(out.fileno())
+                if have != end: raise ValueError('download interrupted; start it again to resume')
+            offset = end
+
+
+def verify_signature(data, signature):
+    """Raise unless signature is a pb-os release signature over data."""
+    if not SIGNERS.is_file(): raise ValueError(f'missing {SIGNERS}: cannot check release signatures')
+    import tempfile
+    with tempfile.NamedTemporaryFile(suffix='.sig') as f:
+        f.write(signature); f.flush()
+        p = subprocess.run(['ssh-keygen', '-Y', 'verify', '-f', str(SIGNERS), '-I', SIGNER, '-n', NAMESPACE,
+                            '-s', f.name], input=data, capture_output=True)
+    if p.returncode != 0:
+        raise ValueError('the release signature does not match the pb-os release key; not installing')
+
+
+def update(args):
+    if os.geteuid() != 0: raise ValueError('updating needs administrator access')
+    if (Path('/') / PENDING).exists(): raise ValueError('an update is already pending; restart to install it')
+    step('Looking for updates')
+    found = find_update()
+    if not found: raise ValueError('the pb-os releases have no update for this device')
+    if found['version'] == installed_version() and not args.reinstall:
+        print('pb-os', found['version'], 'is already installed'); return
+    with fetch(found['sums']) as r: sums = r.read()
+    with fetch(found['sig']) as r: sig = r.read()
+    verify_signature(sums, sig)
+    sums = [line.split() for line in sums.decode().splitlines()]
+    expected = next((f[0] for f in sums if len(f) == 2 and f[1].lstrip('*') == found['name']), '')
+    if not re.fullmatch('[0-9a-fA-F]{64}', expected): raise ValueError(f'SHA256SUMS has no checksum for {found["name"]}')
+    downloads = storage() / 'downloads'; downloads.mkdir(mode=0o700, exist_ok=True)
+    for old in downloads.iterdir():  # another release's download
+        if old.name != found['name']: old.unlink()
+    package = downloads / found['name']
+    have = package.stat().st_size if package.exists() else 0
+    # Rough room for the download, its unpacked payload and the rollback copy (stage checks exactly).
+    used = shutil.disk_usage('/').total - shutil.disk_usage('/').free
+    need = found['size'] - have + found['size'] * 5 // 2 + used + (512 << 20)
+    if shutil.disk_usage('/home').free < need:
+        raise ValueError(f'not enough free space: this update needs about {need >> 30} GB free on HOME')
+    step(f'Downloading pb-os {found["version"]}')
+    download(found, package)
+    stage(package, expected, move=True, version=found['version'])
 
 
 def install_kernel(src, boot):
@@ -259,17 +402,27 @@ def install_kernel(src, boot):
     os.sync()
 
 
-def snapshot(root, home, work):
+def plugin_dirs(work, manifest):
+    """Plugin folders the update installs, and those it removes."""
+    src = work / 'payload/home/steamos' / PLUGINS
+    names = sorted(p.name for p in src.iterdir() if p.is_dir()) if src.is_dir() else []
+    install = [n for n in names if n not in LEGACY_PLUGINS]
+    remove = sorted(set(manifest.get('remove_plugins', [])) | set(LEGACY_PLUGINS))
+    return [f'{PLUGINS}/{n}' for n in install], [f'{PLUGINS}/{n}' for n in remove if n not in install]
+
+
+def snapshot(root, home, work, manifest):
     backup = work / 'backup'
+    install, remove = plugin_dirs(work, manifest)
     write_json(backup / 'root-presence.json', {rel: (root / rel).exists() for rel in (*ROOT_DIRS, UPPER)})
     for rel in (*ROOT_DIRS, UPPER):
         src = root / rel
         if src.exists(): copy_tree(src, backup / 'root' / rel)
-    for rel in SNAPSHOT_HOME_DIRS:
+    for rel in install + remove:
         src = home / 'steamos' / rel
         if src.exists(): copy_tree(src, backup / 'home/steamos' / rel)
     # Explicitly record absent directories so rollback removes newly introduced ones.
-    write_json(backup / 'home-presence.json', {rel: (home / 'steamos' / rel).exists() for rel in SNAPSHOT_HOME_DIRS})
+    write_json(backup / 'home-presence.json', {rel: (home / 'steamos' / rel).exists() for rel in install + remove})
     local = home / 'steamos/.local/share/vulkan/implicit_layer.d'
     if local.exists(): copy_tree(local, backup / 'layers')
     write_json(backup / 'layers-presence.json', {'exists': local.exists()})
@@ -285,7 +438,7 @@ def restore(root, boot, home, work):
         if present_root[rel]: copy_tree(src, root / rel, delete=True)
         elif (root / rel).exists(): shutil.rmtree(root / rel)
     present = json.loads((backup / 'home-presence.json').read_text())
-    for rel in SNAPSHOT_HOME_DIRS:
+    for rel in present:
         dest = home / 'steamos' / rel
         if present[rel]: copy_tree(backup / 'home/steamos' / rel, dest, delete=True)
         elif dest.exists(): shutil.rmtree(dest)
@@ -299,22 +452,19 @@ def restore(root, boot, home, work):
 
 def apply(root, boot, home, work, manifest):
     payload = work / 'payload'
-    for rel in ('usr', 'opt'): copy_tree(payload / 'root' / rel, root / rel, delete=True)
+    copy_tree(payload / 'root/usr', root / 'usr', delete=True)
+    copy_tree(payload / 'root/opt', root / 'opt', delete=True, excludes=OPT_KEEP)
     # Preserve identity, accounts, network credentials and the target partition layout.
     copy_tree(payload / 'root/etc', root / 'etc', delete=True, excludes=PRESERVE)
     upper = payload / 'root' / UPPER
     if upper.exists(): copy_tree(upper, root / UPPER, excludes=PRESERVE)
-    for rel in HOME_DIRS:
-        src = payload / 'home/steamos' / rel
-        if rel in KONKR_ONLY and manifest['devices'] != KONKR_DEVICES:
-            # Not for this device; drop any stale copy (the snapshot restores it on rollback).
-            if (home / 'steamos' / rel).exists(): shutil.rmtree(home / 'steamos' / rel)
-            continue
-        if not src.is_dir(): raise ValueError(f'missing home migration: {rel}')
-        copy_tree(src, home / 'steamos' / rel, delete=True)
+    install, remove = plugin_dirs(work, manifest)
+    for rel in install:
+        copy_tree(payload / 'home/steamos' / rel, home / 'steamos' / rel, delete=True)
         # Images stage users with numeric ownership; do not inherit root ownership.
         run('chown', '-R', '1000:1000', home / 'steamos' / rel)
-    for rel in LEGACY_HOME_DIRS:
+    # Plugins of other devices or older images (the snapshot restores them on rollback).
+    for rel in remove:
         if (home / 'steamos' / rel).exists(): shutil.rmtree(home / 'steamos' / rel)
     for prefix in (root / 'usr', root / 'usr/local', home / 'steamos/.local'):
         for name in ('VkLayer_LS_frame_generation.json', 'VkLayer_LS_frame_generation_arm64.json'):
@@ -322,7 +472,7 @@ def apply(root, boot, home, work, manifest):
     # Compare every managed regular file that was installed. No game/save paths included.
     for name, sha in manifest['files'].items():
         if name.startswith(('root/usr/', 'root/opt/')): target = root / name[5:]
-        elif any(name.startswith('home/steamos/' + rel + '/') for rel in HOME_DIRS): target = home / name[5:]
+        elif any(name.startswith('home/steamos/' + rel + '/') for rel in install): target = home / name[5:]
         elif name.startswith(('root/etc/', 'root/' + UPPER + '/')):
             prefix = 'root/etc/' if name.startswith('root/etc/') else 'root/' + UPPER + '/'
             rel = name[len(prefix):]
@@ -355,7 +505,7 @@ def recover(args):
     if current == 'staged':
         try:
             verify_payload(work / 'payload', record['manifest'])
-            snapshot(root, home, work)
+            snapshot(root, home, work, record['manifest'])
             current = 'backed-up'
         except Exception as e:
             print('RECOVERY ERROR:', e, flush=True)
@@ -385,14 +535,19 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     sub = ap.add_subparsers(dest='command', required=True)
     p = sub.add_parser('stage'); p.add_argument('package'); p.add_argument('--sha256', required=True)
+    sub.add_parser('check', help='newest release for this device, as JSON')
+    p = sub.add_parser('update', help='download the newest release and stage it')
+    p.add_argument('--reinstall', action='store_true', help='also when that version is installed')
     p = sub.add_parser('recover')
     for name in ('root', 'boot', 'home', 'work'): p.add_argument('--' + name, required=True)
     p = sub.add_parser('inspect'); p.add_argument('package')
     a = ap.parse_args()
     try:
-        if a.command == 'stage':
+        if a.command in ('stage', 'update'):
             with open('/run/konkr-update.lock', 'w') as lock:
-                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB); stage(a)
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                stage(a.package, a.sha256) if a.command == 'stage' else update(a)
+        elif a.command == 'check': check(a)
         elif a.command == 'recover': return recover(a)
         else:
             m, size = validate_archive(a.package); print(json.dumps({'version': m['version'], 'bytes': size}, indent=2))

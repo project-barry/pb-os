@@ -185,6 +185,8 @@ elif [[ "${DEVICE:-}" == thor ]]; then
   # Dual Screen: AYN Thor bottom screen on/off.
   decky_plugins=("${MOD}/Decky/sm8550/dual-screen")
 fi
+# PB-OS Update (updates from Game Mode) on every device.
+decky_plugins+=("${MOD}/Decky/pbos-update")
 # The bundle is owned by this script: start clean so a rootfs reused from
 # another target keeps no stale plugins.
 rm -rf "$BUNDLE"
