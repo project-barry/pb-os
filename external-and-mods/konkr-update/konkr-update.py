@@ -37,6 +37,10 @@ VERSION_FILE = 'usr/share/pb-os/version'
 RELEASES = 'https://api.github.com/repos/project-barry/pb-os/releases'
 # Release asset of each device's package: pb-os-<tag>-<image>.update.tar.gz,
 # split into .001, .002, ... parts under GitHub's 2 GiB limit.
+# Downloads install only when the release's SHA256SUMS carries a signature
+# (SHA256SUMS.sig, scripts/sign-release.sh) from a key in this file.
+SIGNERS = Path('/usr/share/konkr-update/allowed_signers')
+SIGNER, NAMESPACE = 'pb-os-release', 'pb-os-update'
 IMAGES = {'KONKR Pocket FIT': 'pocketfit', 'AYANEO Pocket S2': 'pocketfit',
           'Retroid Pocket 6': 'rp6', 'Retroid Pocket 6 TOP-DPAD': 'rp6', 'AYN Thor': 'thor'}
 
@@ -308,9 +312,11 @@ def find_update():
         parts = sorted((a for a in release['assets'] if re.fullmatch(re.escape(name) + r'\.\d{3}', a['name'])),
                        key=lambda a: a['name'])
         sums = next((a for a in release['assets'] if a['name'] == 'SHA256SUMS'), None)
-        if parts and sums:
+        sig = next((a for a in release['assets'] if a['name'] == 'SHA256SUMS.sig'), None)
+        if parts and sums and sig:
             return {'version': release['tag_name'], 'title': release.get('name') or release['tag_name'],
                     'page': release['html_url'], 'name': name, 'sums': sums['browser_download_url'],
+                    'sig': sig['browser_download_url'],
                     'parts': [{'url': a['browser_download_url'], 'size': a['size']} for a in parts],
                     'size': sum(a['size'] for a in parts)}
     return None
@@ -345,6 +351,18 @@ def download(update, dest):
             offset = end
 
 
+def verify_signature(data, signature):
+    """Raise unless signature is a pb-os release signature over data."""
+    if not SIGNERS.is_file(): raise ValueError(f'missing {SIGNERS}: cannot check release signatures')
+    import tempfile
+    with tempfile.NamedTemporaryFile(suffix='.sig') as f:
+        f.write(signature); f.flush()
+        p = subprocess.run(['ssh-keygen', '-Y', 'verify', '-f', str(SIGNERS), '-I', SIGNER, '-n', NAMESPACE,
+                            '-s', f.name], input=data, capture_output=True)
+    if p.returncode != 0:
+        raise ValueError('the release signature does not match the pb-os release key; not installing')
+
+
 def update(args):
     if os.geteuid() != 0: raise ValueError('updating needs administrator access')
     if (Path('/') / PENDING).exists(): raise ValueError('an update is already pending; restart to install it')
@@ -353,8 +371,10 @@ def update(args):
     if not found: raise ValueError('the pb-os releases have no update for this device')
     if found['version'] == installed_version() and not args.reinstall:
         print('pb-os', found['version'], 'is already installed'); return
-    with fetch(found['sums']) as r:
-        sums = [line.split() for line in r.read().decode().splitlines()]
+    with fetch(found['sums']) as r: sums = r.read()
+    with fetch(found['sig']) as r: sig = r.read()
+    verify_signature(sums, sig)
+    sums = [line.split() for line in sums.decode().splitlines()]
     expected = next((f[0] for f in sums if len(f) == 2 and f[1].lstrip('*') == found['name']), '')
     if not re.fullmatch('[0-9a-fA-F]{64}', expected): raise ValueError(f'SHA256SUMS has no checksum for {found["name"]}')
     downloads = storage() / 'downloads'; downloads.mkdir(mode=0o700, exist_ok=True)

@@ -28,11 +28,19 @@ One package per image: Pocket FIT / Pocket S2 (`pocketfit`), Retroid Pocket 6 (`
      --rootfs /work/rootfs-... --kernel <kernel output>/boot/KERNEL --release <dir>
    ```
    This writes `pb-os-<tag>-<image>.update.tar.gz.001`, `.002`, ... (under GitHub's 2 GiB limit) and a `.sha256` line.
-3. Upload the parts to the release with that tag and add the `.sha256` line to its `SHA256SUMS`.
+3. Add the `.sha256` line to the release's `SHA256SUMS`, then sign it on the Mac (asks for the key's passphrase):
+   ```
+   scripts/sign-release.sh <folder with SHA256SUMS>
+   ```
+4. Upload the parts, `SHA256SUMS` and `SHA256SUMS.sig` to the release with that tag.
 
-Devices take the newest non-draft release (pre-releases included) that has their parts and a `SHA256SUMS`.
+Devices take the newest non-draft release (pre-releases included) that has their parts, `SHA256SUMS` and `SHA256SUMS.sig`.
 
-The package carries the managed system directories, the boot image and the bundled Decky plugins. It contains no proprietary Lossless Scaling DLL, game data, Steam accounts, SSH keys or the build's machine-id. The hash comes from the release's `SHA256SUMS`, fetched over HTTPS from GitHub like the parts. It proves the download is intact and matches the release; it does not authenticate the release itself (packages are not signed).
+## Release key
+
+Downloads install only when `SHA256SUMS.sig` is an OpenSSH signature (`ssh-keygen -Y`, namespace `pb-os-update`) from a key in [allowed_signers](allowed_signers), which every image carries. The private key never goes in the repo: it lives at `~/.ssh/pb-os-release` on the releasing Mac, protected by a passphrase, with a backup in a password manager. Without it, devices accept no further downloads until an image or a file-installed update ships a new `allowed_signers`. To replace the key, add the new public key to `allowed_signers`, release an update signed with the old key, then remove the old one.
+
+The package carries the managed system directories, the boot image and the bundled Decky plugins. It contains no proprietary Lossless Scaling DLL, game data, Steam accounts, SSH keys or the build's machine-id. The package hash comes from the release's signed `SHA256SUMS`, so a download installs only when it is exactly the package the key holder released. **Install from a file** trusts the hash you paste instead.
 
 ## Images from before the AYN Thor packages
 

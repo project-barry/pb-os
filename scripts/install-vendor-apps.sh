@@ -77,6 +77,7 @@ rm -f "$HOME_DST/Desktop/Easy UFS Installer.desktop" \
 mkdir -p "$R/usr/share/konkr-update"
 install -m0644 "$MOD/konkr-update/konkr-update.py" "$R/usr/share/konkr-update/konkr-update.py"
 install -m0644 "$MOD/konkr-update/konkr-update-gui.py" "$R/usr/share/konkr-update/konkr-update-gui.py"
+install -m0644 "$MOD/konkr-update/allowed_signers" "$R/usr/share/konkr-update/allowed_signers"
 cat > "$bin/konkr-update-gui" <<'EOF'
 #!/bin/bash
 exec /usr/bin/python3 /usr/share/konkr-update/konkr-update-gui.py "$@"
