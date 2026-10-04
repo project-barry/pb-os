@@ -1,5 +1,8 @@
 [Unit]
 Description=Barry Launcher: AYN Thor top-screen trackpad and keyboard (uinput)
+# The seat's user only: another login (ssh) cannot open /dev/uinput and
+# would fail and restart every few seconds.
+ConditionUser=1000
 
 [Service]
 Type=simple
