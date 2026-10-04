@@ -1531,6 +1531,33 @@ def finger_on(acc) -> bool:
             and ext.y - FIELD_SLOP <= y < ext.y + ext.height + FIELD_SLOP)
 
 
+def address_bar(acc) -> bool:
+    """A field of the Firefox app's own window (its address bar), not of a
+    page. Firefox's home page search box is no field: a tap on it hands
+    focus to the address bar, and so does the new-tab button."""
+    try:
+        with open(f"/proc/{acc.get_process_id()}/cmdline", "rb") as fh:
+            args = fh.read().decode(errors="replace").split("\0")
+        node = acc.get_parent()
+        while node is not None:
+            if node.get_role() == Atspi.Role.DOCUMENT_WEB:
+                return False
+            node = node.get_parent()
+    except (GLib.Error, OSError):
+        return False
+    profile = os.path.join(DATA, APPS["browser"]["profile"])
+    return "--kiosk" not in args and any(a == profile for a in args)
+
+
+def finger_report(acc) -> str:
+    """Where the touch and the field were (positions only), for the log."""
+    try:
+        ext = acc.get_extents(Atspi.CoordType.SCREEN)
+        return f" (touch {STATE.touch_at}, field {ext.x},{ext.y} {ext.width}x{ext.height})"
+    except GLib.Error:
+        return ""
+
+
 def reveal_field() -> bool:
     """The keyboard pushed the app up, but the focused field can still be
     under it: an app (WhatsApp Web) that will not lay itself out shorter
@@ -1581,10 +1608,13 @@ def on_focus(event) -> None:
         return
     if editable:
         STATE.text_acc = event.source
+        why = "text focus in"
         if not STATE.keyboard()["visible"] and not finger_on(event.source):
-            log("text focus in, away from the finger: no keyboard")
-            return
-        show_for_text(top, "text focus in")
+            if not address_bar(event.source):
+                log(f"text focus in, away from the finger{finger_report(event.source)}: no keyboard")
+                return
+            why = "text focus in the address bar"
+        show_for_text(top, why)
         return
     STATE.text_acc = None
     if STATE.keyboard()["visible"]:
