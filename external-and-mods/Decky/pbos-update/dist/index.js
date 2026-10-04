@@ -80,10 +80,15 @@ function Content() {
         const downloading = (job.step || "").startsWith("Downloading");
         items.push(row(jsx("div", { children: (job.step || "Starting") + "…" })));
         if (downloading && job.total) {
-            const text = `${gb(job.have)} of ${gb(job.total)}`;
-            items.push(row(DFL.ProgressBarWithInfo
-                ? jsx(DFL.ProgressBarWithInfo, { nProgress: (100 * job.have) / job.total, sOperationText: text })
-                : jsx("div", { children: `${Math.floor((100 * job.have) / job.total)}% · ${text}` })));
+            const pct = Math.min(100, (100 * job.have) / job.total);
+            // Own bar: DFL.ProgressBarWithInfo lays out as a Field, with the
+            // bar in the value column, and ran off the panel's right edge.
+            items.push(row(jsxs("div", { style: { width: "100%" }, children: [
+                jsx("div", { style: { fontSize: "12px", opacity: 0.85, marginBottom: "6px" },
+                    children: `${gb(job.have)} of ${gb(job.total)} · ${Math.floor(pct)}%` }),
+                jsx("div", { style: { width: "100%", height: "8px", borderRadius: "4px", background: "rgba(255,255,255,0.15)", overflow: "hidden" },
+                    children: jsx("div", { style: { width: `${pct}%`, height: "100%", background: "#1a9fff" } }) }),
+            ] })));
             items.push(row(jsx(DFL.ButtonItem, {
                 layout: "below",
                 onClick: () => pause().then(refresh),

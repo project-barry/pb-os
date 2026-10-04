@@ -1,6 +1,6 @@
 {
   "name": "pbos-update",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Decky plugin — pb-os updates from Game Mode (dist/index.js is hand-written, no build step)",
   "private": true,
   "license": "GPL-3.0-or-later",
