@@ -103,6 +103,9 @@ OVERLAY_DELAY_S = 0.5
 NUDGE_S = 20
 # Steam's display is looked for again this often while Game Mode is not up.
 YIELD_RETRY_S = 2
+# A panel that refused its brightness (off, or still coming up) is tried
+# again this often.
+PANEL_RETRY_S = 0.5
 
 
 def log(msg: str) -> None:
@@ -117,13 +120,14 @@ def read(path: str, default: str = "") -> str:
         return default
 
 
-def write(path: str, value: str) -> bool:
+def write(path: str, value: str, quiet: bool = False) -> bool:
     try:
         with open(path, "w", encoding="utf-8") as fh:
             fh.write(value)
         return True
     except OSError as err:
-        log(f"cannot write {value} to {path}: {err}")
+        if not quiet:
+            log(f"cannot write {value} to {path}: {err}")
         return False
 
 
@@ -352,12 +356,13 @@ def run(bl_fd: int, bottom_path: str, bottom_max: int, top_max: int) -> int:
         except (OSError, ValueError):
             return 0
 
-    def set_bottom(value: int) -> bool:
+    def set_bottom(value: int, quiet: bool = False) -> bool:
         try:
             os.pwrite(bl_fd, str(value).encode(), 0)
             return True
         except OSError as err:
-            log(f"cannot write {value} to {bottom_path}: {err}")
+            if not quiet:
+                log(f"cannot write {value} to {bottom_path}: {err}")
             return False
 
     def top_set() -> int:
@@ -381,6 +386,11 @@ def run(bl_fd: int, bottom_path: str, bottom_max: int, top_max: int) -> int:
     # What the top panel held after this last wrote it (or found it), so a
     # different value there is a change from gamescope.
     wrote_top = top_set()
+    # A panel refused its last write (EINVAL while it is off or coming up,
+    # as after Desktop Mode turned the screens off): the value sits in sysfs
+    # all the same, but not on the panel. Retried until it takes.
+    top_refused = bottom_refused = False
+    panel_retry_at = 0.0
     was_on = None
     overlay_since: float | None = None
     pressed_at: float | None = None  # AYN held down since, until handled
@@ -520,14 +530,26 @@ def run(bl_fd: int, bottom_path: str, bottom_max: int, top_max: int) -> int:
             level, wrote_top = level_of(top_now, top_max), top_now
             write(LEVEL, f"{level:.5f}")
         dims = read_dimmers(dim_cache)
+        retry = (top_refused or bottom_refused) and time.monotonic() >= panel_retry_at
         want_bottom = target(level ** (1 / STEAM_GAMMA), dims[1], bottom_max)
-        if bottom_set() != want_bottom:
-            set_bottom(want_bottom)
-        # The top panel refuses writes (EINVAL) while Game Mode is bringing
-        # it up; the next pass tries again.
+        if bottom_set() != want_bottom or (bottom_refused and retry):
+            refused = not set_bottom(want_bottom, quiet=bottom_refused)
+            if refused != bottom_refused:
+                log(f"bottom panel {'refuses' if refused else 'took'} brightness {want_bottom}")
+            bottom_refused = refused
         want_top = target(level, dims[0], top_max)
-        if top_now != want_top and write(f"{TOP}/brightness", str(want_top)):
-            wrote_top = want_top
+        if top_now != want_top or (top_refused and retry):
+            refused = not write(f"{TOP}/brightness", str(want_top), quiet=top_refused)
+            if refused != top_refused:
+                log(f"top panel {'refuses' if refused else 'took'} brightness {want_top}")
+            top_refused = refused
+            # Even refused, the value is now in sysfs: this one's own, not a
+            # level gamescope set. Taking it for one fed each refused write
+            # back in as the new level, down to 1, and the screens stayed
+            # black once they came back on.
+            wrote_top = top_set()
+        if (top_refused or bottom_refused) and time.monotonic() >= panel_retry_at:
+            panel_retry_at = time.monotonic() + PANEL_RETRY_S
 
 
 if __name__ == "__main__":
