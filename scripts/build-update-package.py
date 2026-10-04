@@ -12,6 +12,15 @@ Every build also writes pb-os-<version>-<image>.state.json.gz: each system
 file with its hash and permissions. A later build turns it into a delta with
 --from-state. --state-only writes one for an image built before this, from
 its root partition mounted read-only.
+
+Feature and patch releases: a feature release (e.g. alpha-v0.4) ships the full
+package only. Each patch release after it (alpha-v0.4.1, alpha-v0.4.2, ...)
+ships one cumulative delta named from the feature release, which also installs
+on every patch before it:
+  --base-state <feature release state> --patch-state <each earlier patch's state>
+The delta then carries every file that differs from the feature release or
+from any of those patches, and deletes what any of them had that this release
+does not. The rootfs must be stamped with that base (PB_OS_BASE).
 """
 import argparse
 import gzip
@@ -32,6 +41,10 @@ ap.add_argument('--output', help='package file (or use --release); with --state-
 ap.add_argument('--release', metavar='DIR', help='write release parts named for the updater into DIR')
 ap.add_argument('--from-state', action='append', default=[], metavar='FILE',
                 help='also build a delta from the release this state file describes (repeatable)')
+ap.add_argument('--base-state', metavar='FILE',
+                help='patch release: the state of the feature release it patches; builds the cumulative delta and no full package')
+ap.add_argument('--patch-state', action='append', default=[], metavar='FILE',
+                help='with --base-state: the state of each earlier patch of that feature release (repeatable)')
 ap.add_argument('--state-only', action='store_true', help='only write the state file of --rootfs')
 ap.add_argument('--soc', choices=('sm8650', 'sm8550'), default='sm8650')
 ap.add_argument('--device', choices=('thor',), help='image built with --device thor')
@@ -48,6 +61,10 @@ version = a.version or (stamped.read_text().strip() if stamped.is_file() else ''
 if not version: raise SystemExit('no --version and the rootfs has no /usr/share/pb-os/version')
 if stamped.is_file() and stamped.read_text().strip() != version:
     raise SystemExit(f'--version {version} differs from the rootfs version {stamped.read_text().strip()}')
+# The feature release this one belongs to (make-steamos-sm8650.sh PB_OS_BASE).
+stamped_base = root / 'usr/share/pb-os/base'
+release_base = stamped_base.read_text().strip() if stamped_base.is_file() else version
+if a.patch_state and not a.base_state: raise SystemExit('--patch-state needs --base-state')
 # Image name in release assets; the updater maps DTB models to it (IMAGES).
 image = 'thor' if a.device == 'thor' else {'sm8650': 'pocketfit', 'sm8550': 'rp6'}[a.soc]
 if bool(a.output) == bool(a.release): raise SystemExit('give --output or --release')
@@ -107,7 +124,7 @@ def tree_state(base, hashes=None):
 
 def write_state(path, entries):
     with gzip.open(path, 'wt') as f:
-        json.dump({'format': 1, 'version': version, 'image': image, 'kernel': sha256(a.kernel),
+        json.dump({'format': 1, 'version': version, 'base': release_base, 'image': image, 'kernel': sha256(a.kernel),
                    'entries': entries}, f, separators=(',', ':'))
     print('state', path)
 
@@ -152,10 +169,30 @@ bundle = root / 'usr/share/steamos-odin/decky-plugins'
 bundled = [p.name for p in bundle.iterdir() if p.is_dir()] if bundle.is_dir() else []
 PLUGINS = sorted({'decky-lsfg-vk', *bundled})
 REMOVE = sorted({'pbos-control', 'dual-screen', 'thor-screens'} - set(PLUGINS))
-bases = [json.load(gzip.open(f, 'rt')) for f in a.from_state]
-for b in bases:
-    if b.get('image') != image: raise SystemExit(f'state of {b.get("image")}, building {image}')
-    if b.get('version') == version: raise SystemExit(f'state is of this version ({version})')
+def load_state(f):
+    b = json.load(gzip.open(f, 'rt'))
+    if b.get('image') != image: raise SystemExit(f'{f}: state of {b.get("image")}, building {image}')
+    if b.get('version') == version: raise SystemExit(f'{f}: state is of this version ({version})')
+    return b
+bases = [load_state(f) for f in a.from_state]
+# Patch release: one delta from the feature release that also covers its patches.
+cumulative = None
+if a.base_state:
+    feature = load_state(a.base_state)
+    if feature['version'] != release_base:
+        raise SystemExit(f'--base-state is {feature["version"]}, the rootfs says its base is {release_base} (PB_OS_BASE)')
+    patches = [load_state(f) for f in a.patch_state]
+    for b in patches:
+        # States from before bases were recorded: trust the release manager.
+        if b.get('base', release_base) != release_base:
+            raise SystemExit(f'{b["version"]} patches {b.get("base")}, not {release_base}')
+    names = [feature['version']] + [b['version'] for b in patches]
+    if len(set(names)) != len(names): raise SystemExit(f'the same version twice: {names}')
+    if feature['version'] in [b['version'] for b in bases]:
+        raise SystemExit(f'--from-state {feature["version"]} would be built twice (it is the --base-state)')
+    cumulative = [feature] + patches
+elif release_base != version:
+    raise SystemExit(f'the rootfs is a patch of {release_base}: give --base-state (and --patch-state)')
 with tempfile.TemporaryDirectory(prefix='konkr-package-', dir=output.parent) as temp:
     stage = Path(temp) / 'full'
     def copy(src, dst):
@@ -195,18 +232,24 @@ with tempfile.TemporaryDirectory(prefix='konkr-package-', dir=output.parent) as 
     common = {'architecture': 'aarch64', 'devices': DEVICES, 'version': version, 'remove_plugins': REMOVE}
     new = tree_state(stage / 'root', files)
     write_state(out_dir / f'pb-os-{version}-{image}.state.json.gz', new)
-    pack(stage, output, {'format': 1, **common, 'files': files}, ['root', 'home', 'boot'])
+    # A patch release ships only its delta (feature releases bring the full system).
+    if cumulative is None:
+        pack(stage, output, {'format': 1, **common, 'files': files}, ['root', 'home', 'boot'])
 
-    for base in bases:
-        old = base['entries']
-        changed = sorted(rel for rel, e in new.items() if old.get(rel) != e)
+    def make_delta(olds):
+        """One delta that installs on each of olds (states): every entry that
+        differs from any of them, and deletes what any of them has that this
+        release does not."""
+        changed = sorted(rel for rel, e in new.items() if any(o['entries'].get(rel) != e for o in olds))
         # Gone, or a different kind of entry now (a file that became a directory):
         # the device removes the old one before the new one is copied in.
-        deleted = sorted((rel for rel in old if rel not in new or old[rel][0] != new[rel][0]),
+        deleted = sorted({rel for o in olds for rel, e in o['entries'].items()
+                          if rel not in new or e[0] != new[rel][0]},
                          key=lambda r: (-r.count('/'), r))
         # The kernel goes along when it changed, and always with changed modules.
-        kernel = (sha256(a.kernel) != base.get('kernel')
+        kernel = (any(sha256(a.kernel) != o.get('kernel') for o in olds)
                   or any(r.startswith('usr/lib/modules/') for r in changed + deleted))
+        base = olds[0]
         delta = Path(temp) / f'delta-{base["version"]}'
         def place(rel):
             """rel from the full stage into the delta, parents with their metadata."""
@@ -231,7 +274,13 @@ with tempfile.TemporaryDirectory(prefix='konkr-package-', dir=output.parent) as 
         dfiles = {str(p.relative_to(delta)): files[str(p.relative_to(delta))]
                   for p in sorted(delta.rglob('*')) if p.is_file() and not p.is_symlink()}
         name = f'pb-os-{version}-{image}.from-{base["version"]}.delta.tar.gz'
-        print(f'delta from {base["version"]}: {len(changed)} changed, {len(deleted)} deleted, '
-              f'kernel {"yes" if kernel else "no"}')
-        pack(delta, out_dir / name, {'format': 2, 'kind': 'delta', 'from': base['version'], **common,
+        also = [o['version'] for o in olds[1:]]
+        print(f'delta from {base["version"]}{" (also " + ", ".join(also) + ")" if also else ""}: '
+              f'{len(changed)} changed, {len(deleted)} deleted, kernel {"yes" if kernel else "no"}')
+        # also_from: the patches it also installs on (updaters without it check `from` only).
+        pack(delta, out_dir / name, {'format': 2, 'kind': 'delta', 'from': base['version'],
+                                    **({'also_from': also} if also else {}), **common,
                                     'delete': deleted, 'files': dfiles}, members)
+
+    for base in bases: make_delta([base])
+    if cumulative: make_delta(cumulative)

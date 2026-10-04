@@ -2,7 +2,11 @@
 
 Installs a new pb-os version over the current one without reflashing. Games, saves, Steam accounts, Wi-Fi, Decky settings and your own Decky plugins stay.
 
-There are two kinds of package. A **delta** carries only what changed since one earlier version, usually tens to hundreds of MB, and is quick to download and install. A **full** package carries the whole system (about 4 GB) and installs over any earlier version. The updater takes the delta from the installed version when the release has one, and the full package otherwise.
+There are two kinds of package. A **full** package carries the whole system (about 4 GB) and installs over any earlier version. A **delta** carries only what changed, usually tens to hundreds of MB, and is quick to download and install.
+
+Releases come in two kinds as well. A **feature release** (e.g. `alpha-v0.4`) ships full packages only. Each **patch release** after it (`alpha-v0.4.1`, `alpha-v0.4.2`, ...) ships one delta that goes from the feature release to the patch and also installs on every patch in between, so a device on the feature release or on any of its patches gets there in one step. A device on an older feature release first takes the newest feature release's full package, then its newest patch.
+
+The updater only offers versions newer than the installed one, so a release without a package for the device never leads to a downgrade.
 
 ## How it works
 
@@ -16,7 +20,7 @@ There are two kinds of package. A **delta** carries only what changed since one 
 
 No partition table is changed and no filesystem is formatted. SD and internal installs use the same process. HOME needs room for the download plus about twice the size of the files that change. The root partition must also fit the new system.
 
-A delta applies only to the exact version it was built from (`/usr/share/pb-os/version`). Updaters from before deltas (alpha v0.3 and v0.3a) don't see them and take the full package.
+A device knows its version (`/usr/share/pb-os/version`) and its feature release (`/usr/share/pb-os/base`; images from before have none and count as their own). A delta installs only on the versions its manifest lists. Updaters from before deltas (alpha v0.3 and v0.3a) don't see them and take the full package.
 
 The apply step runs the updater that comes in the package, so fixes to it reach devices with the update itself.
 
@@ -24,7 +28,7 @@ The apply step runs the updater that comes in the package, so fixes to it reach 
 
 For a device without internet. On a computer, download from the release page:
 
-- the update for your device: the full package (`pb-os-<tag>-<device>.update.tar.gz.001`, `.002`, ...) or, if the release has one from the version you have, the delta (`pb-os-<tag>-<device>.from-<your version>.delta.tar.gz.001`, ...). The joined `.tar.gz` works too;
+- the update for your device: the full package (`pb-os-<tag>-<device>.update.tar.gz.001`, `.002`, ...) or, for a patch of the feature release you have, the delta (`pb-os-<tag>-<device>.from-<that feature release>.delta.tar.gz.001`, ...). The joined `.tar.gz` works too;
 - `SHA256SUMS` and `SHA256SUMS.sig`.
 
 `<device>` is `rp6` for the Retroid Pocket 6 and Nova, `pocketfit` for the KONKR Pocket FIT and AYANEO Pocket S2, and `thor` for the AYN Thor.
@@ -45,14 +49,24 @@ From Konsole: `sudo python3 /usr/share/konkr-update/konkr-update.py local-check`
 
 One package per image: Pocket FIT / Pocket S2 (`pocketfit`), Retroid Pocket 6 (`rp6`) and AYN Thor (`thor`, SM8550 with the bottom-screen extras). A package only installs on the DTB models in its manifest.
 
-1. Build the image with `PB_OS_VERSION=<release tag>` (e.g. `alpha-v0.3`). The image records it in `/usr/share/pb-os/version`; the updater offers a release whose tag differs from it.
-2. From the same rootfs, with the same SoC and device, and the state file of each earlier release to make a delta from:
-   ```
-   sudo scripts/build-update-package.py --soc sm8550 [--device thor] \
-     --rootfs /work/rootfs-... --kernel <kernel output>/boot/KERNEL --release <dir> \
-     --from-state pb-os-<previous tag>-<image>.state.json.gz
-   ```
-   This writes `pb-os-<tag>-<image>.update.tar.gz.001`, `.002`, ... (under GitHub's 2 GiB limit), `pb-os-<tag>-<image>.from-<previous tag>.delta.tar.gz.001`, ..., a `.sha256` line for each, and `pb-os-<tag>-<image>.state.json.gz` for the next release's deltas. Keep the state files; uploading them to the release keeps them with it.
+1. Build the image with `PB_OS_VERSION=<release tag>`. For a patch release, also `PB_OS_BASE=<its feature release>` (e.g. `PB_OS_VERSION=alpha-v0.4.2 PB_OS_BASE=alpha-v0.4`). The image records them in `/usr/share/pb-os/version` and `/usr/share/pb-os/base`. The updater offers a release whose tag is newer than the installed version.
+2. From the same rootfs, with the same SoC and device:
+   - **Feature release:** the full package.
+     ```
+     sudo scripts/build-update-package.py --soc sm8550 [--device thor] \
+       --rootfs /work/rootfs-... --kernel <kernel output>/boot/KERNEL --release <dir>
+     ```
+     This writes `pb-os-<tag>-<image>.update.tar.gz.001`, `.002`, ... (under GitHub's 2 GiB limit).
+   - **Patch release:** the delta, from the feature release's state file and the state file of every patch since:
+     ```
+     sudo scripts/build-update-package.py --soc sm8550 [--device thor] \
+       --rootfs /work/rootfs-... --kernel <kernel output>/boot/KERNEL --release <dir> \
+       --base-state pb-os-alpha-v0.4-<image>.state.json.gz \
+       --patch-state pb-os-alpha-v0.4.1-<image>.state.json.gz
+     ```
+     This writes `pb-os-<tag>-<image>.from-<feature release>.delta.tar.gz.001`, ... and no full package. It carries every file that differs from the feature release or from any of those patches, and deletes what any of them had that this release does not. Leave out a patch's state and devices on that patch can't take the delta.
+
+   Both write a `.sha256` line for each package and `pb-os-<tag>-<image>.state.json.gz` for the next patch's delta. Keep the state files; uploading them to the release keeps them with it. (`--from-state <state>` still builds a delta from one earlier version on its own.)
    A release built before state files: `--state-only --version <tag> --rootfs <its image's root partition, mounted read-only> --kernel <the KERNEL it was built with>` writes one.
 3. Add the `.sha256` lines to the release's `SHA256SUMS`, then sign it on the Mac (asks for the key's passphrase):
    ```

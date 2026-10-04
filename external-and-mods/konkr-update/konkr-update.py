@@ -20,7 +20,9 @@ import uuid
 from pathlib import Path, PurePosixPath
 
 # Format 1: a full system. Format 2: a delta, only what changed since the
-# version in `from`; updaters from before deltas refuse format 2.
+# version in `from`; updaters from before deltas refuse format 2. A patch
+# release's delta also lists in `also_from` the patches of the same feature
+# release it installs on (see build-update-package.py).
 FULL, DELTA = 1, 2
 ROOT_DIRS = ('usr', 'opt', 'etc')
 UPPER = 'var/lib/overlays/etc/upper'
@@ -36,8 +38,10 @@ PENDING = 'var/lib/konkr-update/pending'
 # Per-install record written by the image build; not part of any package.
 OPT_KEEP = ('steamos-sm8650/IMAGE.txt',)
 UPDATER = 'usr/share/konkr-update/konkr-update.py'
-# Written by make-steamos-sm8650.sh: the release tag the image was built as.
+# Written by make-steamos-sm8650.sh: the release tag the image was built as,
+# and the feature release it belongs to (patch releases' deltas are from it).
 VERSION_FILE = 'usr/share/pb-os/version'
+BASE_FILE = 'usr/share/pb-os/base'
 RELEASES = 'https://api.github.com/repos/project-barry/pb-os/releases'
 # Release assets of each device's packages, split into .001, .002, ... parts
 # under GitHub's 2 GiB limit: pb-os-<tag>-<image>.update.tar.gz (full) and
@@ -141,6 +145,9 @@ def validate_archive(package):
         raise ValueError('unsupported update format or architecture')
     if is_delta(manifest):
         if not isinstance(manifest.get('from'), str) or not manifest['from']: raise ValueError('delta without a base version')
+        also = manifest.get('also_from', [])
+        if not isinstance(also, list) or not all(isinstance(v, str) and v for v in also):
+            raise ValueError('invalid also_from list')
         deleted = manifest.get('delete', [])
         if not isinstance(deleted, list): raise ValueError('invalid delete list')
         for rel in deleted:
@@ -239,6 +246,25 @@ def installed_version():
     return p.read_text().strip() if p.is_file() else ''
 
 
+def installed_base():
+    """The feature release this system belongs to: the delta to look for. Images
+    from before feature releases have none, so they are their own."""
+    p = Path('/') / BASE_FILE
+    return (p.read_text().strip() if p.is_file() else '') or installed_version()
+
+
+def delta_bases(manifest):
+    """The versions a delta installs on."""
+    return [manifest['from'], *manifest.get('also_from', [])]
+
+
+def newer(tag, current):
+    """tag is an update for current: a later release. Development builds
+    (dev-<date>) take any release."""
+    if not current or current.startswith('dev-'): return tag != current
+    return version_key(tag) > version_key(current)
+
+
 def storage():
     """Root-only update storage on HOME."""
     base = Path('/home/.konkr-updates')
@@ -280,8 +306,8 @@ def stage(source_package, expected, move=False, version=None):
         if model not in manifest['devices']: raise ValueError(f'package is not for this device ({model})')
         if version and manifest['version'] != version:
             raise ValueError(f'package is version {manifest["version"]}, the release is {version}')
-        if is_delta(manifest) and installed_version() != manifest['from']:
-            raise ValueError(f'this update is for pb-os {manifest["from"]}, this device has '
+        if is_delta(manifest) and installed_version() not in delta_bases(manifest):
+            raise ValueError(f'this update is for pb-os {" or ".join(delta_bases(manifest))}, this device has '
                              f'{installed_version() or "an unknown version"}; use the full package')
         payload = work / 'payload'; payload.mkdir()
         if is_delta(manifest):
@@ -346,13 +372,13 @@ def fetch(url, **headers):
     return urllib.request.urlopen(request, timeout=60)
 
 
-def find_update():
+def find_update(reinstall=False):
     """Newest release with a package for this device, or None: the delta from
     the installed version when the release has one, else the full package."""
     model = device_model()
     image = IMAGES.get(model)
     if not image: raise ValueError(f'no update channel for {model}')
-    current = installed_version()
+    current, base = installed_version(), installed_base()
     with fetch(RELEASES + '?per_page=30', Accept='application/vnd.github+json') as r:
         releases = json.load(r)
     def parts_of(release, name):
@@ -361,8 +387,11 @@ def find_update():
     for release in releases:  # newest first
         if release.get('draft'): continue
         tag = release['tag_name']
-        kind, name = 'delta', f"pb-os-{tag}-{image}.from-{current}.delta.tar.gz"
-        parts = parts_of(release, name) if current and current != tag else []
+        # Only later releases: an older one with this device's package is not an update.
+        if current and not (newer(tag, current) or (reinstall and tag == current)): continue
+        # A patch release's delta is from the feature release (and covers its patches).
+        kind, name = 'delta', f"pb-os-{tag}-{image}.from-{base}.delta.tar.gz"
+        parts = parts_of(release, name) if base and base != tag else []
         if not parts:
             kind, name = 'full', f"pb-os-{tag}-{image}.update.tar.gz"
             parts = parts_of(release, name)
@@ -380,7 +409,7 @@ def find_update():
 def check(args):
     current = installed_version()
     found = find_update()
-    print(json.dumps({'current': current, 'update': found,
+    print(json.dumps({'current': current, 'base': installed_base(), 'update': found,
                       'available': bool(found) and found['version'] != current}, indent=2))
 
 
@@ -422,7 +451,7 @@ def update(args):
     if os.geteuid() != 0: raise ValueError('updating needs administrator access')
     if (Path('/') / PENDING).exists(): raise ValueError('an update is already pending; restart to install it')
     step('Looking for updates')
-    found = find_update()
+    found = find_update(args.reinstall)
     if not found: raise ValueError('the pb-os releases have no update for this device')
     if found['version'] == installed_version() and not args.reinstall:
         print('pb-os', found['version'], 'is already installed'); return
@@ -525,18 +554,19 @@ class Mounted:
             except OSError: pass
 
 
-def packages_in(folder, image, current):
-    """Complete pb-os packages for this image in the drive's top folder:
+def packages_in(folder, image, current, base):
+    """Complete pb-os packages for this image in the drive's top folder that
+    update current (a delta: from its feature release, base):
     {joined name: {version, kind, files}}. Parts must run .001, .002, ... unbroken."""
     pattern = re.compile(rf'pb-os-(.+?)-{re.escape(image)}\.(?:from-(.+)\.delta|update)\.tar\.gz(?:\.(\d{{3}}))?')
     groups = {}
     for p in folder.iterdir():
         m = pattern.fullmatch(p.name)
         if not m or not p.is_file(): continue
-        tag, base, part = m.group(1), m.group(2), m.group(3)
-        if tag == current or (base is not None and base != current): continue
+        tag, frm, part = m.group(1), m.group(2), m.group(3)
+        if not newer(tag, current) or (frm is not None and frm != base): continue
         name = p.name[:-4] if part else p.name
-        g = groups.setdefault(name, {'version': tag, 'kind': 'delta' if base else 'full', 'joined': None, 'parts': {}})
+        g = groups.setdefault(name, {'version': tag, 'kind': 'delta' if frm else 'full', 'joined': None, 'parts': {}})
         if part: g['parts'][int(part)] = p
         else: g['joined'] = p
     found = {}
@@ -556,14 +586,15 @@ def version_key(tag):
 
 
 def find_local():
-    """The update on a drive, or None, and what is wrong with the packages that cannot be used."""
+    """The newest update on any drive, or None, and what is wrong with the
+    packages that cannot be used."""
     image = IMAGES.get(device_model())
     if not image: raise ValueError(f'no update channel for {device_model()}')
-    current = installed_version(); problems = []
+    current = installed_version(); problems = []; best = None
     for drive in drives():
         try:
             with Mounted(drive) as top:
-                found = packages_in(top, image, current)
+                found = packages_in(top, image, current, installed_base())
                 if not found: continue
                 where = drive_title(drive)
                 sums, sig = top / 'SHA256SUMS', top / 'SHA256SUMS.sig'
@@ -583,14 +614,16 @@ def find_local():
                     problems.append(f'SHA256SUMS on the {where} is from another release than the update next to it.')
                     continue
                 # Newest version first; a delta before the full package of the same version.
-                name = sorted(usable, key=lambda n: (version_key(found[n]['version']), found[n]['kind'] == 'delta'))[-1]
+                rank = lambda n: (version_key(found[n]['version']), found[n]['kind'] == 'delta')
+                name = max(usable, key=rank)
+                if best and best[0] >= rank(name): continue
                 p = found[name]
-                return {'version': p['version'], 'kind': p['kind'], 'name': name, 'sha256': listed[name],
-                        'size': p['size'], 'drive': drive['path'], 'where': where,
-                        'files': [f.name for f in p['files']]}, problems
+                best = (rank(name), {'version': p['version'], 'kind': p['kind'], 'name': name, 'sha256': listed[name],
+                                     'size': p['size'], 'drive': drive['path'], 'where': where,
+                                     'files': [f.name for f in p['files']]})
         except (OSError, subprocess.CalledProcessError) as e:
             print(f'{drive["path"]}: not readable: {e}', file=sys.stderr)
-    return None, problems
+    return (best[1] if best else None), problems
 
 
 def local_check(args):
