@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Stage and recover offline SteamOS updates. Runs recovery from a private HOME root.
+"""Download, stage and recover offline SteamOS updates. Runs recovery from a private HOME root.
 No partitioning or formatting commands are used. Games and Steam account data are excluded.
 """
 from __future__ import annotations
@@ -32,6 +32,13 @@ PENDING = 'var/lib/konkr-update/pending'
 # Per-install record written by the image build; not part of any package.
 OPT_KEEP = ('steamos-sm8650/IMAGE.txt',)
 UPDATER = 'usr/share/konkr-update/konkr-update.py'
+# Written by make-steamos-sm8650.sh: the release tag the image was built as.
+VERSION_FILE = 'usr/share/pb-os/version'
+RELEASES = 'https://api.github.com/repos/project-barry/pb-os/releases'
+# Release asset of each device's package: pb-os-<tag>-<image>.update.tar.gz,
+# split into .001, .002, ... parts under GitHub's 2 GiB limit.
+IMAGES = {'KONKR Pocket FIT': 'pocketfit', 'AYANEO Pocket S2': 'pocketfit',
+          'Retroid Pocket 6': 'rp6', 'Retroid Pocket 6 TOP-DPAD': 'rp6', 'AYN Thor': 'thor'}
 
 
 def run(*args, **kwargs):
@@ -190,14 +197,34 @@ def retarget_kernel(src, dst, rootarg, helper=BOOTIMG):
     dst.write_bytes(image.build(module.retarget(image.cmdline, rootarg)))
 
 
-def stage(args):
+def device_model():
+    return Path('/sys/firmware/devicetree/base/model').read_text().rstrip('\0\n')
+
+
+def installed_version():
+    p = Path('/') / VERSION_FILE
+    return p.read_text().strip() if p.is_file() else ''
+
+
+def storage():
+    """Root-only update storage on HOME."""
+    base = Path('/home/.konkr-updates')
+    if base.is_symlink(): raise ValueError('invalid update storage directory')
+    base.mkdir(mode=0o700, exist_ok=True)
+    if base.stat().st_uid != 0: raise ValueError('update storage is not owned by root')
+    os.chmod(base, 0o700)
+    return base
+
+
+def stage(source_package, expected, move=False, version=None):
+    """Stage a package. move: it already sits in root-only storage, so take it instead of copying."""
     if os.geteuid() != 0: raise ValueError('staging needs administrator access')
-    model = Path('/sys/firmware/devicetree/base/model').read_text().rstrip('\0\n')
+    model = device_model()
     if os.uname().machine != 'aarch64': raise ValueError('requires ARM64 SteamOS')
     import pwd
     if pwd.getpwnam('steamos').pw_uid != 1000: raise ValueError('unsupported SteamOS account layout')
-    source_package = Path(args.package).resolve()
-    expected = args.sha256.lower()
+    source_package = Path(source_package).resolve()
+    expected = expected.lower()
     if not re.fullmatch('[0-9a-f]{64}', expected): raise ValueError('invalid expected SHA256')
     root_info, home_info, boot_info = [mount_info(x) for x in ('/', '/home', '/boot')]
     if root_info['fstype'] != 'ext4' or home_info['fstype'] != 'ext4' or boot_info['fstype'] != 'vfat':
@@ -205,19 +232,21 @@ def stage(args):
     if home_info['source'] == root_info['source']: raise ValueError('HOME must be a separate filesystem')
     pending = Path('/') / PENDING
     if pending.exists(): raise ValueError('an update is already pending; finish or recover it first')
-    base = Path('/home/.konkr-updates')
-    if base.is_symlink(): raise ValueError('invalid update storage directory')
-    base.mkdir(mode=0o700, exist_ok=True)
-    if base.stat().st_uid != 0: raise ValueError('update storage is not owned by root')
-    os.chmod(base, 0o700)
+    base = storage()
     work = base / str(uuid.uuid4()); work.mkdir(mode=0o700)
+    package = work / 'package.tar.gz'; corrupt = False
     try:
         # Validate and extract only a private, root-owned copy to avoid input races.
-        package = work / 'package.tar.gz'
-        shutil.copyfile(source_package, package); os.chmod(package, 0o600)
-        if digest(package) != expected: raise ValueError('package SHA256 mismatch')
+        if move: os.replace(source_package, package)
+        else: shutil.copyfile(source_package, package)
+        os.chmod(package, 0o600)
+        step('Checking the update')
+        if digest(package) != expected:
+            corrupt = True; raise ValueError('package SHA256 mismatch')
         manifest, size = validate_archive(package)
         if model not in manifest['devices']: raise ValueError(f'package is not for this device ({model})')
+        if version and manifest['version'] != version:
+            raise ValueError(f'package is version {manifest["version"]}, the release is {version}')
         used = shutil.disk_usage('/').total - shutil.disk_usage('/').free
         if shutil.disk_usage('/home').free < size + used + (512 << 20):
             raise ValueError('not enough HOME space for payload and rollback backup')
@@ -226,6 +255,7 @@ def stage(args):
         if shutil.disk_usage('/').free + managed < size + (512 << 20):
             raise ValueError('root partition is too small for this update')
         payload = work / 'payload'; payload.mkdir()
+        step('Unpacking the update')
         run('tar', '--xattrs', '--acls', '--numeric-owner', '-xzf', package, '-C', payload)
         verify_payload(payload, manifest)
         info = {'id': work.name, 'version': manifest['version'], 'sha256': expected,
@@ -248,8 +278,98 @@ def stage(args):
         install_kernel(work / 'next-KERNEL', Path('/boot'))
         print('Update staged. Reboot to apply. Backup:', work)
     except BaseException:
-        if not pending.exists(): shutil.rmtree(work)
+        if not pending.exists():
+            # A good download stays for the next try.
+            if move and not corrupt and package.exists(): os.replace(package, source_package)
+            shutil.rmtree(work)
         raise
+
+
+def step(text):
+    print('STEP', text, flush=True)
+
+
+def fetch(url, **headers):
+    import urllib.request
+    request = urllib.request.Request(url, headers={'User-Agent': 'pb-os-update', **headers})
+    return urllib.request.urlopen(request, timeout=60)
+
+
+def find_update():
+    """Newest release with a package for this device, or None."""
+    model = device_model()
+    image = IMAGES.get(model)
+    if not image: raise ValueError(f'no update channel for {model}')
+    with fetch(RELEASES + '?per_page=30', Accept='application/vnd.github+json') as r:
+        releases = json.load(r)
+    for release in releases:  # newest first
+        if release.get('draft'): continue
+        name = f"pb-os-{release['tag_name']}-{image}.update.tar.gz"
+        parts = sorted((a for a in release['assets'] if re.fullmatch(re.escape(name) + r'\.\d{3}', a['name'])),
+                       key=lambda a: a['name'])
+        sums = next((a for a in release['assets'] if a['name'] == 'SHA256SUMS'), None)
+        if parts and sums:
+            return {'version': release['tag_name'], 'title': release.get('name') or release['tag_name'],
+                    'page': release['html_url'], 'name': name, 'sums': sums['browser_download_url'],
+                    'parts': [{'url': a['browser_download_url'], 'size': a['size']} for a in parts],
+                    'size': sum(a['size'] for a in parts)}
+    return None
+
+
+def check(args):
+    current = installed_version()
+    found = find_update()
+    print(json.dumps({'current': current, 'update': found,
+                      'available': bool(found) and found['version'] != current}, indent=2))
+
+
+def download(update, dest):
+    """Append every part to one file; a later run resumes where this one stopped."""
+    total = update['size']
+    have = dest.stat().st_size if dest.exists() else 0
+    if have > total: dest.unlink(); have = 0
+    shown = -1; offset = 0
+    with dest.open('ab') as out:
+        for part in update['parts']:
+            end = offset + part['size']
+            if have < end:
+                skip = have - offset
+                with fetch(part['url'], **({'Range': f'bytes={skip}-'} if skip else {})) as r:
+                    if skip and r.status != 206: raise ValueError('the download server cannot resume')
+                    while chunk := r.read(1 << 20):
+                        out.write(chunk); have += len(chunk)
+                        if have * 200 // total != shown:
+                            shown = have * 200 // total; print('PROGRESS', have, total, flush=True)
+                out.flush(); os.fsync(out.fileno())
+                if have != end: raise ValueError('download interrupted; start it again to resume')
+            offset = end
+
+
+def update(args):
+    if os.geteuid() != 0: raise ValueError('updating needs administrator access')
+    if (Path('/') / PENDING).exists(): raise ValueError('an update is already pending; restart to install it')
+    step('Looking for updates')
+    found = find_update()
+    if not found: raise ValueError('the pb-os releases have no update for this device')
+    if found['version'] == installed_version() and not args.reinstall:
+        print('pb-os', found['version'], 'is already installed'); return
+    with fetch(found['sums']) as r:
+        sums = [line.split() for line in r.read().decode().splitlines()]
+    expected = next((f[0] for f in sums if len(f) == 2 and f[1].lstrip('*') == found['name']), '')
+    if not re.fullmatch('[0-9a-fA-F]{64}', expected): raise ValueError(f'SHA256SUMS has no checksum for {found["name"]}')
+    downloads = storage() / 'downloads'; downloads.mkdir(mode=0o700, exist_ok=True)
+    for old in downloads.iterdir():  # another release's download
+        if old.name != found['name']: old.unlink()
+    package = downloads / found['name']
+    have = package.stat().st_size if package.exists() else 0
+    # Rough room for the download, its unpacked payload and the rollback copy (stage checks exactly).
+    used = shutil.disk_usage('/').total - shutil.disk_usage('/').free
+    need = found['size'] - have + found['size'] * 5 // 2 + used + (512 << 20)
+    if shutil.disk_usage('/home').free < need:
+        raise ValueError(f'not enough free space: this update needs about {need >> 30} GB free on HOME')
+    step(f'Downloading pb-os {found["version"]}')
+    download(found, package)
+    stage(package, expected, move=True, version=found['version'])
 
 
 def install_kernel(src, boot):
@@ -395,14 +515,19 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     sub = ap.add_subparsers(dest='command', required=True)
     p = sub.add_parser('stage'); p.add_argument('package'); p.add_argument('--sha256', required=True)
+    sub.add_parser('check', help='newest release for this device, as JSON')
+    p = sub.add_parser('update', help='download the newest release and stage it')
+    p.add_argument('--reinstall', action='store_true', help='also when that version is installed')
     p = sub.add_parser('recover')
     for name in ('root', 'boot', 'home', 'work'): p.add_argument('--' + name, required=True)
     p = sub.add_parser('inspect'); p.add_argument('package')
     a = ap.parse_args()
     try:
-        if a.command == 'stage':
+        if a.command in ('stage', 'update'):
             with open('/run/konkr-update.lock', 'w') as lock:
-                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB); stage(a)
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                stage(a.package, a.sha256) if a.command == 'stage' else update(a)
+        elif a.command == 'check': check(a)
         elif a.command == 'recover': return recover(a)
         else:
             m, size = validate_archive(a.package); print(json.dumps({'version': m['version'], 'bytes': size}, indent=2))

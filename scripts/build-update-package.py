@@ -2,7 +2,9 @@
 """Build a verified offline update bundle from a completed rootfs and boot image.
 
 The rootfs is the one make-steamos-sm8650.sh packed into the image, with the
-same SOC and --device. Devices install it with the SteamOS Update app.
+same SOC and --device. Devices install it with the SteamOS Update app, which
+finds it in a GitHub release as pb-os-<version>-<image>.update.tar.gz.001, .002, ...
+(--release DIR writes those parts and the line for SHA256SUMS).
 """
 import argparse
 import hashlib
@@ -16,8 +18,9 @@ import tempfile
 ap = argparse.ArgumentParser()
 ap.add_argument('--rootfs', required=True)
 ap.add_argument('--kernel', required=True)
-ap.add_argument('--version', required=True)
-ap.add_argument('--output', required=True)
+ap.add_argument('--version', help='default: the rootfs /usr/share/pb-os/version')
+ap.add_argument('--output', help='package file (or use --release)')
+ap.add_argument('--release', metavar='DIR', help='write release parts named for the updater into DIR')
 ap.add_argument('--soc', choices=('sm8650', 'sm8550'), default='sm8650')
 ap.add_argument('--device', choices=('thor',), help='image built with --device thor')
 a = ap.parse_args()
@@ -27,7 +30,16 @@ if a.device == 'thor' and a.soc != 'sm8550': raise SystemExit('--device thor nee
 DEVICES = (['AYN Thor'] if a.device == 'thor' else
            {'sm8650': ['KONKR Pocket FIT', 'AYANEO Pocket S2'],
             'sm8550': ['Retroid Pocket 6', 'Retroid Pocket 6 TOP-DPAD']}[a.soc])
-root = Path(a.rootfs).resolve(); output = Path(a.output).resolve()
+root = Path(a.rootfs).resolve()
+stamped = root / 'usr/share/pb-os/version'
+version = a.version or (stamped.read_text().strip() if stamped.is_file() else '')
+if not version: raise SystemExit('no --version and the rootfs has no /usr/share/pb-os/version')
+if stamped.is_file() and stamped.read_text().strip() != version:
+    raise SystemExit(f'--version {version} differs from the rootfs version {stamped.read_text().strip()}')
+# Image name in release assets; the updater maps DTB models to it (IMAGES).
+image = 'thor' if a.device == 'thor' else {'sm8650': 'pocketfit', 'sm8550': 'rp6'}[a.soc]
+if bool(a.output) == bool(a.release): raise SystemExit('give --output or --release')
+output = (Path(a.output) if a.output else Path(a.release) / f'pb-os-{version}-{image}.update.tar.gz').resolve()
 if not (root / 'usr/lib/liblsfg-vk-layer-arm64.so').is_file(): raise SystemExit('missing LSFG v2 ARM layer')
 # Decky plugins: the image's bundle (install-system-fixes.sh) plus decky-lsfg-vk,
 # which updaters from before 2026-10 require. Device plugins a package does not
@@ -82,7 +94,7 @@ with tempfile.TemporaryDirectory(prefix='konkr-package-', dir=output.parent) as 
             for b in iter(lambda: f.read(4 << 20), b''): h.update(b)
         files[str(p.relative_to(stage))] = h.hexdigest()
     (stage / 'manifest.json').write_text(json.dumps({'format': 1, 'architecture': 'aarch64',
-        'devices': DEVICES, 'version': a.version, 'remove_plugins': REMOVE, 'files': files},
+        'devices': DEVICES, 'version': version, 'remove_plugins': REMOVE, 'files': files},
         separators=(',', ':')))  # updaters refuse a manifest over 32 MiB
     gzip = ['--use-compress-program=pigz'] if shutil.which('pigz') else ['-z']
     subprocess.run(['tar', '--xattrs', '--acls', '--numeric-owner', *gzip, '-cf', str(output) + '.part',
@@ -93,3 +105,14 @@ with output.open('rb') as f:
     for b in iter(lambda: f.read(4 << 20), b''): h.update(b)
 output.with_name(output.name + '.sha256').write_text(h.hexdigest() + '  ' + output.name + '\n')
 print(output, h.hexdigest())
+if a.release:
+    # GitHub release assets must stay under 2 GiB; the updater joins the parts.
+    n = 0; left = output.stat().st_size
+    with output.open('rb') as f:
+        while left:
+            n += 1; size = min(left, 1900 << 20); left -= size
+            with output.with_name(f'{output.name}.{n:03d}').open('wb') as part:
+                while size:
+                    b = f.read(min(size, 4 << 20)); part.write(b); size -= len(b)
+    output.unlink()
+    print(f'{n} parts; add {output.name}.sha256 to the release SHA256SUMS')

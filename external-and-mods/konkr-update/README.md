@@ -4,7 +4,8 @@ Installs a new pb-os version over the current one without reflashing. Games, sav
 
 ## How it works
 
-1. In Desktop Mode, open **SteamOS Update**. Select the update package for your device and paste its SHA-256 from the pb-os release.
+1. In Desktop Mode, open **SteamOS Update**. It looks for the newest pb-os release with a package for this device. Press **Download and install**. An interrupted download resumes where it stopped the next time.
+   Offline: under **Install from a file**, select a package and paste its SHA-256 from the release's `SHA256SUMS`.
 2. Preparation checks the archive, hashes every payload file, checks free space, and copies a private recovery runtime to HOME. It saves the current boot image and installs the new one, which carries the recovery hook.
 3. On restart, the initramfs mounts the same root, boot and HOME filesystems. It verifies their UUIDs and takes a rollback copy before replacing system files.
 4. It replaces `/usr`, `/opt` and `/etc`, installs the Decky plugins the package carries, removes the device plugins it lists for removal, verifies the installed files, then boots SteamOS. Accounts, passwords, machine-id, hostname, fstab, SSH keys and network connections in `/etc` are kept.
@@ -14,29 +15,37 @@ No partition table is changed and no filesystem is formatted. SD and internal in
 
 The apply step runs the updater that comes in the package, so fixes to it reach devices with the update itself.
 
-## Packages
+From Konsole: `sudo python3 /usr/share/konkr-update/konkr-update.py update`, then restart. `check` (no sudo) prints what is installed and what the releases offer.
 
-One package per image: Pocket FIT / Pocket S2 (SM8650), Retroid Pocket 6 (SM8550), and AYN Thor (SM8550 with the bottom-screen extras). A package only installs on the DTB models in its manifest. Build one from the rootfs that went into the image, with the same SoC and device:
+## Releasing an update
 
-```
-sudo scripts/build-update-package.py --soc sm8550 [--device thor] \
-  --rootfs /work/rootfs-... --kernel <kernel output>/boot/KERNEL \
-  --version <version> --output pb-os-<device>-<version>.tar.gz
-```
+One package per image: Pocket FIT / Pocket S2 (`pocketfit`), Retroid Pocket 6 (`rp6`) and AYN Thor (`thor`, SM8550 with the bottom-screen extras). A package only installs on the DTB models in its manifest.
 
-The package carries the managed system directories, the boot image and the bundled Decky plugins. It contains no proprietary Lossless Scaling DLL, game data, Steam accounts, SSH keys or the build's machine-id. The expected hash must come from the release. A local checksum proves integrity; it does not authenticate an untrusted download.
+1. Build the image with `PB_OS_VERSION=<release tag>` (e.g. `alpha-v0.3`). The image records it in `/usr/share/pb-os/version`; the updater offers a release whose tag differs from it.
+2. From the same rootfs, with the same SoC and device:
+   ```
+   sudo scripts/build-update-package.py --soc sm8550 [--device thor] \
+     --rootfs /work/rootfs-... --kernel <kernel output>/boot/KERNEL --release <dir>
+   ```
+   This writes `pb-os-<tag>-<image>.update.tar.gz.001`, `.002`, ... (under GitHub's 2 GiB limit) and a `.sha256` line.
+3. Upload the parts to the release with that tag and add the `.sha256` line to its `SHA256SUMS`.
+
+Devices take the newest non-draft release (pre-releases included) that has their parts and a `SHA256SUMS`.
+
+The package carries the managed system directories, the boot image and the bundled Decky plugins. It contains no proprietary Lossless Scaling DLL, game data, Steam accounts, SSH keys or the build's machine-id. The hash comes from the release's `SHA256SUMS`, fetched over HTTPS from GitHub like the parts. It proves the download is intact and matches the release; it does not authenticate the release itself (packages are not signed).
 
 ## Images from before the AYN Thor packages
 
-Their updater refuses a Thor package (`unsupported device list`). Run the updater from the package once, in Konsole:
+Their SteamOS Update app has no download button, and their updater refuses a Thor package (`unsupported device list`). Download the parts and `SHA256SUMS` from the release, then in Konsole (Thor example):
 
 ```
-tar -xzOf pb-os-thor-<version>.tar.gz root/usr/share/konkr-update/konkr-update.py > /tmp/konkr-update.py
-sudo python3 /tmp/konkr-update.py stage pb-os-thor-<version>.tar.gz --sha256 <hash from the release>
+cat pb-os-<tag>-thor.update.tar.gz.0* > pb-os-<tag>-thor.update.tar.gz && rm pb-os-<tag>-thor.update.tar.gz.0*
+tar -xzOf pb-os-<tag>-thor.update.tar.gz root/usr/share/konkr-update/konkr-update.py > /tmp/konkr-update.py
+sudo python3 /tmp/konkr-update.py stage pb-os-<tag>-thor.update.tar.gz --sha256 <its line in SHA256SUMS>
 systemctl reboot
 ```
 
-The installed updater is current after that.
+On the RP6 and Pocket FIT, the joined file also works in the old app. After that one update, the app downloads updates itself.
 
 ## Diagnostics and recovery
 

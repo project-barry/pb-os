@@ -70,7 +70,10 @@ Usage: $0 [options]
                     single-screen devices.
 
 Env: BOOT_MIB ROOT_MIB HOME_MIB STEAMOS_SM8650_IMG STEAMOS_ROOTFS KERNEL_OUT DEVICE
+     PB_OS_VERSION
      empty ROOT_MIB/HOME_MIB = auto (tight pack; home grows on first boot)
+     PB_OS_VERSION = the release tag (e.g. alpha-v0.3); the updater compares it
+     with the releases. Default: dev-<date>
 EOF
 }
 
@@ -88,6 +91,8 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 DEVICE="${DEVICE:-}"
+PB_OS_VERSION="${PB_OS_VERSION:-dev-$(date +%Y%m%d-%H%M)}"
+[[ "$PB_OS_VERSION" =~ ^[A-Za-z0-9._-]+$ ]] || die "PB_OS_VERSION: letters, digits, . _ - only"
 case "$DEVICE" in
   ""|thor) ;;
   *) die "unknown device: $DEVICE (known: thor)" ;;
@@ -506,4 +511,8 @@ fi
 # had box64 skips install_box64_rootfs, so make the link here too.
 ln -sfn /usr/local/bin/box64 "${R}/usr/bin/box64"
 prepare_runtime
+# The release this image is; update packages built from this rootfs carry it.
+mkdir -p "${R}/usr/share/pb-os"
+printf '%s\n' "$PB_OS_VERSION" >"${R}/usr/share/pb-os/version"
+log "pb-os version ${PB_OS_VERSION}"
 build_image
