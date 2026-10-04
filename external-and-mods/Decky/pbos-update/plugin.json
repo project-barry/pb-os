@@ -1,0 +1,12 @@
+{
+  "name": "PB-OS Update",
+  "author": "lavachemist",
+  "api_version": 1,
+  "flags": ["root"],
+  "version": "1.0.0",
+  "publish": {
+    "tags": ["pb-os", "update"],
+    "description": "Finds pb-os updates in the GitHub releases, downloads them and installs them on the next restart, from Game Mode.",
+    "image": "https://opengraph.githubassets.com/1/SteamDeckHomebrew/decky-loader"
+  }
+}

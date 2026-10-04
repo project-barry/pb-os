@@ -4,8 +4,8 @@ Installs a new pb-os version over the current one without reflashing. Games, sav
 
 ## How it works
 
-1. In Desktop Mode, open **SteamOS Update**. It looks for the newest pb-os release with a package for this device. Press **Download and install**. An interrupted download resumes where it stopped the next time.
-   Offline: under **Install from a file**, select a package and paste its SHA-256 from the release's `SHA256SUMS`.
+1. In Game Mode, open Quick Access → Decky → **PB-OS Update** ([plugin](../Decky/pbos-update/), on every image). It looks for the newest pb-os release with a package for this device and shows a toast when one comes out. Press **Download and install**; the download carries on with the menu closed, can be paused, and resumes where it stopped. Then **Restart and install**.
+   Desktop Mode has the same in the **SteamOS Update** app, which also installs a package from a file (paste its SHA-256 from the release's `SHA256SUMS`).
 2. Preparation checks the archive, hashes every payload file, checks free space, and copies a private recovery runtime to HOME. It saves the current boot image and installs the new one, which carries the recovery hook.
 3. On restart, the initramfs mounts the same root, boot and HOME filesystems. It verifies their UUIDs and takes a rollback copy before replacing system files.
 4. It replaces `/usr`, `/opt` and `/etc`, installs the Decky plugins the package carries, removes the device plugins it lists for removal, verifies the installed files, then boots SteamOS. Accounts, passwords, machine-id, hostname, fstab, SSH keys and network connections in `/etc` are kept.
