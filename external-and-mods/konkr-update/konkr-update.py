@@ -20,20 +20,18 @@ from pathlib import Path, PurePosixPath
 FORMAT = 1
 ROOT_DIRS = ('usr', 'opt', 'etc')
 UPPER = 'var/lib/overlays/etc/upper'
-HOME_DIRS = ('homebrew/plugins/pbos-control', 'homebrew/plugins/decky-lsfg-vk')
+PLUGINS = 'homebrew/plugins'
 # Plugin folders from older images: removed on apply, restored on rollback.
-# Packages still carry an empty konkr-control folder, which updaters from
-# before the PB-OS Control rename require.
-LEGACY_HOME_DIRS = ('homebrew/plugins/konkr-control',)
-SNAPSHOT_HOME_DIRS = HOME_DIRS + LEGACY_HOME_DIRS
-# One package per SoC; `devices` must be exactly one of these (DTB models).
-KONKR_DEVICES = ['KONKR Pocket FIT', 'AYANEO Pocket S2']
-DEVICE_SETS = (KONKR_DEVICES, ['Retroid Pocket 6', 'Retroid Pocket 6 TOP-DPAD'])
-KONKR_ONLY = ('homebrew/plugins/pbos-control',)
+# SM8650 packages still carry an empty konkr-control folder, which updaters
+# from before the PB-OS Control rename require.
+LEGACY_PLUGINS = ('konkr-control',)
 PRESERVE = ('passwd', 'shadow', 'group', 'gshadow', 'machine-id', 'hostname', 'hosts',
             'fstab', 'crypttab', 'localtime', 'adjtime', 'resolv.conf', 'ssh',
             'NetworkManager/system-connections', 'sudoers.d')
 PENDING = 'var/lib/konkr-update/pending'
+# Per-install record written by the image build; not part of any package.
+OPT_KEEP = ('steamos-sm8650/IMAGE.txt',)
+UPDATER = 'usr/share/konkr-update/konkr-update.py'
 
 
 def run(*args, **kwargs):
@@ -111,8 +109,12 @@ def validate_archive(package):
         raise ValueError('required payload directories must be real directories')
     if not manifest or manifest.get('format') != FORMAT or manifest.get('architecture') != 'aarch64':
         raise ValueError('unsupported update format or architecture')
-    if manifest.get('devices') not in DEVICE_SETS:
+    devices = manifest.get('devices')
+    if not isinstance(devices, list) or not devices or not all(isinstance(d, str) and d for d in devices):
         raise ValueError('unsupported device list')
+    removed = manifest.get('remove_plugins', [])
+    if not isinstance(removed, list) or not all(isinstance(n, str) and re.fullmatch('[A-Za-z0-9_-][A-Za-z0-9._-]*', n) for n in removed):
+        raise ValueError('invalid plugin removal list')
     files = manifest.get('files', {})
     if not isinstance(files, dict): raise ValueError('invalid file manifest')
     # Every regular file must be covered, and file keys cannot escape extraction.
@@ -146,7 +148,7 @@ def bootimg_helper(payload=None):
     raise ValueError('boot image helper not found (ufs-bootimg.py)')
 
 
-def recovery_runtime(dst, helper=BOOTIMG):
+def recovery_runtime(dst, helper=BOOTIMG, updater=None):
     """Copy executables, Python stdlib, and all their resolved shared libraries."""
     dst.mkdir(parents=True, exist_ok=True)
     sources = [Path(shutil.which('python3')).resolve(), Path(shutil.which('rsync')).resolve(), Path(shutil.which('chown')).resolve(), Path(shutil.which('findmnt')).resolve()]
@@ -168,7 +170,7 @@ def recovery_runtime(dst, helper=BOOTIMG):
     if not rs.exists(): rs.symlink_to(str(sources[1]))
     for d in ('target', 'boot-target', 'home-target', 'transaction', 'dev', 'proc', 'tmp'):
         (dst / d).mkdir(parents=True, exist_ok=True)
-    shutil.copy2(__file__, dst / 'updater.py')
+    shutil.copy2(updater or __file__, dst / 'updater.py')
     shutil.copy2(helper, dst / 'bootimg.py')
     # Include NSS configuration for numeric lookup fallbacks; no credentials copied.
     (dst / 'etc').mkdir(exist_ok=True)
@@ -191,7 +193,6 @@ def retarget_kernel(src, dst, rootarg, helper=BOOTIMG):
 def stage(args):
     if os.geteuid() != 0: raise ValueError('staging needs administrator access')
     model = Path('/sys/firmware/devicetree/base/model').read_text().rstrip('\0\n')
-    if not any(model in s for s in DEVICE_SETS): raise ValueError('unsupported device')
     if os.uname().machine != 'aarch64': raise ValueError('requires ARM64 SteamOS')
     import pwd
     if pwd.getpwnam('steamos').pw_uid != 1000: raise ValueError('unsupported SteamOS account layout')
@@ -236,7 +237,9 @@ def stage(args):
         if not rootarg: raise ValueError('cannot identify the boot root argument')
         helper = bootimg_helper(payload)
         retarget_kernel(payload / 'boot/KERNEL', work / 'next-KERNEL', rootarg, helper)
-        recovery_runtime(work / 'recovery', helper)
+        # The package's own updater applies it, so apply fixes need no reflash.
+        bundled = payload / 'root' / UPDATER
+        recovery_runtime(work / 'recovery', helper, bundled if bundled.is_file() else None)
         state(work, 'staged')
         pending.parent.mkdir(parents=True, exist_ok=True)
         pending.write_text(work.name + '\n'); os.chmod(pending, 0o600)
@@ -259,17 +262,27 @@ def install_kernel(src, boot):
     os.sync()
 
 
-def snapshot(root, home, work):
+def plugin_dirs(work, manifest):
+    """Plugin folders the update installs, and those it removes."""
+    src = work / 'payload/home/steamos' / PLUGINS
+    names = sorted(p.name for p in src.iterdir() if p.is_dir()) if src.is_dir() else []
+    install = [n for n in names if n not in LEGACY_PLUGINS]
+    remove = sorted(set(manifest.get('remove_plugins', [])) | set(LEGACY_PLUGINS))
+    return [f'{PLUGINS}/{n}' for n in install], [f'{PLUGINS}/{n}' for n in remove if n not in install]
+
+
+def snapshot(root, home, work, manifest):
     backup = work / 'backup'
+    install, remove = plugin_dirs(work, manifest)
     write_json(backup / 'root-presence.json', {rel: (root / rel).exists() for rel in (*ROOT_DIRS, UPPER)})
     for rel in (*ROOT_DIRS, UPPER):
         src = root / rel
         if src.exists(): copy_tree(src, backup / 'root' / rel)
-    for rel in SNAPSHOT_HOME_DIRS:
+    for rel in install + remove:
         src = home / 'steamos' / rel
         if src.exists(): copy_tree(src, backup / 'home/steamos' / rel)
     # Explicitly record absent directories so rollback removes newly introduced ones.
-    write_json(backup / 'home-presence.json', {rel: (home / 'steamos' / rel).exists() for rel in SNAPSHOT_HOME_DIRS})
+    write_json(backup / 'home-presence.json', {rel: (home / 'steamos' / rel).exists() for rel in install + remove})
     local = home / 'steamos/.local/share/vulkan/implicit_layer.d'
     if local.exists(): copy_tree(local, backup / 'layers')
     write_json(backup / 'layers-presence.json', {'exists': local.exists()})
@@ -285,7 +298,7 @@ def restore(root, boot, home, work):
         if present_root[rel]: copy_tree(src, root / rel, delete=True)
         elif (root / rel).exists(): shutil.rmtree(root / rel)
     present = json.loads((backup / 'home-presence.json').read_text())
-    for rel in SNAPSHOT_HOME_DIRS:
+    for rel in present:
         dest = home / 'steamos' / rel
         if present[rel]: copy_tree(backup / 'home/steamos' / rel, dest, delete=True)
         elif dest.exists(): shutil.rmtree(dest)
@@ -299,22 +312,19 @@ def restore(root, boot, home, work):
 
 def apply(root, boot, home, work, manifest):
     payload = work / 'payload'
-    for rel in ('usr', 'opt'): copy_tree(payload / 'root' / rel, root / rel, delete=True)
+    copy_tree(payload / 'root/usr', root / 'usr', delete=True)
+    copy_tree(payload / 'root/opt', root / 'opt', delete=True, excludes=OPT_KEEP)
     # Preserve identity, accounts, network credentials and the target partition layout.
     copy_tree(payload / 'root/etc', root / 'etc', delete=True, excludes=PRESERVE)
     upper = payload / 'root' / UPPER
     if upper.exists(): copy_tree(upper, root / UPPER, excludes=PRESERVE)
-    for rel in HOME_DIRS:
-        src = payload / 'home/steamos' / rel
-        if rel in KONKR_ONLY and manifest['devices'] != KONKR_DEVICES:
-            # Not for this device; drop any stale copy (the snapshot restores it on rollback).
-            if (home / 'steamos' / rel).exists(): shutil.rmtree(home / 'steamos' / rel)
-            continue
-        if not src.is_dir(): raise ValueError(f'missing home migration: {rel}')
-        copy_tree(src, home / 'steamos' / rel, delete=True)
+    install, remove = plugin_dirs(work, manifest)
+    for rel in install:
+        copy_tree(payload / 'home/steamos' / rel, home / 'steamos' / rel, delete=True)
         # Images stage users with numeric ownership; do not inherit root ownership.
         run('chown', '-R', '1000:1000', home / 'steamos' / rel)
-    for rel in LEGACY_HOME_DIRS:
+    # Plugins of other devices or older images (the snapshot restores them on rollback).
+    for rel in remove:
         if (home / 'steamos' / rel).exists(): shutil.rmtree(home / 'steamos' / rel)
     for prefix in (root / 'usr', root / 'usr/local', home / 'steamos/.local'):
         for name in ('VkLayer_LS_frame_generation.json', 'VkLayer_LS_frame_generation_arm64.json'):
@@ -322,7 +332,7 @@ def apply(root, boot, home, work, manifest):
     # Compare every managed regular file that was installed. No game/save paths included.
     for name, sha in manifest['files'].items():
         if name.startswith(('root/usr/', 'root/opt/')): target = root / name[5:]
-        elif any(name.startswith('home/steamos/' + rel + '/') for rel in HOME_DIRS): target = home / name[5:]
+        elif any(name.startswith('home/steamos/' + rel + '/') for rel in install): target = home / name[5:]
         elif name.startswith(('root/etc/', 'root/' + UPPER + '/')):
             prefix = 'root/etc/' if name.startswith('root/etc/') else 'root/' + UPPER + '/'
             rel = name[len(prefix):]
@@ -355,7 +365,7 @@ def recover(args):
     if current == 'staged':
         try:
             verify_payload(work / 'payload', record['manifest'])
-            snapshot(root, home, work)
+            snapshot(root, home, work, record['manifest'])
             current = 'backed-up'
         except Exception as e:
             print('RECOVERY ERROR:', e, flush=True)

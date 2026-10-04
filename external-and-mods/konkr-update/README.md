@@ -1,28 +1,48 @@
 # Offline SteamOS updates
 
-This updater is under verification for v1.2. It must not be advertised as release-ready until the boot-hook and hardware gates in `docs/V1.2-VERIFICATION.md` pass.
+Installs a new pb-os version over the current one without reflashing. Games, saves, Steam accounts, Wi-Fi, Decky settings and your own Decky plugins stay.
 
 ## How it works
 
-1. In Desktop Mode, open **SteamOS Update** in ARM-Manager. Select the update package and paste its SHA-256 from the official GitHub release.
-2. Preparation checks the archive, hashes every payload file, checks available space, and copies a private recovery runtime to HOME. It saves the current boot image and installs the recovery-capable bootstrap.
-3. On restart, the initramfs mounts the same root, boot, and HOME filesystems. It verifies their UUIDs and takes a rollback copy before replacing system files.
-4. It updates the system and the two bundled Decky plugins, verifies installed content, then boots SteamOS. Games, ROMs, saves, Steam account files, Decky settings, accounts, network credentials, and fstab are preserved.
-5. An interrupted apply or rollback is recovered on the next boot. A failed apply restores the backup and reboots into the previous kernel. If recovery itself cannot finish, normal boot is stopped and its log is left on HOME.
+1. In Desktop Mode, open **SteamOS Update**. Select the update package for your device and paste its SHA-256 from the pb-os release.
+2. Preparation checks the archive, hashes every payload file, checks free space, and copies a private recovery runtime to HOME. It saves the current boot image and installs the new one, which carries the recovery hook.
+3. On restart, the initramfs mounts the same root, boot and HOME filesystems. It verifies their UUIDs and takes a rollback copy before replacing system files.
+4. It replaces `/usr`, `/opt` and `/etc`, installs the Decky plugins the package carries, removes the device plugins it lists for removal, verifies the installed files, then boots SteamOS. Accounts, passwords, machine-id, hostname, fstab, SSH keys and network connections in `/etc` are kept.
+5. An interrupted apply or rollback is recovered on the next boot. A failed apply restores the backup and reboots into the previous kernel. If recovery itself cannot finish, normal boot stops and the log is left on HOME.
 
-No partition table is changed and no filesystem is formatted. Both SD and internal installs use the same process. HOME needs enough free space for the unpacked update and a copy of the current system; the root partition must also fit the new system. Existing backups are retained.
+No partition table is changed and no filesystem is formatted. SD and internal installs use the same process. HOME needs room for the package, its unpacked payload and a copy of the current system (about 25 GB); the root partition must also fit the new system.
 
-## Payload and trust
+The apply step runs the updater that comes in the package, so fixes to it reach devices with the update itself.
 
-Packages contain only the managed system directories, boot image, and bundled Decky plugins. They contain no proprietary Lossless Scaling DLL, game data, Steam accounts, or SSH keys. The expected package hash must come from the official release. A local checksum proves integrity; it does not authenticate an untrusted download.
+## Packages
 
-The old 1.x LSFG layer manifests are removed. LSFG v2 requires the official `lsfg-vk` Steam branch DLL; the Decky plugin guides its setup. Updating the OS does not reset or replace Steam game installations.
+One package per image: Pocket FIT / Pocket S2 (SM8650), Retroid Pocket 6 (SM8550), and AYN Thor (SM8550 with the bottom-screen extras). A package only installs on the DTB models in its manifest. Build one from the rootfs that went into the image, with the same SoC and device:
+
+```
+sudo scripts/build-update-package.py --soc sm8550 [--device thor] \
+  --rootfs /work/rootfs-... --kernel <kernel output>/boot/KERNEL \
+  --version <version> --output pb-os-<device>-<version>.tar.gz
+```
+
+The package carries the managed system directories, the boot image and the bundled Decky plugins. It contains no proprietary Lossless Scaling DLL, game data, Steam accounts, SSH keys or the build's machine-id. The expected hash must come from the release. A local checksum proves integrity; it does not authenticate an untrusted download.
+
+## Images from before the AYN Thor packages
+
+Their updater refuses a Thor package (`unsupported device list`). Run the updater from the package once, in Konsole:
+
+```
+tar -xzOf pb-os-thor-<version>.tar.gz root/usr/share/konkr-update/konkr-update.py > /tmp/konkr-update.py
+sudo python3 /tmp/konkr-update.py stage pb-os-thor-<version>.tar.gz --sha256 <hash from the release>
+systemctl reboot
+```
+
+The installed updater is current after that.
 
 ## Diagnostics and recovery
 
-Transaction data and logs are under `/home/.konkr-updates/<id>/`, accessible to root. Keep the working microSD as a recovery option for an internal install. A recovery error must be investigated before deleting the pending marker or backup.
+Transaction data and logs are under `/home/.konkr-updates/<id>/`, accessible to root. Keep a working microSD as a recovery option for an internal install. A recovery error must be investigated before deleting the pending marker or backup.
 
-From a recovery SD, mount the affected root, boot, and HOME partitions and run the same helper as root with the corresponding paths:
+From a recovery SD, mount the affected root, boot and HOME partitions and run the same helper as root with the corresponding paths:
 
 ```
 python3 /usr/share/konkr-update/konkr-update.py recover \

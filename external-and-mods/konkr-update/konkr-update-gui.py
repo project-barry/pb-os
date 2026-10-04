@@ -20,7 +20,7 @@ class Window(Gtk.Window):
         box.pack_start(self.sha, False, False, 0)
         self.prepare = Gtk.Button(label='Prepare update'); self.prepare.connect('clicked', self.start)
         box.pack_start(self.prepare, False, False, 0)
-        self.status = Gtk.Label(label='Download the package and checksum from github.com/hashtagbasit/SteamOS-ARM-Handhelds (Releases).')
+        self.status = Gtk.Label(label='Download the package for this device and its checksum from github.com/project-barry/pb-os (Releases).')
         self.status.set_line_wrap(True); self.status.set_selectable(True); self.status.set_xalign(0)
         box.pack_start(self.status, True, True, 0)
         self.reboot = Gtk.Button(label='Restart and install'); self.reboot.set_sensitive(False)
