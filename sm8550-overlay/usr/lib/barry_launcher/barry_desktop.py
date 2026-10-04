@@ -100,9 +100,10 @@ function place(w) {
     }
     if (w.output !== o) workspace.sendClientToScreen(w, o);
     w.noBorder = true;
-    if ((w.caption || "").startsWith("Barry Launcher")) {
-        w.skipTaskbar = true; w.skipPager = true; w.skipSwitcher = true;
-    }
+    // Barry's apps too: the top screen's taskbar would list them (its
+    // Firefox icon taking in Barry's browser), and they are the bottom
+    // screen's, switched there.
+    w.skipTaskbar = true; w.skipPager = true; w.skipSwitcher = true;
     const g = o.geometry;
     if (w.caption === KEYBOARD) {
         w.keepAbove = true;
