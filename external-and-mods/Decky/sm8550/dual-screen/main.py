@@ -97,8 +97,12 @@ TWO_SCREEN = {
         "kind": "toml", "process": r"melonds",
         # A second window, kept across launches: the top screen in the first
         # (screenSizing_TopOnly 4), the bottom one in the second (BotOnly 5).
-        "keys": [("Instance0.Window0", "ScreenSizing", "4"),
+        # Both with the Natural layout (0): Hybrid (3) ignores the sizing and
+        # draws a big screen with both small ones in each window.
+        "keys": [("Instance0.Window0", "ScreenLayout", "0"),
+                 ("Instance0.Window0", "ScreenSizing", "4"),
                  ("Instance0.Window1", "Enabled", "true"),
+                 ("Instance0.Window1", "ScreenLayout", "0"),
                  ("Instance0.Window1", "ScreenSizing", "5")],
     },
     "Cemu": {
