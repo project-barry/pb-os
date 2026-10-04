@@ -2,25 +2,37 @@
 """Build a verified offline update bundle from a completed rootfs and boot image.
 
 The rootfs is the one make-steamos-sm8650.sh packed into the image, with the
-same SOC and --device. Devices install it with the SteamOS Update app, which
-finds it in a GitHub release as pb-os-<version>-<image>.update.tar.gz.001, .002, ...
-(--release DIR writes those parts and the line for SHA256SUMS).
+same SOC and --device. Devices install it with PB-OS Update (Decky) or the
+SteamOS Update app, which find it in a GitHub release as
+  pb-os-<version>-<image>.update.tar.gz.001, .002, ...              full system
+  pb-os-<version>-<image>.from-<old version>.delta.tar.gz.001, ...  what changed
+(--release DIR writes those parts and the lines for SHA256SUMS).
+
+Every build also writes pb-os-<version>-<image>.state.json.gz: each system
+file with its hash and permissions. A later build turns it into a delta with
+--from-state. --state-only writes one for an image built before this, from
+its root partition mounted read-only.
 """
 import argparse
+import gzip
 import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import shutil
+import stat
 import subprocess
 import tempfile
 
 ap = argparse.ArgumentParser()
 ap.add_argument('--rootfs', required=True)
-ap.add_argument('--kernel', required=True)
+ap.add_argument('--kernel', required=True, help='the kernel build output KERNEL (before the image retargets it)')
 ap.add_argument('--version', help='default: the rootfs /usr/share/pb-os/version')
-ap.add_argument('--output', help='package file (or use --release)')
+ap.add_argument('--output', help='package file (or use --release); with --state-only, the state file')
 ap.add_argument('--release', metavar='DIR', help='write release parts named for the updater into DIR')
+ap.add_argument('--from-state', action='append', default=[], metavar='FILE',
+                help='also build a delta from the release this state file describes (repeatable)')
+ap.add_argument('--state-only', action='store_true', help='only write the state file of --rootfs')
 ap.add_argument('--soc', choices=('sm8650', 'sm8550'), default='sm8650')
 ap.add_argument('--device', choices=('thor',), help='image built with --device thor')
 a = ap.parse_args()
@@ -39,7 +51,99 @@ if stamped.is_file() and stamped.read_text().strip() != version:
 # Image name in release assets; the updater maps DTB models to it (IMAGES).
 image = 'thor' if a.device == 'thor' else {'sm8650': 'pocketfit', 'sm8550': 'rp6'}[a.soc]
 if bool(a.output) == bool(a.release): raise SystemExit('give --output or --release')
-output = (Path(a.output) if a.output else Path(a.release) / f'pb-os-{version}-{image}.update.tar.gz').resolve()
+out_dir = Path(a.release).resolve() if a.release else Path(a.output).resolve().parent
+# The trees an update manages, and what in them is per installation.
+MANAGED = ('usr', 'opt', 'etc', 'var/lib/overlays/etc/upper')
+IDENTITY = ('etc/machine-id', 'var/lib/overlays/etc/upper/machine-id', 'opt/steamos-sm8650/IMAGE.txt')
+# setuid root that make-steamos-sm8650.sh (restore_image_suid) sets on the image copy only.
+SUID = {p: 0o4755 for p in ('usr/bin/pkexec', 'usr/sbin/pkexec', 'usr/bin/sudo', 'usr/sbin/sudo',
+        'usr/lib/polkit-1/polkit-agent-helper-1', 'usr/bin/su', 'usr/bin/passwd', 'usr/bin/newgrp',
+        'usr/bin/chsh', 'usr/bin/chfn', 'usr/bin/gpasswd', 'usr/bin/unix_chkpwd', 'usr/bin/mount',
+        'usr/bin/umount')}
+SUID['usr/lib/dbus-1.0/dbus-daemon-launch-helper'] = 0o4750
+# Only the dbus group may run the launch helper (the dbus package ships it root:dbus).
+SUID_GROUP = {'usr/lib/dbus-1.0/dbus-daemon-launch-helper': 'dbus'}
+
+
+def suid_gid(root, rel):
+    """Group of a setuid file: root, or its group by the rootfs's own /etc/group."""
+    name = SUID_GROUP.get(rel)
+    if not name: return 0
+    for line in (root / 'etc/group').read_text().splitlines():
+        f = line.split(':')
+        if f[0] == name: return int(f[2])
+    raise SystemExit(f'{name} group missing from the rootfs /etc/group')
+
+
+def sha256(p):
+    h = hashlib.sha256()
+    with open(p, 'rb') as f:
+        for b in iter(lambda: f.read(4 << 20), b''): h.update(b)
+    return h.hexdigest()
+
+
+def tree_state(base, hashes=None):
+    """{path: entry} of the managed trees under base, as a device has them
+    after a full update: setuid as on the image, no per-install identity."""
+    entries = {}
+    for top in MANAGED:
+        if not (base / top).is_dir(): continue
+        for dirpath, dirs, names in os.walk(base / top):
+            for name in dirs + names:
+                p = Path(dirpath) / name
+                rel = str(p.relative_to(base))
+                if rel in IDENTITY: continue
+                st = p.lstat()
+                if stat.S_ISLNK(st.st_mode): e = ['l', os.readlink(p), st.st_uid, st.st_gid]
+                elif stat.S_ISDIR(st.st_mode): e = ['d', st.st_mode & 0o7777, st.st_uid, st.st_gid]
+                elif stat.S_ISREG(st.st_mode):
+                    sha = (hashes or {}).get('root/' + rel) or sha256(p)
+                    e = ['f', st.st_mode & 0o7777, st.st_uid, st.st_gid, sha]
+                    if rel in SUID: e[1:4] = [SUID[rel], 0, suid_gid(base, rel)]
+                else: raise SystemExit(f'special file in the system tree: {rel}')
+                entries[rel] = e
+    return entries
+
+
+def write_state(path, entries):
+    with gzip.open(path, 'wt') as f:
+        json.dump({'format': 1, 'version': version, 'image': image, 'kernel': sha256(a.kernel),
+                   'entries': entries}, f, separators=(',', ':'))
+    print('state', path)
+
+
+def finish(output):
+    """Checksum line, and with --release the parts under GitHub's 2 GiB limit."""
+    h = sha256(output)
+    output.with_name(output.name + '.sha256').write_text(h + '  ' + output.name + '\n')
+    print(output, h)
+    if not a.release: return
+    n = 0; left = output.stat().st_size
+    with output.open('rb') as f:
+        while left:
+            n += 1; size = min(left, 1900 << 20); left -= size
+            with output.with_name(f'{output.name}.{n:03d}').open('wb') as part:
+                while size:
+                    b = f.read(min(size, 4 << 20)); part.write(b); size -= len(b)
+    output.unlink()
+    print(f'{n} parts; add {output.name}.sha256 to the release SHA256SUMS')
+
+
+def pack(stage, output, manifest, members):
+    (stage / 'manifest.json').write_text(json.dumps(manifest, separators=(',', ':')))  # updaters refuse over 32 MiB
+    gz = ['--use-compress-program=pigz'] if shutil.which('pigz') else ['-z']
+    subprocess.run(['tar', '--xattrs', '--acls', '--numeric-owner', *gz, '-cf', str(output) + '.part',
+                    '-C', str(stage), 'manifest.json', *members], check=True)
+    os.replace(str(output) + '.part', output)
+    finish(output)
+
+
+if a.state_only:
+    write_state(Path(a.output).resolve() if a.output else out_dir / f'pb-os-{version}-{image}.state.json.gz',
+                tree_state(root))
+    raise SystemExit(0)
+
+output = (Path(a.output) if a.output else out_dir / f'pb-os-{version}-{image}.update.tar.gz').resolve()
 if not (root / 'usr/lib/liblsfg-vk-layer-arm64.so').is_file(): raise SystemExit('missing LSFG v2 ARM layer')
 # Decky plugins: the image's bundle (install-system-fixes.sh) plus decky-lsfg-vk,
 # which updaters from before 2026-10 require. Device plugins a package does not
@@ -48,14 +152,12 @@ bundle = root / 'usr/share/steamos-odin/decky-plugins'
 bundled = [p.name for p in bundle.iterdir() if p.is_dir()] if bundle.is_dir() else []
 PLUGINS = sorted({'decky-lsfg-vk', *bundled})
 REMOVE = sorted({'pbos-control', 'dual-screen', 'thor-screens'} - set(PLUGINS))
-# setuid root that make-steamos-sm8650.sh (restore_image_suid) sets on the image copy only.
-SUID = {p: 0o4755 for p in ('usr/bin/pkexec', 'usr/sbin/pkexec', 'usr/bin/sudo', 'usr/sbin/sudo',
-        'usr/lib/polkit-1/polkit-agent-helper-1', 'usr/bin/su', 'usr/bin/passwd', 'usr/bin/newgrp',
-        'usr/bin/chsh', 'usr/bin/chfn', 'usr/bin/gpasswd', 'usr/bin/unix_chkpwd', 'usr/bin/mount',
-        'usr/bin/umount')}
-SUID['usr/lib/dbus-1.0/dbus-daemon-launch-helper'] = 0o4750
+bases = [json.load(gzip.open(f, 'rt')) for f in a.from_state]
+for b in bases:
+    if b.get('image') != image: raise SystemExit(f'state of {b.get("image")}, building {image}')
+    if b.get('version') == version: raise SystemExit(f'state is of this version ({version})')
 with tempfile.TemporaryDirectory(prefix='konkr-package-', dir=output.parent) as temp:
-    stage = Path(temp)
+    stage = Path(temp) / 'full'
     def copy(src, dst):
         dst.mkdir(parents=True, exist_ok=True)
         # The completed build tree must remain unchanged throughout packaging.
@@ -64,7 +166,7 @@ with tempfile.TemporaryDirectory(prefix='konkr-package-', dir=output.parent) as 
             subprocess.run(['cp', '-a', '--link', str(src) + '/.', str(dst) + '/'], check=True)
         else:
             subprocess.run(['rsync', '-aHAX', '--numeric-ids', str(src) + '/', str(dst) + '/'], check=True)
-    for rel in ('usr', 'opt', 'etc', 'var/lib/overlays/etc/upper'):
+    for rel in MANAGED:
         src = root / rel
         if src.exists(): copy(src, stage / 'root' / rel)
     for rel, mode in SUID.items():
@@ -72,7 +174,7 @@ with tempfile.TemporaryDirectory(prefix='konkr-package-', dir=output.parent) as 
         if p.is_symlink() or not p.is_file(): continue
         # A new inode: chmod on the hard link would change the build tree.
         p.unlink(); shutil.copy2(root / rel, p)
-        os.chown(p, 0, 0); os.chmod(p, mode)
+        os.chown(p, 0, suid_gid(root, rel)); os.chmod(p, mode)
     # Each installation keeps its own identity; the build's is not shipped.
     for rel in ('etc/machine-id', 'var/lib/overlays/etc/upper/machine-id'):
         (stage / 'root' / rel).unlink(missing_ok=True)
@@ -89,30 +191,47 @@ with tempfile.TemporaryDirectory(prefix='konkr-package-', dir=output.parent) as 
     files = {}
     for p in sorted(stage.rglob('*')):
         if not p.is_file() or p.is_symlink(): continue
-        h = hashlib.sha256()
-        with p.open('rb') as f:
-            for b in iter(lambda: f.read(4 << 20), b''): h.update(b)
-        files[str(p.relative_to(stage))] = h.hexdigest()
-    (stage / 'manifest.json').write_text(json.dumps({'format': 1, 'architecture': 'aarch64',
-        'devices': DEVICES, 'version': version, 'remove_plugins': REMOVE, 'files': files},
-        separators=(',', ':')))  # updaters refuse a manifest over 32 MiB
-    gzip = ['--use-compress-program=pigz'] if shutil.which('pigz') else ['-z']
-    subprocess.run(['tar', '--xattrs', '--acls', '--numeric-owner', *gzip, '-cf', str(output) + '.part',
-                    '-C', str(stage), 'manifest.json', 'root', 'home', 'boot'], check=True)
-    os.replace(str(output) + '.part', output)
-h = hashlib.sha256()
-with output.open('rb') as f:
-    for b in iter(lambda: f.read(4 << 20), b''): h.update(b)
-output.with_name(output.name + '.sha256').write_text(h.hexdigest() + '  ' + output.name + '\n')
-print(output, h.hexdigest())
-if a.release:
-    # GitHub release assets must stay under 2 GiB; the updater joins the parts.
-    n = 0; left = output.stat().st_size
-    with output.open('rb') as f:
-        while left:
-            n += 1; size = min(left, 1900 << 20); left -= size
-            with output.with_name(f'{output.name}.{n:03d}').open('wb') as part:
-                while size:
-                    b = f.read(min(size, 4 << 20)); part.write(b); size -= len(b)
-    output.unlink()
-    print(f'{n} parts; add {output.name}.sha256 to the release SHA256SUMS')
+        files[str(p.relative_to(stage))] = sha256(p)
+    common = {'architecture': 'aarch64', 'devices': DEVICES, 'version': version, 'remove_plugins': REMOVE}
+    new = tree_state(stage / 'root', files)
+    write_state(out_dir / f'pb-os-{version}-{image}.state.json.gz', new)
+    pack(stage, output, {'format': 1, **common, 'files': files}, ['root', 'home', 'boot'])
+
+    for base in bases:
+        old = base['entries']
+        changed = sorted(rel for rel, e in new.items() if old.get(rel) != e)
+        # Gone, or a different kind of entry now (a file that became a directory):
+        # the device removes the old one before the new one is copied in.
+        deleted = sorted((rel for rel in old if rel not in new or old[rel][0] != new[rel][0]),
+                         key=lambda r: (-r.count('/'), r))
+        # The kernel goes along when it changed, and always with changed modules.
+        kernel = (sha256(a.kernel) != base.get('kernel')
+                  or any(r.startswith('usr/lib/modules/') for r in changed + deleted))
+        delta = Path(temp) / f'delta-{base["version"]}'
+        def place(rel):
+            """rel from the full stage into the delta, parents with their metadata."""
+            for part in [*reversed(PurePosixPath(rel).parents)][1:] + [PurePosixPath(rel)]:
+                src, dst = stage / 'root' / part, delta / 'root' / part
+                if dst.exists() or dst.is_symlink(): continue
+                st = src.lstat()
+                if stat.S_ISDIR(st.st_mode):
+                    dst.mkdir(parents=True)
+                    os.chown(dst, st.st_uid, st.st_gid); os.chmod(dst, st.st_mode & 0o7777)
+                elif stat.S_ISLNK(st.st_mode):
+                    os.symlink(os.readlink(src), dst); os.chown(dst, st.st_uid, st.st_gid, follow_symlinks=False)
+                else:
+                    os.link(src, dst)  # same inode: data, owner, mode and xattrs as staged
+        for rel in changed: place(rel)
+        for name in PLUGINS:
+            copy(stage / 'home/steamos/homebrew/plugins' / name, delta / 'home/steamos/homebrew/plugins' / name)
+        members = ['home']
+        if (delta / 'root').exists(): members.insert(0, 'root')
+        if kernel:
+            (delta / 'boot').mkdir(); os.link(stage / 'boot/KERNEL', delta / 'boot/KERNEL'); members.append('boot')
+        dfiles = {str(p.relative_to(delta)): files[str(p.relative_to(delta))]
+                  for p in sorted(delta.rglob('*')) if p.is_file() and not p.is_symlink()}
+        name = f'pb-os-{version}-{image}.from-{base["version"]}.delta.tar.gz'
+        print(f'delta from {base["version"]}: {len(changed)} changed, {len(deleted)} deleted, '
+              f'kernel {"yes" if kernel else "no"}')
+        pack(delta, out_dir / name, {'format': 2, 'kind': 'delta', 'from': base['version'], **common,
+                                    'delete': deleted, 'files': dfiles}, members)

@@ -31,7 +31,7 @@ const restart = callable("restart");
 
 const row = (child) => jsx(DFL.PanelSectionRow, { children: child });
 const note = (text) => row(jsx("div", { style: { fontSize: "12px", opacity: 0.75 }, children: text }));
-const gb = (n) => `${(n / 1e9).toFixed(1)} GB`;
+const gb = (n) => (n >= 1e9 ? `${(n / 1e9).toFixed(1)} GB` : `${Math.max(1, Math.round(n / 1e6))} MB`);
 
 function Content() {
     const [st, setSt] = useState(null);
@@ -79,24 +79,26 @@ function Content() {
     } else if (st.running) {
         const downloading = (job.step || "").startsWith("Downloading");
         items.push(row(jsx("div", { children: (job.step || "Starting") + "…" })));
-        if (downloading && job.total) {
+        if (job.total) {
             const pct = Math.min(100, (100 * job.have) / job.total);
             // Own bar: DFL.ProgressBarWithInfo lays out as a Field, with the
             // bar in the value column, and ran off the panel's right edge.
             items.push(row(jsxs("div", { style: { width: "100%" }, children: [
                 jsx("div", { style: { fontSize: "12px", opacity: 0.85, marginBottom: "6px" },
-                    children: `${gb(job.have)} of ${gb(job.total)} · ${Math.floor(pct)}%` }),
+                    children: downloading ? `${gb(job.have)} of ${gb(job.total)} · ${Math.floor(pct)}%` : `${Math.floor(pct)}%` }),
                 jsx("div", { style: { width: "100%", height: "8px", borderRadius: "4px", background: "rgba(255,255,255,0.15)", overflow: "hidden" },
                     children: jsx("div", { style: { width: `${pct}%`, height: "100%", background: "#1a9fff" } }) }),
             ] })));
+        }
+        if (downloading) {
             items.push(row(jsx(DFL.ButtonItem, {
                 layout: "below",
                 onClick: () => pause().then(refresh),
                 children: "Pause download",
             })));
             items.push(note("A paused or interrupted download continues where it stopped."));
-        } else if (!downloading) {
-            items.push(note("Checking and unpacking take a few minutes. You can close this menu."));
+        } else {
+            items.push(note("Getting the update ready. Games keep running; you can close this menu."));
         }
     } else {
         if (job.error) items.push(row(jsx("div", { style: { color: "#ff8080" }, children: job.error })));
@@ -105,9 +107,11 @@ function Content() {
         } else if (rel.ok === false) {
             items.push(note(`Could not look for updates: ${rel.error}`));
         } else if (rel.available && up) {
-            const resume = job.total && job.have && job.have < job.total;
+            const resume = job.dl_total && job.dl_have && job.dl_have < job.dl_total;
             items.push(
-                row(jsx(DFL.Field, { label: up.title, description: `${gb(up.size)} download, about 25 GB free space needed`, children: null })),
+                row(jsx(DFL.Field, { label: up.title, children: null, description: up.kind === "delta"
+                    ? `${gb(up.size)} download (only what changed)`
+                    : `${gb(up.size)} download, about 25 GB free space needed` })),
                 row(jsx(DFL.ButtonItem, {
                     layout: "below",
                     onClick: () => start().then(refresh),

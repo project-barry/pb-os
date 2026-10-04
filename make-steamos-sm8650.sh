@@ -305,7 +305,11 @@ restore_image_suid() {
     sudo_run chmod 4755 "${dest}/${p}"
   done
   if [[ -e "${dest}/usr/lib/dbus-1.0/dbus-daemon-launch-helper" ]]; then
-    sudo_run chown root:root "${dest}/usr/lib/dbus-1.0/dbus-daemon-launch-helper"
+    # Only the dbus group may run it (the dbus package ships it root:dbus);
+    # its number from the image's own /etc/group, not the build host's.
+    local dbus_gid
+    dbus_gid="$(awk -F: '$1 == "dbus" {print $3}' "${dest}/etc/group")"
+    sudo_run chown "0:${dbus_gid:-0}" "${dest}/usr/lib/dbus-1.0/dbus-daemon-launch-helper"
     sudo_run chmod 4750 "${dest}/usr/lib/dbus-1.0/dbus-daemon-launch-helper"
   fi
 }

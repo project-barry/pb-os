@@ -3,7 +3,7 @@
   "author": "lavachemist",
   "api_version": 1,
   "flags": ["root"],
-  "version": "1.0.1",
+  "version": "1.1.0",
   "publish": {
     "tags": ["pb-os", "update"],
     "description": "Finds pb-os updates in the GitHub releases, downloads them and installs them on the next restart, from Game Mode.",
