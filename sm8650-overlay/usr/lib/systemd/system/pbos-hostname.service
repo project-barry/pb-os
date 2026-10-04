@@ -1,0 +1,14 @@
+[Unit]
+Description=Name the device after its model (rp6, rpnova, thor, kpf, pockets2)
+# Early, before anything announces the name: DHCP, Avahi, Tailscale.
+DefaultDependencies=no
+After=etc.mount local-fs.target
+Before=sysinit.target network-pre.target NetworkManager.service avahi-daemon.service systemd-hostnamed.service tailscaled.service
+ConditionPathExists=/proc/device-tree/compatible
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/konkr/pbos-hostname
+
+[Install]
+WantedBy=sysinit.target

@@ -1192,6 +1192,7 @@ log "== summary"
   echo "fixpad:    $(ls -l "$R/usr/lib/steamos/sm8550-fixpad" 2>/dev/null || echo missing)"
   echo "inputplumber: $(ls -l "$R/usr/bin/inputplumber" 2>/dev/null || echo missing)"
   echo "deck-uhid: $(grep -A2 target_devices "$R/etc/inputplumber/devices.d/02-ayn-odin.yaml" 2>/dev/null || echo missing)"
+  echo "pbos-hostname: $(readlink "$R/usr/lib/systemd/system/sysinit.target.wants/pbos-hostname.service" 2>/dev/null || echo missing)"
   echo "home:      $(find "$HOME_DST" -maxdepth 3 -printf '%p\n' | head -40)"
 } | tee -a "$LOG"
 

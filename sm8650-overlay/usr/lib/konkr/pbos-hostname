@@ -1,0 +1,31 @@
+#!/bin/sh
+# pbos-hostname: name the device after its model (rp6, rpnova, thor, kpf,
+# pockets2) instead of the Steam Frame image's "frame". One image covers
+# several models, so this runs at boot and reads the device tree. It only
+# renames while the name is still the image's: a name set in Steam
+# (Settings > System) or with hostnamectl is kept. /etc is an overlay on
+# /var, so the new name lasts and updates keep it.
+
+current=$(cat /etc/hostname 2>/dev/null)
+case "$current" in
+  ""|frame|localhost) ;;
+  *) exit 0 ;;
+esac
+
+name=
+for c in $(tr '\0' '\n' </proc/device-tree/compatible 2>/dev/null); do
+  case "$c" in
+    retroidpocket,rp6*) name=rp6 ;;
+    retroidpocket,rpnova) name=rpnova ;;
+    ayn,thor) name=thor ;;
+    konkr,pocket-fit) name=kpf ;;
+    ayaneo,pocket-s2) name=pockets2 ;;
+    *) continue ;;
+  esac
+  break
+done
+[ -n "$name" ] || exit 0
+
+printf '%s\n' "$name" >/etc/hostname
+hostname "$name"
+echo "hostname: $name (was ${current:-unset})"
