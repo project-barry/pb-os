@@ -5,6 +5,10 @@ Front for /usr/share/konkr-update/konkr-update.py (the SteamOS Update app's
 helper). The download and staging run as the transient unit pbos-update, so
 they carry on when Quick Access closes or Steam restarts; this reads their
 log. The update installs on the next restart.
+
+Without internet, an update on a microSD card or USB drive works the same way:
+this looks at drives when one is put in or taken out (local-check) and
+installs from it with local-update.
 """
 from __future__ import annotations
 
@@ -23,6 +27,8 @@ LOG = "/run/pbos-update.log"
 PENDING = "/var/lib/konkr-update/pending"
 VERSION = "/usr/share/pb-os/version"
 CHECK_EVERY = 6 * 3600
+# Drives come and go: compare the block devices this often.
+DRIVES_EVERY = 3
 
 
 def rd(path: str, default: str = "") -> str:
@@ -41,7 +47,7 @@ def running() -> bool:
 def job() -> dict[str, Any]:
     """What the last download/staging run printed."""
     st: dict[str, Any] = {"step": "", "have": 0, "total": 0, "dl_have": 0, "dl_total": 0,
-                          "error": "", "staged": False, "note": ""}
+                          "error": "", "staged": False, "note": "", "drive_done": False}
     for line in rd(LOG).splitlines():
         if line.startswith("PROGRESS "):
             parts = line.split()
@@ -56,14 +62,16 @@ def job() -> dict[str, Any]:
             st["error"] = line[7:]
         elif line.startswith("Update staged"):
             st["staged"] = True
+        elif line == "DRIVE_DONE":
+            st["drive_done"] = True
         elif line.startswith("pb-os ") and line.endswith("is already installed"):
             st["note"] = line
     return st
 
 
-def check_releases() -> dict[str, Any]:
+def ask_updater(command: str, timeout: int) -> dict[str, Any]:
     # Decky's own Python environment must not leak into the system one.
-    r = subprocess.run(["/usr/bin/python3", UPDATER, "check"], capture_output=True, text=True, timeout=90,
+    r = subprocess.run(["/usr/bin/python3", UPDATER, command], capture_output=True, text=True, timeout=timeout,
                        env={"PATH": "/usr/bin:/usr/sbin", "LANG": "C.UTF-8"})
     if r.returncode != 0:
         err = (r.stderr or r.stdout).strip().splitlines()
@@ -71,14 +79,48 @@ def check_releases() -> dict[str, Any]:
     return {"ok": True, **json.loads(r.stdout), "time": time.time()}
 
 
+def check_releases() -> dict[str, Any]:
+    return ask_updater("check", 90)
+
+
+def check_drives() -> dict[str, Any]:
+    return ask_updater("local-check", 60)
+
+
+def block_devices() -> list[str]:
+    try:
+        return sorted(os.listdir("/sys/class/block"))
+    except OSError:
+        return []
+
+
 class Plugin:
     async def _main(self) -> None:
         self.last: dict[str, Any] = {}
+        self.local: dict[str, Any] = {}
         self.announced = ""
+        self.announced_local = ""
         self.watcher = asyncio.create_task(self._watch())
+        self.drive_watcher = asyncio.create_task(self._watch_drives())
 
     async def _unload(self) -> None:
         self.watcher.cancel()
+        self.drive_watcher.cancel()
+
+    async def _watch_drives(self) -> None:
+        # A drive put in or taken out changes the block devices; looking at
+        # the drives (which mounts them) does not.
+        seen: list[str] = []
+        while True:
+            now = await asyncio.to_thread(block_devices)
+            if now != seen:
+                seen = now
+                await asyncio.sleep(2)  # let the drive settle (partitions, SteamOS's own mount)
+                try:
+                    await self.check_local()
+                except Exception as e:
+                    decky.logger.info(f"drive check failed: {e}")
+            await asyncio.sleep(DRIVES_EVERY)
 
     async def _watch(self) -> None:
         # Look now and then; a new release gets one toast per version.
@@ -98,16 +140,34 @@ class Plugin:
             await decky.emit("pbos_update_available", up["title"])
         return self.last
 
+    async def check_local(self, **_: Any) -> dict[str, Any]:
+        if await asyncio.to_thread(running):
+            return self.local  # it may be copying from the drive right now
+        self.local = await asyncio.to_thread(check_drives)
+        up = self.local.get("update")
+        key = f"{up['version']} {up['drive']}" if up else ""
+        if up and key != self.announced_local and not os.path.exists(PENDING):
+            await decky.emit("pbos_local_available", up["version"], up["where"])
+        self.announced_local = key
+        return self.local
+
     async def get_state(self, **_: Any) -> dict[str, Any]:
         return {
             "installed": rd(VERSION) or "unknown",
             "release": self.last,
+            "local": self.local,
             "running": await asyncio.to_thread(running),
             "pending": os.path.exists(PENDING),
             "job": await asyncio.to_thread(job),
         }
 
     async def start(self, **_: Any) -> bool:
+        return await self._run("update")
+
+    async def start_local(self, **_: Any) -> bool:
+        return await self._run("local-update")
+
+    async def _run(self, command: str) -> bool:
         if await asyncio.to_thread(running) or os.path.exists(PENDING):
             return False
         try:
@@ -116,7 +176,7 @@ class Plugin:
             pass
         subprocess.run(["systemctl", "reset-failed", f"{UNIT}.service"], capture_output=True)
         r = subprocess.run(["systemd-run", f"--unit={UNIT}", "--collect", "-p", f"StandardOutput=file:{LOG}",
-                            "-p", "StandardError=inherit", "/usr/bin/python3", "-u", UPDATER, "update"],
+                            "-p", "StandardError=inherit", "/usr/bin/python3", "-u", UPDATER, command],
                            capture_output=True, text=True)
         return r.returncode == 0
 

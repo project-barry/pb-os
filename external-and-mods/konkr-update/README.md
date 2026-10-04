@@ -8,6 +8,7 @@ There are two kinds of package. A **delta** carries only what changed since one 
 
 1. In Game Mode, open Quick Access → Decky → **PB-OS Update** ([plugin](../Decky/pbos-update/), on every image). It looks for the newest pb-os release with a package for this device and shows a toast when one comes out. Press **Download and install**; the download carries on with the menu closed, can be paused, and resumes where it stopped. Then **Restart and install**.
    Desktop Mode has the same in the **SteamOS Update** app, which also installs a package from a file (paste its SHA-256 from the release's `SHA256SUMS`).
+   Without internet, PB-OS Update takes the update from a microSD card or USB drive instead (below).
 2. Preparation runs before the restart, while Steam keeps running, with its progress in PB-OS Update. It checks the archive and works out exactly what changes: for a full package it compares each file's header with the installed system and unpacks only what differs (a delta carries only what changed anyway). It checks those files against the manifest, backs up the `/usr` and `/opt` files it will replace, checks free space and copies a private recovery runtime to HOME. It saves the current boot image and installs the new one, which carries the recovery hook.
 3. On restart, the initramfs mounts the same root, boot and HOME filesystems, verifies their UUIDs, and runs the package's updater. It shows **Installing update** with a progress bar and pulsing dots on the screen, backs up the `/etc` files it will replace, then writes and deletes only the planned files. The restart step takes about as long as the change is big, not as long as the system is big.
 4. It installs the Decky plugins the package carries, removes the device plugins it lists for removal, checks every file it wrote, then boots SteamOS. Accounts, passwords, machine-id, hostname, fstab, SSH keys and network connections in `/etc` are kept.
@@ -19,7 +20,26 @@ A delta applies only to the exact version it was built from (`/usr/share/pb-os/v
 
 The apply step runs the updater that comes in the package, so fixes to it reach devices with the update itself.
 
-From Konsole: `sudo python3 /usr/share/konkr-update/konkr-update.py update`, then restart. `check` (no sudo) prints what is installed and what the releases offer.
+## Updating from a microSD card or USB drive
+
+For a device without internet. On a computer, download from the release page:
+
+- the update for your device: the full package (`pb-os-<tag>-<device>.update.tar.gz.001`, `.002`, ...) or, if the release has one from the version you have, the delta (`pb-os-<tag>-<device>.from-<your version>.delta.tar.gz.001`, ...). The joined `.tar.gz` works too;
+- `SHA256SUMS` and `SHA256SUMS.sig`.
+
+`<device>` is `rp6` for the Retroid Pocket 6 and Nova, `pocketfit` for the KONKR Pocket FIT and AYANEO Pocket S2, and `thor` for the AYN Thor.
+
+Copy them, unchanged, to the top folder of a microSD card or USB drive formatted FAT32, exFAT, NTFS or ext4. The parts are each under 2 GB, so FAT32 works. Put the card or drive in the device. When pb-os runs from internal storage, use a microSD card or a USB drive; when it runs from a microSD card, use a USB drive.
+
+PB-OS Update notices the drive and shows a toast. Open it and press **Install from the drive**. It copies the update to HOME (keep the drive in until it says you can take it out), then prepares it like a download. Then **Restart and install**.
+
+Like a download, it installs only when `SHA256SUMS.sig` is from the pb-os release key and the package matches its line in `SHA256SUMS`, so the files from one release must stay together. PB-OS Update says what is missing when they don't match. It mounts the drive read-only while it looks and copies, and never looks at the disk pb-os runs from.
+
+From Konsole: `sudo python3 /usr/share/konkr-update/konkr-update.py local-check` shows what it finds, and `local-update` installs it.
+
+## From Konsole
+
+`sudo python3 /usr/share/konkr-update/konkr-update.py update`, then restart. `check` (no sudo) prints what is installed and what the releases offer.
 
 ## Releasing an update
 

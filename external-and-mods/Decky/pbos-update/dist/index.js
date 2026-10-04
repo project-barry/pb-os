@@ -26,6 +26,8 @@ const jsxs = SP_JSX.jsxs;
 const getState = callable("get_state");
 const check = callable("check");
 const start = callable("start");
+const startLocal = callable("start_local");
+const checkLocal = callable("check_local");
 const pause = callable("pause");
 const restart = callable("restart");
 
@@ -46,6 +48,8 @@ function Content() {
     useEffect(() => {
         getState().then((s) => {
             setSt(s);
+            // Drives are looked at when one is put in; look again when the menu opens.
+            if (!s.running && !s.pending) checkLocal().then(refresh).catch(() => {});
             // Look again when the last look is over 10 minutes old.
             if (!s.running && !s.pending && (!s.release || !s.release.time || Date.now() / 1000 - s.release.time > 600)) doCheck();
         }).catch(() => {});
@@ -57,6 +61,8 @@ function Content() {
         return jsx(DFL.PanelSection, { children: row("Loading…") });
     }
     const rel = st.release || {};
+    const local = st.local || {};
+    const localUp = local.update;
     const up = rel.update;
     const job = st.job || {};
     const items = [note(`Installed: ${st.installed}`)];
@@ -78,6 +84,7 @@ function Content() {
         );
     } else if (st.running) {
         const downloading = (job.step || "").startsWith("Downloading");
+        const copying = (job.step || "").startsWith("Copying");
         items.push(row(jsx("div", { children: (job.step || "Starting") + "…" })));
         if (job.total) {
             const pct = Math.min(100, (100 * job.have) / job.total);
@@ -85,7 +92,7 @@ function Content() {
             // bar in the value column, and ran off the panel's right edge.
             items.push(row(jsxs("div", { style: { width: "100%" }, children: [
                 jsx("div", { style: { fontSize: "12px", opacity: 0.85, marginBottom: "6px" },
-                    children: downloading ? `${gb(job.have)} of ${gb(job.total)} · ${Math.floor(pct)}%` : `${Math.floor(pct)}%` }),
+                    children: downloading || copying ? `${gb(job.have)} of ${gb(job.total)} · ${Math.floor(pct)}%` : `${Math.floor(pct)}%` }),
                 jsx("div", { style: { width: "100%", height: "8px", borderRadius: "4px", background: "rgba(255,255,255,0.15)", overflow: "hidden" },
                     children: jsx("div", { style: { width: `${pct}%`, height: "100%", background: "#1a9fff" } }) }),
             ] })));
@@ -97,11 +104,30 @@ function Content() {
                 children: "Pause download",
             })));
             items.push(note("A paused or interrupted download continues where it stopped."));
+        } else if (copying) {
+            items.push(note("Leave the drive in until the copy is done. You can close this menu."));
         } else {
+            if (job.drive_done) items.push(note("Copied. You can take out the drive."));
             items.push(note("Getting the update ready. Games keep running; you can close this menu."));
         }
     } else {
         if (job.error) items.push(row(jsx("div", { style: { color: "#ff8080" }, children: job.error })));
+        if (localUp) {
+            items.push(
+                row(jsx(DFL.Field, { label: `pb-os ${localUp.version} on the ${localUp.where}`, children: null,
+                    description: localUp.kind === "delta"
+                        ? `${gb(localUp.size)} (only what changed)`
+                        : `${gb(localUp.size)}, about 25 GB free space needed` })),
+                row(jsx(DFL.ButtonItem, {
+                    layout: "below",
+                    onClick: () => startLocal().then(refresh),
+                    children: "Install from the drive",
+                })),
+            );
+        }
+        for (const problem of local.problems || []) {
+            items.push(row(jsx("div", { style: { fontSize: "12px", color: "#ffb070" }, children: problem })));
+        }
         if (checking) {
             items.push(note("Looking for updates…"));
         } else if (rel.ok === false) {
@@ -126,9 +152,11 @@ function Content() {
         items.push(row(jsx(DFL.ButtonItem, {
             layout: "below",
             disabled: checking,
-            onClick: doCheck,
+            onClick: () => { checkLocal().then(refresh).catch(() => {}); doCheck(); },
             children: "Check for updates",
         })));
+        items.push(note("No internet? Put the update's files, SHA256SUMS and SHA256SUMS.sig from the release "
+            + "in the top folder of a microSD card or USB drive and put it in."));
     }
     return jsx(DFL.PanelSection, { title: "pb-os", children: items });
 }
@@ -137,8 +165,13 @@ function onAvailable(title) {
     toaster.toast({ title: "pb-os update", body: `${title} is available. Open PB-OS Update in Quick Access.`, duration: 6000 });
 }
 
+function onLocal(version, where) {
+    toaster.toast({ title: "pb-os update", body: `pb-os ${version} is on the ${where}. Open PB-OS Update in Quick Access to install it.`, duration: 6000 });
+}
+
 var index = definePlugin(() => {
     api.addEventListener("pbos_update_available", onAvailable);
+    api.addEventListener("pbos_local_available", onLocal);
     return {
         name: "PB-OS Update",
         content: jsx(Content, {}),
@@ -147,6 +180,7 @@ var index = definePlugin(() => {
         alwaysRender: false,
         onDismount() {
             api.removeEventListener("pbos_update_available", onAvailable);
+            api.removeEventListener("pbos_local_available", onLocal);
         },
     };
 });

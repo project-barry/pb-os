@@ -443,11 +443,185 @@ def update(args):
     else:
         used = shutil.disk_usage('/').total - shutil.disk_usage('/').free
         need = found['size'] - have + found['size'] * 5 // 2 + used + (512 << 20)
-    if shutil.disk_usage('/home').free < need:
-        raise ValueError(f'not enough free space: this update needs about {max(1, round(need / 2**30))} GB free on HOME')
+    check_space(found['kind'], found['size'], have)
     step(f'Downloading pb-os {found["version"]}')
     download(found, package)
     stage(package, expected, move=True, version=found['version'])
+
+
+def check_space(kind, size, have=0):
+    """Rough room for the package, its unpacked payload and the rollback copy (stage checks exactly)."""
+    if kind == 'delta':
+        need = size - have + size * 5 + (512 << 20)
+    else:
+        used = shutil.disk_usage('/').total - shutil.disk_usage('/').free
+        need = size - have + size * 5 // 2 + used + (512 << 20)
+    if shutil.disk_usage('/home').free < need:
+        raise ValueError(f'not enough free space: this update needs about {max(1, round(need / 2**30))} GB free on HOME')
+
+
+# ── Updates from a drive ─────────────────────────────────────────────────────
+# For a device without internet: copy a release's package (its .001, .002, ...
+# parts, or the joined file), SHA256SUMS and SHA256SUMS.sig to the top folder
+# of a microSD card or USB drive. Like a download, it installs only when the
+# signature is from the pb-os release key. SteamOS mounts only ext4 microSD
+# cards, so the updater mounts the others itself, read-only, while it looks and
+# copies. Drives on the disk the system runs from are never looked at.
+MEDIA = Path('/run/konkr-update/media')
+MEDIA_FS = {'vfat': 'vfat', 'exfat': 'exfat', 'ext4': 'ext4', 'ntfs': 'ntfs3'}
+
+
+def quiet(*args):
+    return subprocess.run(list(map(str, args)), check=True, capture_output=True, text=True).stdout
+
+
+def drives():
+    """Filesystems on removable drives (microSD, USB) other than the system's own disk."""
+    devices = json.loads(quiet('lsblk', '-J', '-l', '-b', '-o',
+                               'NAME,PATH,PKNAME,TYPE,FSTYPE,LABEL,SIZE,TRAN,MOUNTPOINTS'))['blockdevices']
+    by_name = {d['name']: d for d in devices}
+    def disk(d):
+        while d.get('pkname') in by_name: d = by_name[d['pkname']]
+        return d
+    system = set()
+    for target in ('/', '/home', '/boot'):
+        source = quiet('findmnt', '-n', '-o', 'SOURCE', '-T', target).strip()
+        hit = next((d for d in devices if d['path'] == source), None)
+        if hit: system.add(disk(hit)['name'])
+    found = []
+    for d in devices:
+        top = disk(d)
+        if d.get('fstype') not in MEDIA_FS or top['name'] in system: continue
+        if not (top['name'].startswith('mmcblk') or top.get('tran') == 'usb'): continue
+        found.append({'name': d['name'], 'path': d['path'], 'fstype': d['fstype'],
+                      'label': d.get('label') or '', 'usb': top.get('tran') == 'usb',
+                      'mounts': [m for m in d.get('mountpoints') or [] if m]})
+    return found
+
+
+def drive_title(drive):
+    kind = 'USB drive' if drive['usb'] else 'microSD card'
+    return f'{kind} "{drive["label"]}"' if drive['label'] else kind
+
+
+class Mounted:
+    """The drive's top folder: where SteamOS mounted it, else a read-only mount of our own."""
+    def __init__(self, drive):
+        self.drive, self.own = drive, None
+
+    def __enter__(self):
+        if self.drive['mounts']: return Path(self.drive['mounts'][0])
+        if os.geteuid() != 0: raise PermissionError('mounting a drive needs administrator access')
+        point = MEDIA / self.drive['name']; point.mkdir(parents=True, exist_ok=True)
+        options = 'ro,nosuid,nodev,noexec' + (',noload' if self.drive['fstype'] == 'ext4' else '')
+        quiet('mount', '-t', MEDIA_FS[self.drive['fstype']], '-o', options, self.drive['path'], point)
+        self.own = point
+        return point
+
+    def __exit__(self, *exc):
+        if self.own:
+            subprocess.run(['umount', str(self.own)], capture_output=True)
+            try: self.own.rmdir()
+            except OSError: pass
+
+
+def packages_in(folder, image, current):
+    """Complete pb-os packages for this image in the drive's top folder:
+    {joined name: {version, kind, files}}. Parts must run .001, .002, ... unbroken."""
+    pattern = re.compile(rf'pb-os-(.+?)-{re.escape(image)}\.(?:from-(.+)\.delta|update)\.tar\.gz(?:\.(\d{{3}}))?')
+    groups = {}
+    for p in folder.iterdir():
+        m = pattern.fullmatch(p.name)
+        if not m or not p.is_file(): continue
+        tag, base, part = m.group(1), m.group(2), m.group(3)
+        if tag == current or (base is not None and base != current): continue
+        name = p.name[:-4] if part else p.name
+        g = groups.setdefault(name, {'version': tag, 'kind': 'delta' if base else 'full', 'joined': None, 'parts': {}})
+        if part: g['parts'][int(part)] = p
+        else: g['joined'] = p
+    found = {}
+    for name, g in groups.items():
+        parts = [g['parts'][i] for i in sorted(g['parts'])]
+        if g['joined']: files = [g['joined']]
+        elif parts and sorted(g['parts']) == list(range(1, len(parts) + 1)): files = parts
+        else: continue
+        found[name] = {'version': g['version'], 'kind': g['kind'], 'files': files,
+                       'size': sum(f.stat().st_size for f in files)}
+    return found
+
+
+def version_key(tag):
+    """alpha-v0.10 after alpha-v0.9: numbers compare as numbers."""
+    return [(0, int(t), '') if t.isdigit() else (1, 0, t) for t in re.findall(r'\d+|\D+', tag)]
+
+
+def find_local():
+    """The update on a drive, or None, and what is wrong with the packages that cannot be used."""
+    image = IMAGES.get(device_model())
+    if not image: raise ValueError(f'no update channel for {device_model()}')
+    current = installed_version(); problems = []
+    for drive in drives():
+        try:
+            with Mounted(drive) as top:
+                found = packages_in(top, image, current)
+                if not found: continue
+                where = drive_title(drive)
+                sums, sig = top / 'SHA256SUMS', top / 'SHA256SUMS.sig'
+                if not (sums.is_file() and sig.is_file()):
+                    problems.append(f'The update on the {where} needs SHA256SUMS and SHA256SUMS.sig '
+                                    'from the same release next to it.')
+                    continue
+                data = sums.read_bytes()
+                try: verify_signature(data, sig.read_bytes())
+                except ValueError:
+                    problems.append(f'SHA256SUMS on the {where} is not signed with the pb-os release key.')
+                    continue
+                listed = {f[1].lstrip('*'): f[0].lower() for f in (l.split() for l in data.decode().splitlines())
+                          if len(f) == 2 and re.fullmatch('[0-9a-fA-F]{64}', f[0])}
+                usable = [n for n in found if n in listed]
+                if not usable:
+                    problems.append(f'SHA256SUMS on the {where} is from another release than the update next to it.')
+                    continue
+                # Newest version first; a delta before the full package of the same version.
+                name = sorted(usable, key=lambda n: (version_key(found[n]['version']), found[n]['kind'] == 'delta'))[-1]
+                p = found[name]
+                return {'version': p['version'], 'kind': p['kind'], 'name': name, 'sha256': listed[name],
+                        'size': p['size'], 'drive': drive['path'], 'where': where,
+                        'files': [f.name for f in p['files']]}, problems
+        except (OSError, subprocess.CalledProcessError) as e:
+            print(f'{drive["path"]}: not readable: {e}', file=sys.stderr)
+    return None, problems
+
+
+def local_check(args):
+    found, problems = find_local()
+    print(json.dumps({'current': installed_version(), 'update': found, 'problems': problems}, indent=2))
+
+
+def local_update(args):
+    if os.geteuid() != 0: raise ValueError('updating needs administrator access')
+    if (Path('/') / PENDING).exists(): raise ValueError('an update is already pending; restart to install it')
+    step('Looking for an update on a drive')
+    found, problems = find_local()
+    if not found: raise ValueError(problems[0] if problems else 'no pb-os update for this device on a microSD card or USB drive')
+    drive = next((d for d in drives() if d['path'] == found['drive']), None)
+    if not drive: raise ValueError('the drive was removed')
+    downloads = storage() / 'downloads'; downloads.mkdir(mode=0o700, exist_ok=True)
+    for old in downloads.iterdir(): old.unlink()  # a download of another release
+    check_space(found['kind'], found['size'])
+    package = downloads / found['name']
+    step(f'Copying pb-os {found["version"]} from the {found["where"]}')
+    with Mounted(drive) as top:
+        add = counter(found['size'])
+        with package.open('wb') as out:
+            for name in found['files']:
+                with (top / name).open('rb') as src:
+                    while chunk := src.read(4 << 20):
+                        out.write(chunk); add(len(chunk))
+            out.flush(); os.fsync(out.fileno())
+    if package.stat().st_size != found['size']: raise ValueError('copying from the drive failed; try again')
+    print('DRIVE_DONE', flush=True)
+    stage(package, found['sha256'], move=True, version=found['version'])
 
 
 def install_kernel(src, boot):
@@ -1054,16 +1228,21 @@ def main():
     sub.add_parser('check', help='newest release for this device, as JSON')
     p = sub.add_parser('update', help='download the newest release and stage it')
     p.add_argument('--reinstall', action='store_true', help='also when that version is installed')
+    sub.add_parser('local-check', help='update on a microSD card or USB drive, as JSON')
+    sub.add_parser('local-update', help='copy the update from a microSD card or USB drive and stage it')
     p = sub.add_parser('recover')
     for name in ('root', 'boot', 'home', 'work'): p.add_argument('--' + name, required=True)
     p = sub.add_parser('inspect'); p.add_argument('package')
     a = ap.parse_args()
     try:
-        if a.command in ('stage', 'update'):
+        if a.command in ('stage', 'update', 'local-update'):
             with open('/run/konkr-update.lock', 'w') as lock:
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                stage(a.package, a.sha256) if a.command == 'stage' else update(a)
+                if a.command == 'stage': stage(a.package, a.sha256)
+                elif a.command == 'update': update(a)
+                else: local_update(a)
         elif a.command == 'check': check(a)
+        elif a.command == 'local-check': local_check(a)
         elif a.command == 'recover': return recover(a)
         else:
             m, size = validate_archive(a.package)
