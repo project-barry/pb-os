@@ -10,7 +10,7 @@ if [[ ! -d "$SRC/.git" ]]; then git clone https://github.com/ShadowBlip/InputPlu
 [[ -z $(git -C "$SRC" status --porcelain) ]] || { echo 'Use a clean source checkout' >&2; exit 1; }
 git -C "$SRC" checkout --detach "$REF"
 git -C "$SRC" apply "$CACHE/0001-bound-ayaneo-haptics-polling.patch"
-git -C "$SRC" apply "$CACHE/0002-ayaneo-rumble-sqrt-curve.patch"
+git -C "$SRC" apply "$CACHE/0002-ayaneo-rumble-curve.patch"
 (cd "$SRC" && cargo +1.93.1 build --release --locked -j"${BUILD_JOBS:-4}")
 install -m755 "$SRC/target/release/inputplumber" "$CACHE/inputplumber-0.81.0-konkr"
 (cd "$CACHE" && sha256sum inputplumber-0.81.0-konkr > inputplumber-0.81.0-konkr.sha256)
