@@ -40,14 +40,18 @@ def running() -> bool:
 
 def job() -> dict[str, Any]:
     """What the last download/staging run printed."""
-    st: dict[str, Any] = {"step": "", "have": 0, "total": 0, "error": "", "staged": False, "note": ""}
+    st: dict[str, Any] = {"step": "", "have": 0, "total": 0, "dl_have": 0, "dl_total": 0,
+                          "error": "", "staged": False, "note": ""}
     for line in rd(LOG).splitlines():
         if line.startswith("PROGRESS "):
             parts = line.split()
             if len(parts) == 3:
                 st["have"], st["total"] = int(parts[1]), int(parts[2])
+                if st["step"].startswith("Downloading"):  # what a resumed download continues from
+                    st["dl_have"], st["dl_total"] = st["have"], st["total"]
         elif line.startswith("STEP "):
-            st["step"] = line[5:]
+            # Each step (download, comparing, unpacking, backing up) has its own bar.
+            st["step"] = line[5:]; st["have"] = st["total"] = 0
         elif line.startswith("ERROR: "):
             st["error"] = line[7:]
         elif line.startswith("Update staged"):
