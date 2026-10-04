@@ -1,0 +1,161 @@
+From: lavachemist <48248311+lavachemist@users.noreply.github.com>
+Subject: [PATCH] ASoC: wsa884x: restart the PA when it fails to turn on
+
+On the KONKR Pocket FIT the speakers now and then went silent and stayed
+silent until a reboot. The PCM kept running and both amplifiers stayed
+attached and runtime-active, but their PA state machine sat in an error
+state (PA_FSM_STA0 0x20, PA_FSM_ERR_COND0 0x40; 0x2f and 0x00 when
+playing). Unbinding and rebinding the driver brought the sound back.
+
+Logging every fault showed that both amplifiers fail together, always
+right at stream start (found at the first check after unmute, never
+mid-stream), with INTR_STATUS1 bit 1 set: PA_ON_ERR in Qualcomm's
+downstream driver, whose handler for it disables the PA and pulses
+PA_FSM_CTL0 bit 4. Upstream has no SoundWire interrupt support for this
+codec, so nothing ever cleared the error; it happened about once every
+one to two minutes of normal use.
+
+While the stream is unmuted, check PA_FSM_ERR_COND0/1 30 ms and 150 ms
+after unmute and then once a second. If a fault is latched, log it (time
+since unmute, state, error and interrupt status, which is then cleared)
+and restart the PA the downstream way: GLOBAL_PA_EN off, pulse
+PA_FSM_CTL0 bit 4, GLOBAL_PA_EN on. The check only reads while the
+device is already runtime-active.
+
+Developed with Claude Opus 5.5 (Anthropic) via Claude Code.
+---
+--- a/sound/soc/codecs/wsa884x.c	2026-09-27 11:42:10
++++ b/sound/soc/codecs/wsa884x.c	2026-09-27 12:35:04
+@@ -21,6 +21,8 @@
+ #include <linux/soundwire/sdw.h>
+ #include <linux/soundwire/sdw_registers.h>
+ #include <linux/soundwire/sdw_type.h>
++#include <linux/ktime.h>
++#include <linux/workqueue.h>
+ #include <sound/pcm.h>
+ #include <sound/pcm_params.h>
+ #include <sound/soc-dapm.h>
+@@ -747,7 +749,18 @@
+ 	struct mutex sp_lock;
+ 	unsigned int temperature;
+ 	bool pa_on;
++	/* PA fault recovery while the stream is unmuted */
++	struct delayed_work pa_check_work;
++	bool pa_unmuted;
++	unsigned int pa_checks;
++	ktime_t unmute_time;
+ };
++
++#define WSA884X_PA_FSM_CTL0_ERR_CLR_MASK	0x10
++/* Early checks catch a PA that failed to start; then keep watching. */
++#define WSA884X_PA_CHECK_FIRST_MS		30
++#define WSA884X_PA_CHECK_SECOND_MS		120
++#define WSA884X_PA_CHECK_MS			1000
+ 
+ enum {
+ 	COMP_OFFSET0,
+@@ -1799,13 +1812,81 @@
+ 	sdw_stream_remove_slave(wsa884x->slave, wsa884x->sruntime);
+ 
+ 	return 0;
++}
++
++/*
++ * The PA state machine latches faults (under-voltage, PDM watchdog, ...) and
++ * then keeps the PA off: the stream runs but the speaker is silent until the
++ * amplifier is reset. Nothing upstream reports or clears these (no SoundWire
++ * interrupt support), so poll the error flags while unmuted and restart the
++ * PA the way Qualcomm's downstream driver does in its PA-on-error handler.
++ */
++static void wsa884x_pa_check_work(struct work_struct *work)
++{
++	struct wsa884x_priv *wsa884x = container_of(to_delayed_work(work),
++						    struct wsa884x_priv,
++						    pa_check_work);
++	unsigned int err0, err1, sta0 = 0, intr0 = 0, intr1 = 0;
++
++	if (!READ_ONCE(wsa884x->pa_unmuted))
++		return;
++
++	if (pm_runtime_get_if_active(wsa884x->dev) > 0) {
++		if (!regmap_read(wsa884x->regmap, WSA884X_PA_FSM_ERR_COND0, &err0) &&
++		    !regmap_read(wsa884x->regmap, WSA884X_PA_FSM_ERR_COND1, &err1) &&
++		    (err0 || err1)) {
++			regmap_read(wsa884x->regmap, WSA884X_PA_FSM_STA0, &sta0);
++			regmap_read(wsa884x->regmap, WSA884X_INTR_STATUS0, &intr0);
++			regmap_read(wsa884x->regmap, WSA884X_INTR_STATUS1, &intr1);
++			dev_warn_ratelimited(wsa884x->dev,
++					     "PA fault %lld ms after unmute (state %#x, err %#x/%#x, intr %#x/%#x), restarting PA\n",
++					     ktime_ms_delta(ktime_get(), wsa884x->unmute_time),
++					     sta0, err0, err1, intr0, intr1);
++			/* Clear the latched interrupt status so the next fault shows its own cause. */
++			regmap_write(wsa884x->regmap, WSA884X_INTR_CLEAR0, 0xff);
++			regmap_write(wsa884x->regmap, WSA884X_INTR_CLEAR0, 0x00);
++			regmap_write(wsa884x->regmap, WSA884X_INTR_CLEAR1, 0xff);
++			regmap_write(wsa884x->regmap, WSA884X_INTR_CLEAR1, 0x00);
++			regmap_update_bits(wsa884x->regmap, WSA884X_PA_FSM_EN,
++					   WSA884X_PA_FSM_EN_GLOBAL_PA_EN_MASK, 0);
++			regmap_update_bits(wsa884x->regmap, WSA884X_PA_FSM_CTL0,
++					   WSA884X_PA_FSM_CTL0_ERR_CLR_MASK, 0);
++			regmap_update_bits(wsa884x->regmap, WSA884X_PA_FSM_CTL0,
++					   WSA884X_PA_FSM_CTL0_ERR_CLR_MASK,
++					   WSA884X_PA_FSM_CTL0_ERR_CLR_MASK);
++			regmap_update_bits(wsa884x->regmap, WSA884X_PA_FSM_CTL0,
++					   WSA884X_PA_FSM_CTL0_ERR_CLR_MASK, 0);
++			if (READ_ONCE(wsa884x->pa_unmuted))
++				regmap_update_bits(wsa884x->regmap, WSA884X_PA_FSM_EN,
++						   WSA884X_PA_FSM_EN_GLOBAL_PA_EN_MASK,
++						   WSA884X_PA_FSM_EN_GLOBAL_PA_EN_MASK);
++		}
++		pm_runtime_put_autosuspend(wsa884x->dev);
++	}
++
++	if (READ_ONCE(wsa884x->pa_unmuted))
++		schedule_delayed_work(&wsa884x->pa_check_work,
++				      msecs_to_jiffies(wsa884x->pa_checks++ ?
++						       WSA884X_PA_CHECK_MS :
++						       WSA884X_PA_CHECK_SECOND_MS));
+ }
+ 
++static void wsa884x_cancel_pa_check(void *data)
++{
++	struct wsa884x_priv *wsa884x = data;
++
++	WRITE_ONCE(wsa884x->pa_unmuted, false);
++	cancel_delayed_work_sync(&wsa884x->pa_check_work);
++}
++
+ static int wsa884x_mute_stream(struct snd_soc_dai *dai, int mute, int stream)
+ {
+ 	struct snd_soc_component *component = dai->component;
++	struct wsa884x_priv *wsa884x = snd_soc_component_get_drvdata(component);
+ 
+ 	if (mute) {
++		WRITE_ONCE(wsa884x->pa_unmuted, false);
++		cancel_delayed_work(&wsa884x->pa_check_work);
+ 		snd_soc_component_write_field(component, WSA884X_DRE_CTL_1,
+ 					      WSA884X_DRE_CTL_1_CSR_GAIN_EN_MASK,
+ 					      0x0);
+@@ -1820,6 +1901,11 @@
+ 		snd_soc_component_write_field(component, WSA884X_PA_FSM_EN,
+ 					      WSA884X_PA_FSM_EN_GLOBAL_PA_EN_MASK,
+ 					      0x1);
++		wsa884x->unmute_time = ktime_get();
++		wsa884x->pa_checks = 0;
++		WRITE_ONCE(wsa884x->pa_unmuted, true);
++		mod_delayed_work(system_percpu_wq, &wsa884x->pa_check_work,
++				 msecs_to_jiffies(WSA884X_PA_CHECK_FIRST_MS));
+ 	}
+ 
+ 	return 0;
+@@ -2053,6 +2139,10 @@
+ 		return -ENOMEM;
+ 
+ 	mutex_init(&wsa884x->sp_lock);
++	INIT_DELAYED_WORK(&wsa884x->pa_check_work, wsa884x_pa_check_work);
++	ret = devm_add_action_or_reset(dev, wsa884x_cancel_pa_check, wsa884x);
++	if (ret)
++		return ret;
+ 
+ 	for (i = 0; i < WSA884X_SUPPLIES_NUM; i++)
+ 		wsa884x->supplies[i].supply = wsa884x_supply_name[i];
