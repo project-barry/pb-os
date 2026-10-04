@@ -3,8 +3,9 @@
 Moves the SteamOS you're running from the microSD card onto the internal
 storage, next to Android. For the KONKR Pocket FIT (and the AYANEO Pocket S2,
 untested) with ROCKNIX ABL 1.1.8 or newer, and the Snapdragon 8 Gen 2
-handhelds (Retroid Pocket 6, AYN Thor; not yet tested on hardware) with
-ROCKNIX ABL.
+handhelds (Retroid Pocket 6; AYN Thor untested) with ROCKNIX ABL. The Retroid
+Pocket 6 and the KONKR Pocket FIT have been running from internal storage for
+several days.
 
 > **This erases Android's user data** (apps, photos, accounts) and changes the
 > internal partition table. Android itself stays and sets itself up again.

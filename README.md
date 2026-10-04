@@ -37,7 +37,9 @@ lavachemist
 pb-os runs Valve's SteamOS for ARM (the Steam Frame build) on Snapdragon
 handhelds. It is a fork of hashtagbasit's
 [SteamOS-ARM-Handhelds](https://github.com/hashtagbasit/SteamOS-ARM-Handhelds).
-There are no release images yet (no promises, but maybe soon); you can build your own though.
+Alpha images for the Retroid Pocket 6 and the KONKR Pocket FIT are on the
+[Releases](https://github.com/project-barry/pb-os/releases) page, with
+flashing steps. The AYN Thor follows as alpha v0.2. You can also build your own.
 
 ## Tested devices
 
@@ -45,12 +47,15 @@ Physical testing was done on one unit of each:
 
 | Device | Chip | Tested |
 |--------|------|--------|
-| Retroid Pocket 6 | Snapdragon 8 Gen 2 (SM8550) | Yes, daily, from microSD |
-| AYN Thor | Snapdragon 8 Gen 2 (SM8550) | Yes, by a remote tester (build with `--device thor`) |
-| KONKR Pocket FIT | Snapdragon 8 Gen 3 (SM8650) | Yes, booted from microSD |
+| Retroid Pocket 6 | Snapdragon 8 Gen 2 (SM8550) | Yes, daily: from microSD, and from internal storage for several days |
+| AYN Thor | Snapdragon 8 Gen 2 (SM8550) | Yes, by a remote tester, from microSD (build with `--device thor`) |
+| KONKR Pocket FIT | Snapdragon 8 Gen 3 (SM8650) | Yes: from microSD, and from internal storage for several days |
 | AYANEO Pocket S2 / S2 Pro | Snapdragon 8 Gen 3 (SM8650) | No, never tested here |
 
-Installing to internal storage (UFS) on SM8550 has only been tested in a VM.
+Installing to internal storage (UFS, next to Android) has run for several
+days on the Retroid Pocket 6 and the KONKR Pocket FIT; see
+[external-and-mods/ufs-install](external-and-mods/ufs-install/README.md). On
+the AYN Thor it is untested.
 
 Here is a link to all of our benchmark tests: [docs/benchmark-results.md](docs/benchmark-results.md)
 
