@@ -316,6 +316,7 @@ TOUCH_S = 1.0
 TOP_CLICK_S = 1.0
 TAP_SLOP = 30  # touchscreen units a tap may wander
 FIELD_SLOP = 40  # pixels around a field that a finger on it may miss by
+FOCUS_OUT_HIDE_MS = 300  # an app refocusing its field (Signal, after Send): no flicker
 REVEAL_MS = (250, 700)  # after the keyboard pushes the app up: the field in view
 REVEAL_ROW_MAX = 160  # the most pixels high a field's bar (its message box, say) is
 # Swipe up from the bottom edge: Home, as a long press on the AYN button.
@@ -1587,8 +1588,16 @@ def on_focus(event) -> None:
         return
     STATE.text_acc = None
     if STATE.keyboard()["visible"]:
+        GLib.timeout_add(FOCUS_OUT_HIDE_MS, hide_after_focus_out)
+
+
+def hide_after_focus_out() -> bool:
+    """Focus left the field: hide the keyboard, unless a field took focus
+    since. Signal moves focus out of its message box and back after Send."""
+    if STATE.text_acc is None and STATE.keyboard()["visible"]:
         log("text focus out")
-    STATE.set_keyboard(False)
+        STATE.set_keyboard(False)
+    return False
 
 
 def top_text_focus(acc, why: str) -> None:
