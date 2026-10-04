@@ -1,0 +1,58 @@
+diff --git a/src/input/source/hidraw/ayaneo_haptics.rs b/src/input/source/hidraw/ayaneo_haptics.rs
+index 7f9b2ae..5367cca 100644
+--- a/src/input/source/hidraw/ayaneo_haptics.rs
++++ b/src/input/source/hidraw/ayaneo_haptics.rs
+@@ -79,10 +79,23 @@ impl AyaneoHaptics {
+             .unwrap_or(-1)
+     }
+ 
++    /// Motor drive level for a rumble magnitude. Games mostly ask for a
++    /// quarter to a third of full strength, which these motors render much
++    /// weaker than a Steam Deck does, so the level follows a square-root
++    /// curve: off stays off, full stays full, the low and middle range is
++    /// lifted (25% -> 50%, 50% -> 71%).
++    fn motor_level(magnitude: u16) -> u8 {
++        if magnitude == 0 {
++            return 0;
++        }
++        let level = (magnitude as f32 / u16::MAX as f32).sqrt() * 255.0;
++        (level.round() as u8).max(1)
++    }
++
+     fn build_rumble_report(left_magnitude: u16, right_magnitude: u16) -> AyaneoRumbleReport {
+         AyaneoRumbleReport {
+-            left_motor: (left_magnitude >> 8) as u8,
+-            right_motor: (right_magnitude >> 8) as u8,
++            left_motor: Self::motor_level(left_magnitude),
++            right_motor: Self::motor_level(right_magnitude),
+             ..Default::default()
+         }
+     }
+@@ -227,21 +240,18 @@ mod tests {
+     #[test]
+     fn builds_left_and_right_motor_report() {
+         assert_eq!(
+-            AyaneoHaptics::build_rumble_report(0x8000, 0x6000)
++            AyaneoHaptics::build_rumble_report(0x8000, 0x4000)
+                 .pack()
+                 .unwrap(),
+-            [0x00, 0x00, 0x00, 0x00, 0x80, 0x60, 0x00, 0x00]
++            [0x00, 0x00, 0x00, 0x00, 0xb4, 0x80, 0x00, 0x00]
+         );
+     }
+ 
+     #[test]
+-    fn uses_high_byte_of_each_evdev_magnitude() {
+-        assert_eq!(
+-            AyaneoHaptics::build_rumble_report(0x12ff, 0xab01)
+-                .pack()
+-                .unwrap(),
+-            [0x00, 0x00, 0x00, 0x00, 0x12, 0xab, 0x00, 0x00]
+-        );
++    fn lifts_weak_rumble_and_keeps_full_strength() {
++        assert_eq!(AyaneoHaptics::motor_level(0xffff), 0xff);
++        assert_eq!(AyaneoHaptics::motor_level(0x2000), 0x5a);
++        assert_eq!(AyaneoHaptics::motor_level(1), 1);
+     }
+ 
+     #[test]
