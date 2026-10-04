@@ -725,7 +725,11 @@ def launch(app: str) -> tuple[int, dict]:
         env = app_env(MOZ_ENABLE_WAYLAND="1")
     else:
         cmd = ["firefox", "--no-remote", "--profile", profile, *spec["args"]]
-        env = app_env(MOZ_USE_XINPUT2="1", MOZ_ENABLE_WAYLAND="0")
+        # Firefox draws through Vulkan; gamescope's WSI layer then gives its
+        # window a gamescope swapchain, and a resize (the keyboard pushing it
+        # up) can make a second one: gamescope drops the connection and the
+        # window freezes. Plain Xwayland presents it instead.
+        env = app_env(MOZ_USE_XINPUT2="1", MOZ_ENABLE_WAYLAND="0", DISABLE_GAMESCOPE_WSI="1")
     raise_curtain(app, "firefox")
     STATE.apps[app] = subprocess.Popen(
         cmd,
