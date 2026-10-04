@@ -160,8 +160,8 @@ function watchGames() {
     gamesSeen = now;
 }
 
-// Games to link: those running, then the most recently played (Steam's and
-// non-Steam), as [{ id, name, running }].
+// Games to link: those running and the most recently played (Steam's and
+// non-Steam), by name, as [{ id, name, running }].
 const STEAM_GAME = 1, NON_STEAM_GAME = 1073741824;
 function linkableGames() {
     const out = [], seen = new Set();
@@ -175,7 +175,11 @@ function linkableGames() {
         .sort((a, b) => b.rt_last_time_played - a.rt_last_time_played)
         .slice(0, 40)
         .forEach((a) => add(a.appid, a.display_name, false));
-    return out;
+    return out.sort(byName);
+}
+
+function byName(a, b) {
+    return a.name.localeCompare(b.name, undefined, { sensitivity: "base", numeric: true });
 }
 
 function steamKeyboardShowing(mgr) {
@@ -473,7 +477,8 @@ function GamesSection() {
     const [apps, setApps] = useState([]);
     const [games] = useState(linkableGames);
     const [game, setGameState] = useState(() =>
-        games.some((g) => g.id === gamePicks.game) ? gamePicks.game : (games.length ? games[0].id : null));
+        games.some((g) => g.id === gamePicks.game) ? gamePicks.game
+            : ((games.find((g) => g.running) || games[0] || {}).id || null));
     const [app, setAppState] = useState(gamePicks.app);
     const [close, setCloseState] = useState(gamePicks.close);
     const setGame = (v) => { gamePicks.game = v; setGameState(v); };
@@ -533,7 +538,7 @@ function GamesSection() {
             layout: "below", disabled: !game || !app, onClick: link,
             children: linked ? "Change the link" : "Link",
         })),
-        ...(links || []).map((l) => row(jsxs(DFL.Focusable, {
+        ...(links || []).map((l) => ({ ...l, name: l.gameName || l.game })).sort(byName).map((l) => row(jsxs(DFL.Focusable, {
             "flow-children": "horizontal",
             style: { display: "flex", alignItems: "center" },
             children: [
