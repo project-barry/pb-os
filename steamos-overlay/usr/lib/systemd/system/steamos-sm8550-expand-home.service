@@ -4,12 +4,16 @@ DefaultDependencies=no
 Conflicts=shutdown.target
 After=systemd-remount-fs.service
 After=home.mount
+# growpart's temp files must not vanish under a /tmp mounted mid-run.
+After=tmp.mount
 Before=display-manager.service graphical.target
-ConditionPathExists=!/var/lib/steamos-sm8550/home-expanded
+# No marker condition: the script checks the marker itself, so a failed
+# earlier grow (marker + free space on a microSD) is retried.
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
+Environment=TMPDIR=/run
 ExecStart=/usr/lib/steamos/steamos-sm8550-expand-home
 TimeoutStartSec=180
 SuccessExitStatus=0

@@ -2,6 +2,10 @@
 # Grow the home partition (p3 / LABEL=home) to fill the SD/UFS, then resize ext4.
 # SteamOS PC-style: root stays fixed, home expands on first boot. No reboot.
 # Do not stamp on failure — retry next boot.
+# A marker with free space still after home on a microSD means an earlier
+# grow failed (0.5: growpart lost its /tmp files and the marker was written
+# anyway), so it is retried. Internal UFS installs write the marker on
+# purpose and keep it.
 set -u
 
 STAMP_DIR=/var/lib/steamos-sm8550
@@ -15,11 +19,6 @@ ts() { date -Iseconds; }
 log() { printf '%s %s\n' "$(ts)" "$*"; }
 
 log "=== expand-home start ==="
-
-if [[ -f "$STAMP" ]]; then
-  log "marker ${STAMP} present — skip"
-  exit 0
-fi
 
 if ! command -v resize2fs >/dev/null 2>&1; then
   log "ERROR: resize2fs missing — skip (will retry)"
@@ -92,6 +91,27 @@ if [[ ! -b "${DISK}" ]]; then
   exit 0
 fi
 
+# Sectors between the end of home and the end of the disk.
+tail_free() {
+  local disk_size start size
+  disk_size="$(cat "/sys/class/block/${DISK_NAME}/size")"
+  start="$(cat "/sys/class/block/${PART_BASE}/start")"
+  size="$(cat "/sys/class/block/${PART_BASE}/size")"
+  echo $(( disk_size - start - size ))
+}
+SLACK=$(( 2 * 1024 * 1024 * 2 ))  # 2 GiB in sectors
+
+if [[ -f "$STAMP" ]]; then
+  free="$(tail_free)"
+  if [[ "${HOME_SRC}" == /dev/mmcblk* && "${free}" -gt "${SLACK}" ]]; then
+    log "marker present but $(( free / 2048 )) MiB free after ${HOME_SRC} — earlier grow failed, retrying"
+    rm -f "$STAMP"
+  else
+    log "marker ${STAMP} present — skip"
+    exit 0
+  fi
+fi
+
 log "home SOURCE=${HOME_SRC} disk=${DISK} part=${PART_NUM}"
 
 if command -v growpart >/dev/null 2>&1; then
@@ -106,11 +126,17 @@ if command -v growpart >/dev/null 2>&1; then
   elif [[ "${GROW_RC}" -eq 1 ]] || printf '%s\n' "${GROW_OUT}" | grep -qi 'NOCHANGE'; then
     log "partition already at max (or NOCHANGE)"
   else
-    log "WARN: growpart rc=${GROW_RC} — still attempting resize2fs"
+    log "ERROR: growpart rc=${GROW_RC} — will retry next boot"
+    log "=== expand-home incomplete ==="
+    exit 0
   fi
 else
   log "growpart missing — sfdisk fallback"
-  echo ", +" | sfdisk --no-reread -N "${PART_NUM}" "${DISK}" || true
+  if ! echo ", +" | sfdisk --no-reread -N "${PART_NUM}" "${DISK}"; then
+    log "ERROR: sfdisk failed — will retry next boot"
+    log "=== expand-home incomplete ==="
+    exit 0
+  fi
 fi
 
 udevadm settle 2>/dev/null || true
@@ -129,6 +155,13 @@ if [[ "${RESIZE_RC}" -ne 0 ]]; then
     log "=== expand-home incomplete ==="
     exit 0
   fi
+fi
+
+free="$(tail_free)"
+if [[ "${free}" -gt "${SLACK}" ]]; then
+  log "WARN: still $(( free / 2048 )) MiB free after ${HOME_SRC} — will retry next boot"
+  log "=== expand-home incomplete ==="
+  exit 0
 fi
 
 mkdir -p "$STAMP_DIR"
