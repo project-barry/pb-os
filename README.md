@@ -34,6 +34,9 @@ lavachemist
 
 ---
 
+> [!TIP]
+> **Join the Project Barry community on Discord:** https://discord.gg/KSCCwcGG3
+
 pb-os runs Valve's SteamOS for ARM (the Steam Frame build) on Snapdragon
 handhelds. It is a fork of hashtagbasit's
 [SteamOS-ARM-Handhelds](https://github.com/hashtagbasit/SteamOS-ARM-Handhelds).
