@@ -24,6 +24,12 @@ A device knows its version (`/usr/share/pb-os/version`) and its feature release 
 
 The apply step runs the updater that comes in the package, so fixes to it reach devices with the update itself.
 
+## Cleaning up
+
+An update needs its download, unpacked files and backup only until it has installed or rolled back. Each time Game Mode starts, PB-OS Update deletes them for every finished update, including those installed by older versions of the updater; preparing a new update does the same first. A finished update keeps only its records and logs (`transaction.json`, `state.json`, `recovery.log`, `failure.txt`). The folder of a preparation that never finished (power lost) goes, as do downloads of versions older than the installed one. A pending update, and one that stopped halfway, are never touched. From Konsole: `sudo python3 /usr/share/konkr-update/konkr-update.py cleanup`.
+
+A device takes this with the first update whose updater has it: that update installs the new PB-OS Update, which cleans up after the restart.
+
 ## Updating from a microSD card or USB drive
 
 For a device without internet. On a computer, download from the release page:
@@ -97,7 +103,7 @@ On the RP6 and Pocket FIT, the joined file also works in the old app. After that
 
 ## Diagnostics and recovery
 
-Transaction data and logs are under `/home/.konkr-updates/<id>/`, accessible to root. Keep a working microSD as a recovery option for an internal install. A recovery error must be investigated before deleting the pending marker or backup.
+Transaction data and logs are under `/home/.konkr-updates/<id>/`, accessible to root (a finished update keeps only its records and logs, see [Cleaning up](#cleaning-up)). Keep a working microSD as a recovery option for an internal install. A recovery error must be investigated before deleting the pending marker or backup.
 
 From a recovery SD, mount the affected root, boot and HOME partitions and run the same helper as root with the corresponding paths:
 

@@ -35,6 +35,9 @@ PRESERVE = ('passwd', 'shadow', 'group', 'gshadow', 'machine-id', 'hostname', 'h
             'fstab', 'crypttab', 'localtime', 'adjtime', 'resolv.conf', 'ssh',
             'NetworkManager/system-connections', 'sudoers.d')
 PENDING = 'var/lib/konkr-update/pending'
+# One folder per update, named by its id. A finished one keeps only these.
+STORAGE = Path('/home/.konkr-updates')
+TRANSACTION_RECORDS = ('transaction.json', 'state.json', 'recovery.log', 'failure.txt')
 # Per-install record written by the image build; not part of any package.
 OPT_KEEP = ('steamos-sm8650/IMAGE.txt',)
 UPDATER = 'usr/share/konkr-update/konkr-update.py'
@@ -267,12 +270,67 @@ def newer(tag, current):
 
 def storage():
     """Root-only update storage on HOME."""
-    base = Path('/home/.konkr-updates')
+    base = STORAGE
     if base.is_symlink(): raise ValueError('invalid update storage directory')
     base.mkdir(mode=0o700, exist_ok=True)
     if base.stat().st_uid != 0: raise ValueError('update storage is not owned by root')
     os.chmod(base, 0o700)
     return base
+
+
+def size_of(p):
+    if p.is_symlink() or not p.is_dir():
+        try: return p.lstat().st_size
+        except OSError: return 0
+    return sum(size_of(c) for c in p.iterdir())
+
+
+def remove(p):
+    if p.is_dir() and not p.is_symlink(): shutil.rmtree(p)
+    else: p.unlink()
+
+
+def cleanup():
+    """Free what finished updates leave on HOME, from every updater version
+    (the layout is the same since the first): a committed, rolled-back or
+    aborted update keeps only its records and logs; the folder of a staging
+    that never finished (power lost, killed) goes. A pending update, or one
+    stopped halfway without its marker (to be investigated), is not touched.
+    Downloads of versions older than the installed one go. Call with the lock
+    held."""
+    base = STORAGE
+    if not base.is_dir() or base.is_symlink() or base.stat().st_uid != 0: return 0
+    # Never delete into a mount (the restart step binds the system under recovery/).
+    for line in Path('/proc/self/mountinfo').read_text().splitlines():
+        point = line.split()[4].replace('\\040', ' ')
+        if point == str(base) or point.startswith(str(base) + '/'):
+            print('cleanup: something is mounted under', base, '- skipping', flush=True); return 0
+    pending = Path('/') / PENDING
+    busy = pending.read_text().strip() if pending.exists() else ''
+    current = installed_version(); freed = 0
+    for d in sorted(base.iterdir()):
+        if d.name == 'downloads' and d.is_dir() and not d.is_symlink():
+            for f in d.iterdir():
+                m = re.fullmatch(r'pb-os-(.+?)-[a-z0-9]+\.(?:from-.+\.delta|update)\.tar\.gz', f.name)
+                # Older than the installed version (a reinstall's download may resume).
+                if m and current and not current.startswith('dev-') and newer(current, m.group(1)):
+                    freed += size_of(f); remove(f)
+            continue
+        if d.name == busy or d.is_symlink() or not d.is_dir(): continue
+        if not re.fullmatch('[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}', d.name): continue
+        try: done = json.loads((d / 'state.json').read_text())['state']
+        except (OSError, ValueError, KeyError, TypeError): done = None
+        if done in ('committed', 'rolled-back', 'aborted'):
+            for c in d.iterdir():
+                if c.name not in TRANSACTION_RECORDS:
+                    freed += size_of(c); remove(c)
+        elif done in (None, 'staged'):
+            # Staging writes the pending marker before the boot image: without
+            # it, nothing of this folder reached the system.
+            freed += size_of(d); shutil.rmtree(d)
+    if freed: print(f'cleanup: freed {freed >> 20} MiB of finished updates', flush=True)
+    os.sync()
+    return freed
 
 
 def stage(source_package, expected, move=False, version=None):
@@ -291,6 +349,7 @@ def stage(source_package, expected, move=False, version=None):
     if home_info['source'] == root_info['source']: raise ValueError('HOME must be a separate filesystem')
     pending = Path('/') / PENDING
     if pending.exists(): raise ValueError('an update is already pending; finish or recover it first')
+    cleanup()
     base = storage()
     work = base / str(uuid.uuid4()); work.mkdir(mode=0o700)
     package = work / 'package.tar.gz'; corrupt = False
@@ -450,6 +509,7 @@ def verify_signature(data, signature):
 def update(args):
     if os.geteuid() != 0: raise ValueError('updating needs administrator access')
     if (Path('/') / PENDING).exists(): raise ValueError('an update is already pending; restart to install it')
+    cleanup()
     step('Looking for updates')
     found = find_update(args.reinstall)
     if not found: raise ValueError('the pb-os releases have no update for this device')
@@ -634,6 +694,7 @@ def local_check(args):
 def local_update(args):
     if os.geteuid() != 0: raise ValueError('updating needs administrator access')
     if (Path('/') / PENDING).exists(): raise ValueError('an update is already pending; restart to install it')
+    cleanup()
     step('Looking for an update on a drive')
     found, problems = find_local()
     if not found: raise ValueError(problems[0] if problems else 'no pb-os update for this device on a microSD card or USB drive')
@@ -1266,14 +1327,20 @@ def main():
     p = sub.add_parser('recover')
     for name in ('root', 'boot', 'home', 'work'): p.add_argument('--' + name, required=True)
     p = sub.add_parser('inspect'); p.add_argument('package')
+    sub.add_parser('cleanup', help='free what finished updates left on HOME')
     a = ap.parse_args()
     try:
-        if a.command in ('stage', 'update', 'local-update'):
+        if a.command in ('stage', 'update', 'local-update', 'cleanup'):
+            if os.geteuid() != 0: raise ValueError('needs administrator access')
             with open('/run/konkr-update.lock', 'w') as lock:
-                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                try: fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    if a.command == 'cleanup': return 0  # an update is being prepared; next time
+                    raise
                 if a.command == 'stage': stage(a.package, a.sha256)
                 elif a.command == 'update': update(a)
-                else: local_update(a)
+                elif a.command == 'local-update': local_update(a)
+                else: cleanup()
         elif a.command == 'check': check(a)
         elif a.command == 'local-check': local_check(a)
         elif a.command == 'recover': return recover(a)

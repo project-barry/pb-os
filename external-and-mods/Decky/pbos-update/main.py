@@ -9,6 +9,8 @@ log. The update installs on the next restart.
 Without internet, an update on a microSD card or USB drive works the same way:
 this looks at drives when one is put in or taken out (local-check) and
 installs from it with local-update.
+
+Each start frees what finished updates left on HOME (cleanup).
 """
 from __future__ import annotations
 
@@ -79,6 +81,16 @@ def ask_updater(command: str, timeout: int) -> dict[str, Any]:
     return {"ok": True, **json.loads(r.stdout), "time": time.time()}
 
 
+def cleanup() -> None:
+    """Free what finished updates (from any version) left on HOME; the updater
+    skips it while an update is being prepared."""
+    r = subprocess.run(["/usr/bin/python3", UPDATER, "cleanup"], capture_output=True, text=True, timeout=600,
+                       env={"PATH": "/usr/bin:/usr/sbin", "LANG": "C.UTF-8"})
+    out = (r.stdout + r.stderr).strip()
+    if out:
+        decky.logger.info(out)
+
+
 def check_releases() -> dict[str, Any]:
     return ask_updater("check", 90)
 
@@ -102,10 +114,20 @@ class Plugin:
         self.announced_local = ""
         self.watcher = asyncio.create_task(self._watch())
         self.drive_watcher = asyncio.create_task(self._watch_drives())
+        self.cleaner = asyncio.create_task(self._cleanup())
 
     async def _unload(self) -> None:
         self.watcher.cancel()
         self.drive_watcher.cancel()
+        self.cleaner.cancel()
+
+    async def _cleanup(self) -> None:
+        # Once per start, after Game Mode has settled.
+        await asyncio.sleep(30)
+        try:
+            await asyncio.to_thread(cleanup)
+        except Exception as e:
+            decky.logger.info(f"cleanup failed: {e}")
 
     async def _watch_drives(self) -> None:
         # A drive put in or taken out changes the block devices; looking at
