@@ -1,5 +1,5 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/ShadowBlip/InputPlumber/main/rootfs/usr/share/inputplumber/schema/capability_map_v2.json
-# SM8550 rsinput (AYN): D-pad as buttons, QAM, Guide, West/North swap.
+# SM8550 rsinput (AYN): D-pad as buttons, QAM, Guide; West and North pass through.
 version: 2
 kind: CapabilityMap
 name: AYN MCU Mapping
@@ -26,7 +26,7 @@ mapping:
       gamepad:
         button: South
 
-  - name: West Button
+  - name: North Button
     source_events:
       - evdev:
           event_type: KEY
@@ -34,9 +34,9 @@ mapping:
           value_type: button
     target_event:
       gamepad:
-        button: West
+        button: North
 
-  - name: North Button
+  - name: West Button
     source_events:
       - evdev:
           event_type: KEY
@@ -44,7 +44,7 @@ mapping:
           value_type: button
     target_event:
       gamepad:
-        button: North
+        button: West
 
   - name: East Button
     source_events:

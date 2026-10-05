@@ -2,7 +2,7 @@
 # Retroid Pocket 6 and Nova: InputPlumber 0.81's rsinput1 with Nintendo face
 # buttons. A is on the right and B at the bottom; the kernel reports the
 # buttons by position (BTN_EAST = right). Steam's A (South) follows the
-# printed A, and so on for all four: A right, B bottom, X top, Y left.
+# printed A and Steam's B (East) the printed B; North and West pass through.
 # Used by our copies of 50-retroid_pocket6.yaml / 50-retroid_pocket_nova.yaml.
 version: 2
 kind: CapabilityMap
@@ -80,11 +80,9 @@ mapping:
       gamepad:
         button: RightPaddle1
 
-  # Kernel reports NORTH/WEST by physical position, but Xbox layout 
-  # relies on these swapped. This results in NORTH/WEST swapped in
-  # evtest, but produces expected behaviour in games.
+  # North and West pass through (InputPlumber's rsinput1 swaps them).
 
-  - name: West Button
+  - name: North Button
     source_events:
       - evdev:
           event_type: KEY
@@ -92,9 +90,9 @@ mapping:
           value_type: button
     target_event:
       gamepad:
-        button: West
+        button: North
 
-  - name: North Button
+  - name: West Button
     source_events:
       - evdev:
           event_type: KEY
@@ -102,7 +100,7 @@ mapping:
           value_type: button
     target_event:
       gamepad:
-        button: North
+        button: West
 
   - name: A Button (right)
     source_events:
