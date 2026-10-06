@@ -20,7 +20,7 @@ if [[ -n "${WAYLAND_DISPLAY:-}" ]]; then
 	export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-wayland}"
 	export XDG_SESSION_TYPE="${XDG_SESSION_TYPE:-wayland}"
 	dsi_scale=1.25
-	dsi1_logical_x=272
+	dsi1_logical_x=1536
 	dsi1_logical_y=864
 	dsi2="$(kscreen_output_id DSI-2 || true)"
 	dsi1="$(kscreen_output_id DSI-1 || true)"

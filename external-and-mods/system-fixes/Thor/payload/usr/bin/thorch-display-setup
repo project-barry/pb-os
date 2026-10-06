@@ -27,7 +27,10 @@ if [[ -n "${WAYLAND_DISPLAY:-}" ]]; then
 	export XDG_SESSION_TYPE="${XDG_SESSION_TYPE:-wayland}"
 	dsi_scale=1.25
 	# Top panel (DSI-2) is the primary display, like Game Mode and Armada.
-	dsi1_logical_x=272
+	# The bottom one meets it only at its bottom-right corner (1920x1080 at
+	# 125 % is 1536x864): the pointer stays on top, Display Settings still
+	# sees them touching. barry_launcher_desktop places it the same way.
+	dsi1_logical_x=1536
 	dsi1_logical_y=864
 	dsi2="$(kscreen_output_id DSI-2 || true)"
 	dsi1="$(kscreen_output_id DSI-1 || true)"

@@ -45,16 +45,22 @@ kwriteconfig6 --file kwinrulesrc --group "$rule" --key titlematch 3
 kwriteconfig6 --file kwinrulesrc --group "$rule" --key acceptfocus false
 kwriteconfig6 --file kwinrulesrc --group "$rule" --key acceptfocusrule 2
 qdbus6 org.kde.KWin /KWin reconfigure >/dev/null 2>&1
-# The bottom screen is Barry's: a gap between it and the top screen in
-# KWin's layout keeps the pointer, and windows dragged with it, on the top
-# one (KWin only crosses between outputs that touch); touches still go to
-# it by name. thorch-display-setup puts it right under the top screen at
-# login, so this runs again once that is done.
-gap_layout() {
-  kscreen-doctor output.DSI-1.position.170,760 >/dev/null 2>&1
+# The bottom screen is Barry's: it meets the top screen only at the top
+# screen's bottom-right corner, so the pointer, and windows dragged with it,
+# stay on the top one, while Display Settings sees the screens touching (it
+# refuses a layout with a gap). Touches still go to it by name. The corner
+# comes from the top screen's size, so it follows its scale. Run again once
+# thorch-display-setup has set the layout at login.
+corner_layout() {
+  local geo
+  geo="$(kscreen-doctor -o 2>/dev/null | sed -E 's/\x1b\[[0-9;]*m//g' \
+    | awk '$1 == "Output:" { o = $3 } o == "DSI-2" && $1 == "Geometry:" { print $2, $3; exit }')"
+  [[ "$geo" =~ ^(-?[0-9]+),(-?[0-9]+)\ ([0-9]+)x([0-9]+)$ ]] || return 0
+  kscreen-doctor "output.DSI-1.position.$((BASH_REMATCH[1] + BASH_REMATCH[3])),$((BASH_REMATCH[2] + BASH_REMATCH[4]))" \
+    >/dev/null 2>&1
 }
-gap_layout
-(sleep 6; gap_layout) &
+corner_layout
+(sleep 6; corner_layout) &
 export BARRY_DESKTOP=1 BARRY_OUTPUT="${BARRY_OUTPUT:-DSI-1}"
 shell_qml=/usr/share/barry_launcher/shell
 /usr/lib/barry_launcher/barry_launcher_shelld &
