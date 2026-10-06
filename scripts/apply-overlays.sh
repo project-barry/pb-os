@@ -558,7 +558,7 @@ chmod 0755 "$R/usr/lib/steamos/sm8550-audio-setup" "$R/usr/lib/konkr/pbosd" \
   "$R/usr/bin/pbosctl" "$R/usr/bin/konkr-game" "$R/usr/lib/konkr/konkr-standby" \
   "$R/usr/lib/konkr/konkr-volume" "$R/usr/lib/konkr/konkr-sleep" \
   "$R/usr/lib/konkr/konkr-suspend" "$R/usr/lib/konkr/konkr-focusfix" \
-  "$R/usr/bin/konkr-apk" "$R/usr/lib/konkr/apk-info" \
+  "$R/usr/bin/konkr-apk" "$R/usr/lib/konkr/apk-info" "$R/usr/lib/konkr/pbos-hostname" \
   "$R/usr/lib/NetworkManager/dispatcher.d/60-konkr-timesync"
 # Game mode: re-activate the game after Quick Access / Steam menu closes.
 mkdir -p "$R/usr/lib/systemd/user/gamescope-session.target.wants"
@@ -1199,7 +1199,7 @@ log "== summary"
   echo "deck-uhid: $(grep -A2 target_devices "$R/etc/inputplumber/devices.d/02-ayn-odin.yaml" 2>/dev/null || echo missing)"
   echo "Thor pad map: $(grep capability_map_id "$R/etc/inputplumber/devices.d/02-ayn-thor.yaml" 2>/dev/null || echo missing)"
   echo "Retroid pad maps: $(grep -h capability_map_id "$R"/etc/inputplumber/devices.d/50-retroid_pocket*.yaml 2>/dev/null | sort -u | tr -s ' \n' ' ' || echo missing)"
-  echo "pbos-hostname: $(readlink "$R/usr/lib/systemd/system/sysinit.target.wants/pbos-hostname.service" 2>/dev/null || echo missing)"
+  echo "pbos-hostname: $(readlink "$R/usr/lib/systemd/system/sysinit.target.wants/pbos-hostname.service" 2>/dev/null || echo missing), $(stat -c %a "$R/usr/lib/konkr/pbos-hostname" 2>/dev/null || echo missing)"
   echo "home:      $(find "$HOME_DST" -maxdepth 3 -printf '%p\n' | head -40)"
 } | tee -a "$LOG"
 
