@@ -101,8 +101,8 @@ import barry_glide  # noqa: E402
 DESKTOP = os.environ.get("BARRY_DESKTOP") == "1"
 if DESKTOP:
     import barry_desktop  # noqa: E402
-# KWin scales the Thor's bottom output 2x; Firefox's zoom was set for 1x.
-DESKTOP_SCALE = float(os.environ.get("BARRY_SCALE", "2"))
+# KWin scales the Thor's bottom output 1.25x; Firefox's zoom was set for 1x.
+DESKTOP_SCALE = float(os.environ.get("BARRY_SCALE", "1.25"))
 
 PORT = int(os.environ.get("BARRY_PORT", "47824"))  # another only for tests
 KEYBOARD_TITLE = "Barry Launcher Keyboard"

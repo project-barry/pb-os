@@ -17,7 +17,7 @@
                 },
                 "overscan": 0,
                 "rgbRange": "Automatic",
-                "scale": 2,
+                "scale": 1.25,
                 "sdrBrightness": 200,
                 "sdrGamutWideness": 0,
                 "transform": "Rotated270",
@@ -40,7 +40,7 @@
                 },
                 "overscan": 0,
                 "rgbRange": "Automatic",
-                "scale": 2,
+                "scale": 1.25,
                 "sdrBrightness": 200,
                 "sdrGamutWideness": 0,
                 "transform": "Rotated270",
@@ -73,8 +73,8 @@
                         "enabled": true,
                         "outputIndex": 0,
                         "position": {
-                            "x": 170,
-                            "y": 760
+                            "x": 272,
+                            "y": 864
                         },
                         "priority": 1
                     },
