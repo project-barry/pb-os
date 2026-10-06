@@ -1,0 +1,11 @@
+#!/bin/bash
+# Desktop Mode's Steam autostart. Retroid Pocket Nova: Steam draws its
+# on-screen keyboard 1280 px wide times Xft.dpi/96, and KWin sets Xft.dpi
+# from the panel scale (125 % -> 120) on every start, so the keyboard ran
+# 160 px past each edge of the 1280 px panel. X11 font DPI 96 is set here,
+# after KWin and before Steam reads it; other devices start Steam unchanged.
+if [[ "$(tr -d '\0' </sys/firmware/devicetree/base/model 2>/dev/null)" == "Retroid Pocket Nova" ]] &&
+   command -v xrdb >/dev/null 2>&1; then
+  echo "Xft.dpi: 96" | xrdb -merge 2>/dev/null || true
+fi
+exec /usr/bin/steam "$@"
