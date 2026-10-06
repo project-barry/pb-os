@@ -53,9 +53,13 @@ RELEASES = 'https://api.github.com/repos/project-barry/pb-os/releases'
 # (SHA256SUMS.sig, scripts/sign-release.sh) from a key in this file.
 SIGNERS = Path('/usr/share/konkr-update/allowed_signers')
 SIGNER, NAMESPACE = 'pb-os-release', 'pb-os-update'
+# One image per SoC: the AYN Thor shares the SM8550 one ('rp6'). Thors still
+# on the separate Thor image look for 'thor' packages; the first shared
+# release also names its full package that way (build-update-package.py
+# --thor-bridge).
 IMAGES = {'KONKR Pocket FIT': 'pocketfit', 'AYANEO Pocket S2': 'pocketfit',
           'Retroid Pocket 6': 'rp6', 'Retroid Pocket 6 TOP-DPAD': 'rp6', 'Retroid Pocket Nova': 'rp6',
-          'AYN Thor': 'thor'}
+          'AYN Thor': 'rp6'}
 
 
 def run(*args, **kwargs):
@@ -728,12 +732,20 @@ def install_kernel(src, boot):
     os.sync()
 
 
+# Plugins one device of a shared image uses (sync-decky-bundled-plugins.sh's
+# DEVICE_ONLY, by DTB model here); other devices get them removed.
+DEVICE_PLUGINS = {'dual-screen': ('AYN Thor',)}
+
+
 def plugin_dirs(work, manifest):
     """Plugin folders the update installs, and those it removes."""
     src = work / 'payload/home/steamos' / PLUGINS
     names = sorted(p.name for p in src.iterdir() if p.is_dir()) if src.is_dir() else []
-    install = [n for n in names if n not in LEGACY_PLUGINS]
-    remove = sorted(set(manifest.get('remove_plugins', [])) | set(LEGACY_PLUGINS))
+    try: model = device_model()
+    except OSError: model = None  # unknown device: leave them as the package has them
+    other = {n for n, models in DEVICE_PLUGINS.items() if model and model not in models}
+    install = [n for n in names if n not in LEGACY_PLUGINS and n not in other]
+    remove = sorted(set(manifest.get('remove_plugins', [])) | set(LEGACY_PLUGINS) | other)
     return [f'{PLUGINS}/{n}' for n in install], [f'{PLUGINS}/{n}' for n in remove if n not in install]
 
 
@@ -1106,7 +1118,9 @@ class Screen:
         self.base = yoff * self.stride + xoff * self.bpp
         rot = info.get('rotation')
         if rot is None:  # staged by an updater that did not record it
-            rot = 0 if self.xres > self.yres else 270 if any('Retroid' in d for d in devices) else 90
+            try: model = device_model()
+            except OSError: model = devices[0] if len(devices) == 1 else ''
+            rot = 0 if self.xres > self.yres else 270 if 'Retroid' in model else 90
         self.rot = rot % 360
         self.w, self.h = (self.yres, self.xres) if self.rot in (90, 270) else (self.xres, self.yres)
         try:  # keep the console cursor off the picture

@@ -64,10 +64,10 @@ Usage: $0 [options]
   --skip-box64      Do not rebuild Box64
   --image-only      Only pack the .img from the current rootfs
   --img PATH        Output image (default: ${IMG})
-  --device NAME     Device-only extras: thor (AYN Thor bottom screen: Barry
-                    Launcher, Firefox, Dual Screen plugin; needs a lease
-                    gamescope in GAMESCOPE_BUILD). Default: none, for
-                    single-screen devices.
+  --device thor     Accepted and ignored: the SM8550 image carries the AYN
+                    Thor's bottom screen (Barry Launcher, Firefox, Dual
+                    Screen plugin; needs a lease gamescope in GAMESCOPE_BUILD)
+                    for every SM8550 device, started only on the Thor.
 
 Env: BOOT_MIB ROOT_MIB HOME_MIB STEAMOS_SM8650_IMG STEAMOS_ROOTFS KERNEL_OUT DEVICE
      PB_OS_VERSION PB_OS_BASE
@@ -100,7 +100,8 @@ PB_OS_VERSION="${PB_OS_VERSION:-dev-$(date +%Y%m%d-%H%M)}"
 PB_OS_BASE="${PB_OS_BASE:-$PB_OS_VERSION}"
 [[ "$PB_OS_BASE" =~ ^[A-Za-z0-9._-]+$ ]] || die "PB_OS_BASE: letters, digits, . _ - only"
 case "$DEVICE" in
-  ""|thor) ;;
+  "") ;;
+  thor) log "--device thor: the SM8550 image already includes the AYN Thor" ;;
   *) die "unknown device: $DEVICE (known: thor)" ;;
 esac
 export DEVICE

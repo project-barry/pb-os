@@ -167,6 +167,23 @@ seed_thor_layout() {
 }
 seed_thor_layout
 
+# The SM8550 image carries Barry Launcher for the AYN Thor's bottom screen.
+# Elsewhere its menu entry and its virtual keyboard (Settings > Virtual
+# Keyboard) are hidden by a user copy marked Hidden, removed again on a Thor.
+hide_thor_entries() {
+  local apps="${XDG_DATA_HOME:-$HOME/.local/share}/applications" f
+  for f in barry_launcher_desktop.desktop org.barry_launcher.keyboard.desktop; do
+    [[ -f "/usr/share/applications/$f" ]] || continue
+    if grep -qa 'ayn,thor' /sys/firmware/devicetree/base/compatible 2>/dev/null; then
+      grep -qsx 'X-PBOS-Hidden=true' "$apps/$f" && rm -f "$apps/$f"
+    elif [[ ! -f "$apps/$f" ]]; then
+      mkdir -p "$apps"
+      printf '[Desktop Entry]\nType=Application\nName=Barry Launcher\nHidden=true\nX-PBOS-Hidden=true\n' >"$apps/$f"
+    fi
+  done
+}
+hide_thor_entries
+
 # AYN Thor: Game Mode silenced the bottom touchscreen; the desktop uses both.
 if [[ -x /usr/lib/steamos-sm8550/sm8550-touch-inhibit ]]; then
   /usr/lib/steamos-sm8550/sm8550-touch-inhibit bottom_touchscreen 0

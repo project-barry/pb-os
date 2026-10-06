@@ -181,8 +181,9 @@ if [[ -n "${DECKY_PLUGINS:-}" ]]; then
   IFS=: read -ra decky_plugins <<<"${DECKY_PLUGINS}"
 elif [[ "$SOC" == sm8650 ]]; then
   decky_plugins=("${MOD}/Decky/sm8650/pbos-control")
-elif [[ "${DEVICE:-}" == thor ]]; then
-  # Dual Screen: AYN Thor bottom screen on/off.
+else
+  # SM8550. Dual Screen: AYN Thor bottom screen on/off; on other devices
+  # sync-decky-bundled-plugins.sh and the updater leave it out.
   decky_plugins=("${MOD}/Decky/sm8550/dual-screen")
 fi
 # PB-OS Update (updates from Game Mode) on every device.
@@ -198,7 +199,7 @@ fi
 rm -rf "${BUNDLE}/thor-screens" "${HOME_DST}/homebrew/plugins/thor-screens"
 # Renamed to pbos-control.
 rm -rf "${BUNDLE}/konkr-control" "${HOME_DST}/homebrew/plugins/konkr-control"
-if [[ "${DEVICE:-}" != thor ]]; then
+if [[ "$SOC" == sm8650 ]]; then
   rm -rf "${HOME_DST}/homebrew/plugins/dual-screen"
 fi
 for src in ${decky_plugins[@]+"${decky_plugins[@]}"}; do
@@ -227,6 +228,12 @@ done
 install -m 0755 "$OVL/usr/lib/steamos/sync-decky-bundled-plugins.sh" \
   "$R/usr/lib/steamos/sync-decky-bundled-plugins.sh"
 install -m 0755 "$OVL/usr/bin/install-decky" "$R/usr/bin/install-decky"
+# Device-only plugins off other devices, at every boot before Decky starts.
+install -m 0644 "$OVL/usr/lib/systemd/system/pbos-device-plugins.service" \
+  "$R/usr/lib/systemd/system/pbos-device-plugins.service"
+mkdir -p "$R/usr/lib/systemd/system/multi-user.target.wants"
+ln -sfn ../pbos-device-plugins.service \
+  "$R/usr/lib/systemd/system/multi-user.target.wants/pbos-device-plugins.service"
 if [[ -f "$OVL/usr/share/applications/install-decky.desktop" ]]; then
   install -m 0644 "$OVL/usr/share/applications/install-decky.desktop" \
     "$R/usr/share/applications/install-decky.desktop"
@@ -248,7 +255,7 @@ chmod 0755 "$R/usr/bin/steamos-polkit-helpers/install-decky"
 
 # Pre-seed ~/homebrew/plugins even before Decky is installed.
 if [[ -d "$HOME_DST" ]]; then
-  STEAM_USER=steamos STEAM_HOME="$HOME_DST" BUNDLE_ROOT="$BUNDLE" \
+  STEAM_USER=steamos STEAM_HOME="$HOME_DST" BUNDLE_ROOT="$BUNDLE" ALL_DEVICES=1 \
     "$R/usr/lib/steamos/sync-decky-bundled-plugins.sh" || true
 fi
 

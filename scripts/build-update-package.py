@@ -2,7 +2,7 @@
 """Build a verified offline update bundle from a completed rootfs and boot image.
 
 The rootfs is the one make-steamos-sm8650.sh packed into the image, with the
-same SOC and --device. Devices install it with PB-OS Update (Decky) or the
+same SOC. Devices install it with PB-OS Update (Decky) or the
 SteamOS Update app, which find it in a GitHub release as
   pb-os-<version>-<image>.update.tar.gz.001, .002, ...              full system
   pb-os-<version>-<image>.from-<old version>.delta.tar.gz.001, ...  what changed
@@ -47,14 +47,16 @@ ap.add_argument('--patch-state', action='append', default=[], metavar='FILE',
                 help='with --base-state: the state of each earlier patch of that feature release (repeatable)')
 ap.add_argument('--state-only', action='store_true', help='only write the state file of --rootfs')
 ap.add_argument('--soc', choices=('sm8650', 'sm8550'), default='sm8650')
-ap.add_argument('--device', choices=('thor',), help='image built with --device thor')
+ap.add_argument('--device', choices=('thor',), help='ignored: the SM8550 image includes the AYN Thor')
+ap.add_argument('--thor-bridge', action='store_true',
+                help='SM8550 with --release: also name the full package for the AYN Thor\'s old channel '
+                     '(pb-os-<version>-thor.update.tar.gz), which Thors on a separate Thor image still look for')
 a = ap.parse_args()
-if a.device == 'thor' and a.soc != 'sm8550': raise SystemExit('--device thor needs --soc sm8550')
-# Device models (DTB `model`) each package may install on. A Thor image differs
-# from the plain SM8550 one, so each gets its own package.
-DEVICES = (['AYN Thor'] if a.device == 'thor' else
-           {'sm8650': ['KONKR Pocket FIT', 'AYANEO Pocket S2'],
-            'sm8550': ['Retroid Pocket 6', 'Retroid Pocket 6 TOP-DPAD', 'Retroid Pocket Nova']}[a.soc])
+if a.thor_bridge and (a.soc != 'sm8550' or not a.release or a.base_state):
+    raise SystemExit('--thor-bridge needs --soc sm8550, --release and a full package (no --base-state)')
+# Device models (DTB `model`) each package may install on: one image per SoC.
+DEVICES = {'sm8650': ['KONKR Pocket FIT', 'AYANEO Pocket S2'],
+           'sm8550': ['Retroid Pocket 6', 'Retroid Pocket 6 TOP-DPAD', 'Retroid Pocket Nova', 'AYN Thor']}[a.soc]
 root = Path(a.rootfs).resolve()
 stamped = root / 'usr/share/pb-os/version'
 version = a.version or (stamped.read_text().strip() if stamped.is_file() else '')
@@ -66,7 +68,7 @@ stamped_base = root / 'usr/share/pb-os/base'
 release_base = stamped_base.read_text().strip() if stamped_base.is_file() else version
 if a.patch_state and not a.base_state: raise SystemExit('--patch-state needs --base-state')
 # Image name in release assets; the updater maps DTB models to it (IMAGES).
-image = 'thor' if a.device == 'thor' else {'sm8650': 'pocketfit', 'sm8550': 'rp6'}[a.soc]
+image = {'sm8650': 'pocketfit', 'sm8550': 'rp6'}[a.soc]
 if bool(a.output) == bool(a.release): raise SystemExit('give --output or --release')
 out_dir = Path(a.release).resolve() if a.release else Path(a.output).resolve().parent
 # The trees an update manages, and what in them is per installation.
@@ -129,8 +131,9 @@ def write_state(path, entries):
     print('state', path)
 
 
-def finish(output):
-    """Checksum line, and with --release the parts under GitHub's 2 GiB limit."""
+def finish(output, bridge=False):
+    """Checksum line, and with --release the parts under GitHub's 2 GiB limit.
+    bridge: the same parts again under the AYN Thor's old channel name."""
     h = sha256(output)
     output.with_name(output.name + '.sha256').write_text(h + '  ' + output.name + '\n')
     print(output, h)
@@ -144,15 +147,22 @@ def finish(output):
                     b = f.read(min(size, 4 << 20)); part.write(b); size -= len(b)
     output.unlink()
     print(f'{n} parts; add {output.name}.sha256 to the release SHA256SUMS')
+    if bridge:
+        thor = output.name.replace(f'-{image}.update.', '-thor.update.')
+        for i in range(1, n + 1):
+            dst = output.with_name(f'{thor}.{i:03d}'); dst.unlink(missing_ok=True)
+            os.link(output.with_name(f'{output.name}.{i:03d}'), dst)
+        output.with_name(thor + '.sha256').write_text(h + '  ' + thor + '\n')
+        print(f'{n} parts as {thor} too; add {thor}.sha256 to the release SHA256SUMS')
 
 
-def pack(stage, output, manifest, members):
+def pack(stage, output, manifest, members, bridge=False):
     (stage / 'manifest.json').write_text(json.dumps(manifest, separators=(',', ':')))  # updaters refuse over 32 MiB
     gz = ['--use-compress-program=pigz'] if shutil.which('pigz') else ['-z']
     subprocess.run(['tar', '--xattrs', '--acls', '--numeric-owner', *gz, '-cf', str(output) + '.part',
                     '-C', str(stage), 'manifest.json', *members], check=True)
     os.replace(str(output) + '.part', output)
-    finish(output)
+    finish(output, bridge)
 
 
 if a.state_only:
@@ -234,7 +244,7 @@ with tempfile.TemporaryDirectory(prefix='konkr-package-', dir=output.parent) as 
     write_state(out_dir / f'pb-os-{version}-{image}.state.json.gz', new)
     # A patch release ships only its delta (feature releases bring the full system).
     if cumulative is None:
-        pack(stage, output, {'format': 1, **common, 'files': files}, ['root', 'home', 'boot'])
+        pack(stage, output, {'format': 1, **common, 'files': files}, ['root', 'home', 'boot'], a.thor_bridge)
 
     def make_delta(olds):
         """One delta that installs on each of olds (states): every entry that

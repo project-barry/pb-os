@@ -1,7 +1,18 @@
 #!/usr/bin/env bash
 # Copy bundled SM8550 Decky plugins into ~/homebrew/plugins/.
 # Does not require PluginLoader to already exist (pre-seeds for first install).
+#
+# One image serves several devices, so some plugins are for one device only
+# (DEVICE_ONLY: plugin -> devicetree compatible). They are skipped on other
+# devices; --prune only removes those found on the wrong device (at boot,
+# pbos-device-plugins.service, before Decky starts: images and update
+# packages carry every plugin in the home they ship). The image build, which
+# has no device, sets ALL_DEVICES=1 to copy them all.
 set -euo pipefail
+
+declare -A DEVICE_ONLY=(
+  [dual-screen]="ayn,thor"
+)
 
 STEAM_USER="${STEAM_USER:-steamos}"
 STEAM_HOME="${STEAM_HOME:-/home/${STEAM_USER}}"
@@ -10,6 +21,22 @@ HOMEBREW="${STEAM_HOME}/homebrew"
 DEST="${HOMEBREW}/plugins"
 
 log() { printf 'sync-decky-plugins: %s\n' "$*"; }
+
+for_this_device() {
+  local want="${DEVICE_ONLY[$1]:-}"
+  [[ -z "$want" || "${ALL_DEVICES:-0}" == 1 ]] && return 0
+  grep -qa "$want" /sys/firmware/devicetree/base/compatible 2>/dev/null
+}
+
+if [[ "${1:-}" == --prune ]]; then
+  for name in "${!DEVICE_ONLY[@]}"; do
+    if [[ -d "${DEST}/${name}" ]] && ! for_this_device "$name"; then
+      log "Removing ${name} (not for this device)"
+      rm -rf "${DEST:?}/${name}"
+    fi
+  done
+  exit 0
+fi
 
 STEAM_UID="$(id -u "$STEAM_USER" 2>/dev/null || echo 1000)"
 STEAM_GID="$(id -g "$STEAM_USER" 2>/dev/null || echo 1000)"
@@ -31,6 +58,7 @@ shopt -s nullglob
 for src in "${BUNDLE_ROOT}"/*; do
   [[ -d "$src" && -f "${src}/plugin.json" && -f "${src}/dist/index.js" ]] || continue
   name="$(basename "$src")"
+  for_this_device "$name" || { log "Skipping ${name} (not for this device)"; continue; }
   log "Installing ${name} → ${DEST}/${name}"
   mkdir -p "${DEST}/${name}"
   if command -v rsync >/dev/null 2>&1; then

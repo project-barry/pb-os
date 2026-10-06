@@ -21,10 +21,12 @@ if [[ -z "${SOC:-}" ]]; then
   esac
 fi
 export SOC
-# Device-only extras on top of the SoC's (make-steamos-sm8650.sh --device).
-# Empty = none: the image suits every device of the SoC. thor = the AYN
-# Thor's bottom screen (Barry Launcher, Firefox, Barry Launcher plugin), which
-# also needs a gamescope built with the DRM lease patches.
+# One image per SoC. The SM8550 image also carries the AYN Thor's
+# bottom-screen extras (Barry Launcher, Firefox, the Dual Screen plugin);
+# they check for the Thor when they run, so the Retroid Pocket 6 and Nova
+# never start them. They need a gamescope built with the
+# DRM lease patches. DEVICE=thor (make-steamos-sm8650.sh --device thor, from
+# when the Thor had its own image) is still accepted and changes nothing.
 DEVICE="${DEVICE:-}"
 case "$DEVICE" in
   "") ;;
@@ -49,14 +51,14 @@ log() { echo "$*" | tee -a "$LOG"; }
 [[ -f "$KOUT/boot/KERNEL" ]] || die "missing kernel $KOUT"
 [[ -x "$GSBUILD/src/gamescope" ]] || die "missing built gamescope"
 [[ -d "$GSSRC/scripts" ]] || die "missing gamescope source at $GSSRC (run scripts/build-gamescope-in-rootfs.sh)"
-if [[ "$DEVICE" == thor ]] && ! grep -qa -- '--lease-connector' "$GSBUILD/src/gamescope"; then
-  die "DEVICE=thor needs a gamescope with the DRM lease patches (GAMESCOPE_BUILD=$GSBUILD has none)"
+if [[ "$SOC" == sm8550 ]] && ! grep -qa -- '--lease-connector' "$GSBUILD/src/gamescope"; then
+  die "SM8550 (AYN Thor) needs a gamescope with the DRM lease patches (GAMESCOPE_BUILD=$GSBUILD has none)"
 fi
 [[ -z "$MESA_SO" || -f "$MESA_SO" ]] || die "missing Mesa $MESA_SO"
 [[ -d "$KOUT/modules/$KREL" ]] || die "missing modules $KOUT/modules/$KREL"
 
 : >"$LOG"
-log "== $(date -Iseconds) apply Odin mods into $R (SOC=${SOC} DEVICE=${DEVICE:-none})"
+log "== $(date -Iseconds) apply Odin mods into $R (SOC=${SOC})"
 
 backup() {
   local src="$1" dest="$2"
@@ -657,8 +659,8 @@ remove_old_bottom_session() {
     "$R/usr/lib/systemd/user/sm8550-bottom-session.service" \
     "$R/usr/lib/systemd/user/gamescope-session.target.wants/sm8550-bottom-session.service"
 }
-# The AYN Thor's bottom-screen extras (DEVICE=thor), gone from any other
-# build, so a rootfs reused from a Thor build keeps none of them.
+# The AYN Thor's bottom-screen extras, gone from an SM8650 build, so a rootfs
+# reused from an SM8550 build keeps none of them.
 remove_thor_bottom_screen() {
   remove_old_bottom_session
   rm -rf "$R/usr/lib/barry_launcher" "$R/usr/share/barry_launcher"
@@ -699,90 +701,86 @@ if [[ "$SOC" == sm8550 ]]; then
     "$R/usr/lib/systemd/system/sm8550-powerbuttond.service" 0644
   install_file "$SM8550_OVL/usr/lib/steamos-sm8550/sm8550-touch-inhibit" \
     "$R/usr/lib/steamos-sm8550/sm8550-touch-inhibit" 0755
-  if [[ "$DEVICE" == thor ]]; then
-    log "== AYN Thor bottom screen (lease helper, Barry Launcher, backlight and controls daemons)"
-    install_file "$SM8550_OVL/usr/lib/steamos-sm8550/sm8550-run-bottom" \
-      "$R/usr/lib/steamos-sm8550/sm8550-run-bottom" 0755
-    # Barry Launcher: the AYN Thor bottom screen's home screen, apps, keyboard
-    # and performance dashboard. Replaced whole, so removed files do not
-    # linger; earlier builds' names (thor-*, sm8550-bottom-session) go.
-    remove_old_bottom_session
-    rm -rf "$R/usr/lib/barry_launcher" "$R/usr/share/barry_launcher"
-    mkdir -p "$R/usr/lib/barry_launcher" "$R/usr/share"
-    for f in barry_launcher_session barry_launcher_dashboard barry_launcher_statsd barry_launcher_shelld \
-      barry_launcher_inputd barry_launcher_desktop barry-app; do
-      install_file "$SM8550_OVL/usr/lib/barry_launcher/$f" "$R/usr/lib/barry_launcher/$f" 0755
+  log "== AYN Thor bottom screen (lease helper, Barry Launcher, backlight and controls daemons)"
+  install_file "$SM8550_OVL/usr/lib/steamos-sm8550/sm8550-run-bottom" \
+    "$R/usr/lib/steamos-sm8550/sm8550-run-bottom" 0755
+  # Barry Launcher: the AYN Thor bottom screen's home screen, apps, keyboard
+  # and performance dashboard. Replaced whole, so removed files do not
+  # linger; earlier builds' names (thor-*, sm8550-bottom-session) go.
+  remove_old_bottom_session
+  rm -rf "$R/usr/lib/barry_launcher" "$R/usr/share/barry_launcher"
+  mkdir -p "$R/usr/lib/barry_launcher" "$R/usr/share"
+  for f in barry_launcher_session barry_launcher_dashboard barry_launcher_statsd barry_launcher_shelld \
+    barry_launcher_inputd barry_launcher_desktop barry-app; do
+    install_file "$SM8550_OVL/usr/lib/barry_launcher/$f" "$R/usr/lib/barry_launcher/$f" 0755
+  done
+  # Glide typing's decoder, the Desktop Mode (KWin) side and user apps
+  # (barry_apps, also barry-app's), imported by barry_launcher_shelld.
+  for f in barry_glide.py barry_desktop.py barry_trackpad.py barry_apps.py; do
+    install_file "$SM8550_OVL/usr/lib/barry_launcher/$f" "$R/usr/lib/barry_launcher/$f" 0644
+  done
+  # barry-app: install and make Barry Launcher apps from a terminal.
+  ln -sfn ../lib/barry_launcher/barry-app "$R/usr/bin/barry-app"
+  # Desktop Mode: Barry's keyboard as KWin's input method, a small Wayland
+  # client built here against the rootfs's libwayland.
+  "${ROOT}/external-and-mods/barry-launcher-imd/build.sh" "$R" "$R/usr/lib/barry_launcher/barry_launcher_imd" \
+    || die "cannot build barry_launcher_imd (the rootfs needs gcc, wayland-scanner and wayland-protocols)"
+  cp -r "$SM8550_OVL/usr/share/barry_launcher" "$R/usr/share/"
+  chmod -R u=rwX,go=rX "$R/usr/share/barry_launcher"
+  install_file "$SM8550_OVL/usr/lib/systemd/user/barry_launcher.service" \
+    "$R/usr/lib/systemd/user/barry_launcher.service" 0644
+  mkdir -p "$R/usr/lib/systemd/user/gamescope-session.target.wants"
+  ln -sfn ../barry_launcher.service \
+    "$R/usr/lib/systemd/user/gamescope-session.target.wants/barry_launcher.service"
+  # The top screen's trackpad and keyboard (uinput), in Game Mode and
+  # Desktop Mode; the Desktop Mode window starts from the applications menu.
+  install_file "$SM8550_OVL/usr/lib/systemd/user/barry_launcher_inputd.service" \
+    "$R/usr/lib/systemd/user/barry_launcher_inputd.service" 0644
+  mkdir -p "$R/usr/lib/systemd/user/default.target.wants"
+  ln -sfn ../barry_launcher_inputd.service \
+    "$R/usr/lib/systemd/user/default.target.wants/barry_launcher_inputd.service"
+  install_file "$SM8550_OVL/usr/share/applications/barry_launcher_desktop.desktop" \
+    "$R/usr/share/applications/barry_launcher_desktop.desktop" 0644
+  # Desktop Mode: Barry on the bottom screen with the Plasma session, and
+  # its keyboard registered as a virtual keyboard KWin can use.
+  install_file "$SM8550_OVL/usr/lib/systemd/user/barry_launcher_desktop.service" \
+    "$R/usr/lib/systemd/user/barry_launcher_desktop.service" 0644
+  mkdir -p "$R/usr/lib/systemd/user/plasma-workspace.target.wants"
+  ln -sfn ../barry_launcher_desktop.service \
+    "$R/usr/lib/systemd/user/plasma-workspace.target.wants/barry_launcher_desktop.service"
+  install_file "$SM8550_OVL/usr/share/applications/org.barry_launcher.keyboard.desktop" \
+    "$R/usr/share/applications/org.barry_launcher.keyboard.desktop" 0644
+  # AYN Thor: InputPlumber leaves the AYN button to sm8550-thor-backlightd,
+  # which uses it to show the bottom-screen dashboard.
+  ip_thor="$R/usr/share/inputplumber/devices/50-ayn_thor.yaml"
+  if [[ -f "$ip_thor" ]]; then
+    for etc in "$R/etc" "$R/var/lib/overlays/etc/upper"; do
+      [[ "$etc" == "$R/etc" || -d "$etc" ]] || continue
+      mkdir -p "$etc/inputplumber/devices.d"
+      python3 "$SM8550_OVL/usr/share/steamos-sm8550/ip-thor-without-ayn-key.py" \
+        "$ip_thor" "$etc/inputplumber/devices.d/50-ayn_thor.yaml"
     done
-    # Glide typing's decoder, the Desktop Mode (KWin) side and user apps
-    # (barry_apps, also barry-app's), imported by barry_launcher_shelld.
-    for f in barry_glide.py barry_desktop.py barry_trackpad.py barry_apps.py; do
-      install_file "$SM8550_OVL/usr/lib/barry_launcher/$f" "$R/usr/lib/barry_launcher/$f" 0644
-    done
-    # barry-app: install and make Barry Launcher apps from a terminal.
-    ln -sfn ../lib/barry_launcher/barry-app "$R/usr/bin/barry-app"
-    # Desktop Mode: Barry's keyboard as KWin's input method, a small Wayland
-    # client built here against the rootfs's libwayland.
-    "${ROOT}/external-and-mods/barry-launcher-imd/build.sh" "$R" "$R/usr/lib/barry_launcher/barry_launcher_imd" \
-      || die "cannot build barry_launcher_imd (the rootfs needs gcc, wayland-scanner and wayland-protocols)"
-    cp -r "$SM8550_OVL/usr/share/barry_launcher" "$R/usr/share/"
-    chmod -R u=rwX,go=rX "$R/usr/share/barry_launcher"
-    install_file "$SM8550_OVL/usr/lib/systemd/user/barry_launcher.service" \
-      "$R/usr/lib/systemd/user/barry_launcher.service" 0644
-    mkdir -p "$R/usr/lib/systemd/user/gamescope-session.target.wants"
-    ln -sfn ../barry_launcher.service \
-      "$R/usr/lib/systemd/user/gamescope-session.target.wants/barry_launcher.service"
-    # The top screen's trackpad and keyboard (uinput), in Game Mode and
-    # Desktop Mode; the Desktop Mode window starts from the applications menu.
-    install_file "$SM8550_OVL/usr/lib/systemd/user/barry_launcher_inputd.service" \
-      "$R/usr/lib/systemd/user/barry_launcher_inputd.service" 0644
-    mkdir -p "$R/usr/lib/systemd/user/default.target.wants"
-    ln -sfn ../barry_launcher_inputd.service \
-      "$R/usr/lib/systemd/user/default.target.wants/barry_launcher_inputd.service"
-    install_file "$SM8550_OVL/usr/share/applications/barry_launcher_desktop.desktop" \
-      "$R/usr/share/applications/barry_launcher_desktop.desktop" 0644
-    # Desktop Mode: Barry on the bottom screen with the Plasma session, and
-    # its keyboard registered as a virtual keyboard KWin can use.
-    install_file "$SM8550_OVL/usr/lib/systemd/user/barry_launcher_desktop.service" \
-      "$R/usr/lib/systemd/user/barry_launcher_desktop.service" 0644
-    mkdir -p "$R/usr/lib/systemd/user/plasma-workspace.target.wants"
-    ln -sfn ../barry_launcher_desktop.service \
-      "$R/usr/lib/systemd/user/plasma-workspace.target.wants/barry_launcher_desktop.service"
-    install_file "$SM8550_OVL/usr/share/applications/org.barry_launcher.keyboard.desktop" \
-      "$R/usr/share/applications/org.barry_launcher.keyboard.desktop" 0644
-    # AYN Thor: InputPlumber leaves the AYN button to sm8550-thor-backlightd,
-    # which uses it to show the bottom-screen dashboard.
-    ip_thor="$R/usr/share/inputplumber/devices/50-ayn_thor.yaml"
-    if [[ -f "$ip_thor" ]]; then
-      for etc in "$R/etc" "$R/var/lib/overlays/etc/upper"; do
-        [[ "$etc" == "$R/etc" || -d "$etc" ]] || continue
-        mkdir -p "$etc/inputplumber/devices.d"
-        python3 "$SM8550_OVL/usr/share/steamos-sm8550/ip-thor-without-ayn-key.py" \
-          "$ip_thor" "$etc/inputplumber/devices.d/50-ayn_thor.yaml"
-      done
-    fi
-    # Steer Steam's brightness writes to the Thor's top panel (see the .inc).
-    if [[ -f "$R/usr/bin/steamos-polkit-helpers/steamos-priv-write" ]]; then
-      python3 "$SM8550_OVL/usr/share/steamos-sm8550/insert-priv-write-backlight.py" \
-        "$R/usr/bin/steamos-polkit-helpers/steamos-priv-write" \
-        "$SM8550_OVL/usr/share/steamos-sm8550/priv-write-backlight.inc"
-    fi
-    install_file "$SM8550_OVL/usr/lib/steamos-sm8550/sm8550-thor-backlightd" \
-      "$R/usr/lib/steamos-sm8550/sm8550-thor-backlightd" 0755
-    install_file "$SM8550_OVL/usr/lib/systemd/system/sm8550-thor-backlightd.service" \
-      "$R/usr/lib/systemd/system/sm8550-thor-backlightd.service" 0644
-    mkdir -p "$R/usr/lib/systemd/system/multi-user.target.wants"
-    ln -sfn ../sm8550-thor-backlightd.service \
-      "$R/usr/lib/systemd/system/multi-user.target.wants/sm8550-thor-backlightd.service"
-    # Barry Launcher's quick controls: fan profile and stick lighting (root).
-    install_file "$SM8550_OVL/usr/lib/steamos-sm8550/sm8550-thor-controlsd" \
-      "$R/usr/lib/steamos-sm8550/sm8550-thor-controlsd" 0755
-    install_file "$SM8550_OVL/usr/lib/systemd/system/sm8550-thor-controlsd.service" \
-      "$R/usr/lib/systemd/system/sm8550-thor-controlsd.service" 0644
-    ln -sfn ../sm8550-thor-controlsd.service \
-      "$R/usr/lib/systemd/system/multi-user.target.wants/sm8550-thor-controlsd.service"
-  else
-    remove_thor_bottom_screen
   fi
+  # Steer Steam's brightness writes to the Thor's top panel (see the .inc).
+  if [[ -f "$R/usr/bin/steamos-polkit-helpers/steamos-priv-write" ]]; then
+    python3 "$SM8550_OVL/usr/share/steamos-sm8550/insert-priv-write-backlight.py" \
+      "$R/usr/bin/steamos-polkit-helpers/steamos-priv-write" \
+      "$SM8550_OVL/usr/share/steamos-sm8550/priv-write-backlight.inc"
+  fi
+  install_file "$SM8550_OVL/usr/lib/steamos-sm8550/sm8550-thor-backlightd" \
+    "$R/usr/lib/steamos-sm8550/sm8550-thor-backlightd" 0755
+  install_file "$SM8550_OVL/usr/lib/systemd/system/sm8550-thor-backlightd.service" \
+    "$R/usr/lib/systemd/system/sm8550-thor-backlightd.service" 0644
+  mkdir -p "$R/usr/lib/systemd/system/multi-user.target.wants"
+  ln -sfn ../sm8550-thor-backlightd.service \
+    "$R/usr/lib/systemd/system/multi-user.target.wants/sm8550-thor-backlightd.service"
+  # Barry Launcher's quick controls: fan profile and stick lighting (root).
+  install_file "$SM8550_OVL/usr/lib/steamos-sm8550/sm8550-thor-controlsd" \
+    "$R/usr/lib/steamos-sm8550/sm8550-thor-controlsd" 0755
+  install_file "$SM8550_OVL/usr/lib/systemd/system/sm8550-thor-controlsd.service" \
+    "$R/usr/lib/systemd/system/sm8550-thor-controlsd.service" 0644
+  ln -sfn ../sm8550-thor-controlsd.service \
+    "$R/usr/lib/systemd/system/multi-user.target.wants/sm8550-thor-controlsd.service"
   # uclamp boost for game and Steam UI threads (no affinity).
   install_file "$SM8550_OVL/usr/lib/steamos-sm8550/sm8550-boostd" \
     "$R/usr/lib/steamos-sm8550/sm8550-boostd" 0755
@@ -812,7 +810,7 @@ if [[ "$SOC" == sm8550 ]]; then
     ln -sfn ../$u "$R/usr/lib/systemd/system/multi-user.target.wants/$u"
   done
 else
-  remove_old_bottom_session
+  remove_thor_bottom_screen
   rm -rf "$R/usr/lib/steamos-sm8550" "$R/usr/share/sm8550-fand" \
     "$R/usr/lib/barry_launcher" "$R/usr/share/barry_launcher"
   rm -f "$R/usr/share/steamos-manager/devices/retroid-pocket6.toml" \
@@ -1048,7 +1046,7 @@ rm -f "$HOME_DST/Desktop/Decky Loader.desktop" "$HOME_DST/Desktop/install-decky.
 log "== plasma extras (holo kate/ark/networkmanager-qt/…)"
 # AYN Thor: xdotool for the bottom-screen keyboard (Firefox below).
 extra_pkgs=""
-[[ "$DEVICE" == thor ]] && extra_pkgs="libxss xdotool"
+[[ "$SOC" == sm8550 ]] && extra_pkgs="libxss xdotool"
 STEAMOS_HOME="$HOME_DST" EXTRA_PKGS="$extra_pkgs" "${SCRIPT_DIR}/install-plasma-extras.sh" "$R" \
   || log "WARN: plasma extras incomplete"
 
@@ -1058,7 +1056,7 @@ STEAMOS_HOME="$HOME_DST" EXTRA_PKGS="$extra_pkgs" "${SCRIPT_DIR}/install-plasma-
 # repos lags behind (152). Its updater is off: updates come with our images.
 FIREFOX_VERSION=157.0
 FIREFOX_SHA256=73fc3d6f6f4d3fcdeee59db90156568af9959405120ad686e535f572995074d0
-if [[ "$DEVICE" == thor ]]; then
+if [[ "$SOC" == sm8550 ]]; then
   log "== Firefox ${FIREFOX_VERSION} (Mozilla, linux-aarch64)"
   ff_tar="${WORKDIR}/cache/firefox-${FIREFOX_VERSION}-linux-aarch64.tar.xz"
   if [[ ! -s "$ff_tar" ]]; then
@@ -1089,8 +1087,8 @@ StartupWMClass=firefox
 EOF
 elif [[ -f "$R/usr/lib/firefox/distribution/policies.json" ]] \
   && ! grep -qsx 'usr/lib/firefox/' "$R"/var/lib/pacman/local/*/files; then
-  # Our Mozilla build in a rootfs reused from a Thor build (no package owns it).
-  log "== remove the Thor build's Firefox"
+  # Our Mozilla build in a rootfs reused from an SM8550 build (no package owns it).
+  log "== remove the SM8550 build's Firefox"
   rm -rf "$R/usr/lib/firefox" "$R/usr/bin/firefox" "$R/usr/share/applications/firefox.desktop"
 fi
 if [[ ! -f "$R/usr/lib/qt6/plugins/plasma/kcms/systemsettings/kcm_kscreen.so" ]]; then

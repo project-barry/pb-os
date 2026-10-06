@@ -53,19 +53,19 @@ From Konsole: `sudo python3 /usr/share/konkr-update/konkr-update.py local-check`
 
 ## Releasing an update
 
-One package per image: Pocket FIT / Pocket S2 (`pocketfit`), Retroid Pocket 6 (`rp6`) and AYN Thor (`thor`, SM8550 with the bottom-screen extras). A package only installs on the DTB models in its manifest.
+One package per image, and one image per SoC: Pocket FIT / Pocket S2 (`pocketfit`) and SM8550, i.e. Retroid Pocket 6, Retroid Pocket Nova and AYN Thor (`rp6`). A package only installs on the DTB models in its manifest. Thors still on the separate Thor image of earlier releases look for `thor` packages: the first SM8550 feature release that includes the Thor adds `--thor-bridge`, which also names its full package `pb-os-<tag>-thor.update.tar.gz` (hard links of the same parts, plus their `.sha256` line). After it, Thors follow `rp6`.
 
 1. Build the image with `PB_OS_VERSION=<release tag>`. For a patch release, also `PB_OS_BASE=<its feature release>` (e.g. `PB_OS_VERSION=alpha-v0.4.2 PB_OS_BASE=alpha-v0.4`). The image records them in `/usr/share/pb-os/version` and `/usr/share/pb-os/base`. The updater offers a release whose tag is newer than the installed version.
-2. From the same rootfs, with the same SoC and device:
+2. From the same rootfs, with the same SoC:
    - **Feature release:** the full package.
      ```
-     sudo scripts/build-update-package.py --soc sm8550 [--device thor] \
+     sudo scripts/build-update-package.py --soc sm8550 \
        --rootfs /work/rootfs-... --kernel <kernel output>/boot/KERNEL --release <dir>
      ```
      This writes `pb-os-<tag>-<image>.update.tar.gz.001`, `.002`, ... (under GitHub's 2 GiB limit).
    - **Patch release:** the delta, from the feature release's state file and the state file of every patch since:
      ```
-     sudo scripts/build-update-package.py --soc sm8550 [--device thor] \
+     sudo scripts/build-update-package.py --soc sm8550 \
        --rootfs /work/rootfs-... --kernel <kernel output>/boot/KERNEL --release <dir> \
        --base-state pb-os-alpha-v0.4-<image>.state.json.gz \
        --patch-state pb-os-alpha-v0.4.1-<image>.state.json.gz

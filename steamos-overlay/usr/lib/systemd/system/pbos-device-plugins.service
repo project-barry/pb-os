@@ -1,0 +1,11 @@
+[Unit]
+Description=Remove Decky plugins meant for another device
+Before=plugin_loader.service
+After=home.mount local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/steamos/sync-decky-bundled-plugins.sh --prune
+
+[Install]
+WantedBy=multi-user.target

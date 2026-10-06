@@ -53,7 +53,7 @@ Physical testing was done on one unit of each:
 | Device | Chip | Tested |
 |--------|------|--------|
 | Retroid Pocket 6 | Snapdragon 8 Gen 2 (SM8550) | Yes: from microSD and internal storage |
-| AYN Thor | Snapdragon 8 Gen 2 (SM8550) | Yes: from microSD (build with `--device thor`) |
+| AYN Thor | Snapdragon 8 Gen 2 (SM8550) | Yes: from microSD |
 | KONKR Pocket FIT | Snapdragon 8 Gen 3 (SM8650) | Yes: from microSD and internal storage |
 
 Installing to internal storage (UFS, next to Android) has run for several
@@ -74,7 +74,7 @@ Here is a link to all of our benchmark tests: [docs/benchmark-results.md](docs/b
   interrupts kept off the little cores, zstd zram, and fixes for GPU hangs,
   sleep, UFS and udisks CPU storms.
 - **Tailscale** installed but switched off, with no account in the image.
-- **AYN Thor extras** (only with `--device thor`): the bottom screen as a
+- **AYN Thor extras** (in the SM8550 image, started only on the Thor): the bottom screen as a
   second display in Game Mode, the Barry Launcher (apps, keyboard,
   trackpad, performance dashboard) and a Barry Launcher Decky plugin.
   Anyone can make apps for Barry Launcher and install them from a zip:
