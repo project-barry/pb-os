@@ -1,0 +1,25 @@
+ROCKNIX ABL (https://github.com/ROCKNIX/abl), GPL-2.0, (c) ROCKNIX contributors.
+Steps and scripts follow ROCKNIX and Armada (https://github.com/armada-os/armada).
+
+Flashing the wrong ABL can brick the device. Match the SoC carefully:
+
+  SM8550 - Retroid Pocket 6, Retroid Pocket Nova, AYN Thor
+  SM8650 - KONKR Pocket FIT (8 Gen 3)
+
+1. Copy the rocknix_abl folder from this card to the root of Android
+   internal storage.
+
+2. In Android settings, use "Run script as root": browse to your SoC's
+   folder (e.g. rocknix_abl/SM8550) and run backup_abl.sh. It writes
+   abl_a.img and abl_b.img into that folder.
+
+3. Copy abl_a.img and abl_b.img to your PC and keep them.
+   restore_backup_abl.sh puts them back if you ever want the stock ABL.
+
+4. Run flash_abl.sh the same way.
+
+5. Reboot holding VOL- to open the ABL menu (VOL-/+ to move, POWER to pick):
+     - Set the device model
+     - Set boot mode to Linux
+     - Start
+   Android still boots from the same menu.

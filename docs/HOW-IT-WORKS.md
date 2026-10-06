@@ -140,10 +140,13 @@ Output: `/work/steamos-sm8650.img`.
 
 ## Install on the Pocket FIT
 
-1. **ROCKNIX ABL** (`abl_signed-SM8650.elf`, [v1.1.8](https://github.com/ROCKNIX/abl/releases))
-   flashed to `abl_a` and `abl_b`. It replaces the bootloader; Android still
-   boots from its menu. Verify the SHA256.
-2. Flash `steamos-sm8650.img` to a microSD (balenaEtcher / `dd`).
+1. Flash `steamos-sm8650.img` to a microSD (balenaEtcher / `dd`).
+2. **ROCKNIX ABL**, once per device. It replaces the bootloader; Android still
+   boots from its menu. The card's BOOT partition has a `rocknix_abl/` folder
+   (the way Armada ships it): copy it to the root of Android's internal
+   storage, then in Android's **Run script as root** run
+   `rocknix_abl/SM8650/backup_abl.sh`, keep the `abl_a.img`/`abl_b.img` it
+   writes, and run `flash_abl.sh`. Steps in `rocknix_abl/README`.
 3. Power on holding **Volume Down** → **Set device model** →
    **KONKR Pocket FIT** → Boot mode **Linux** → START.
 4. The first boot takes 2–3 minutes.

@@ -16,7 +16,8 @@ from MaSi's **SteamOS-ARM-SM8550**, so everything MaSi credits below still appli
 | **Armada** | https://github.com/armada-os/armada | SM8550 fan curves and fan loop (`sm8550-fand`, ported from `armada-powerd`); SM8550 GPU power-rail and s2idle kernel patches and the common AYN/Retroid DT fixes (`external-and-mods/kernel-sm8650/sm8550/`); the PCIe iommu-map fixes the SM8650 kernel also carries (`external-and-mods/kernel-sm8650/patches/0005`–`0006`, the first by Manivannan Sadhasivam); gamescope bottom-screen lease patches by virtudude and JPyke3 (commits on the `dual-screen` branch of [PB-OS's gamescope fork](https://github.com/project-barry/gamescope/tree/dual-screen)); the AYN Thor's stick LED names, from `armada-rgb`'s device profiles (`sm8550-thor-controlsd`). GPL-2.0-or-later |
 | **OpenGamingCollective gamescope** | https://github.com/OpenGamingCollective/gamescope | DRM leasing for dual-screen devices (Kyle Gospodnetich; leased-plane fix by pacoa-kdbg), the base of the AYN Thor bottom-screen support (the first commits on the fork's `dual-screen` branch) |
 | **Luke Johnson (thorch)** | https://github.com/thorch-os/thorch | Root-cause work behind the SM8550 PCIe suspend-OPP and RSInput suspend fixes (via Armada) |
-| **ROCKNIX ABL** | https://github.com/ROCKNIX/abl | Bootloader with device model selection |
+| **ROCKNIX ABL** | https://github.com/ROCKNIX/abl | Bootloader with device model selection; the backup/flash/restore scripts in `abl/` (GPL-2.0) |
+| **Armada ABL staging** | https://github.com/armada-os/armada | The `rocknix_abl/` folder on the card, the approved-hash list (`abl/releases.tsv`, 1.1.8 rows) and the README steps. GPL-2.0-or-later |
 | **lsfg-vk** | https://github.com/PancakeTAS/lsfg-vk · https://github.com/xXJSONDeruloXx/lsfg-vk | Frame generation layer, rebuilt for aarch64 with our patches |
 | **decky-lsfg-vk** | https://github.com/xXJSONDeruloXx/decky-lsfg-vk | Frame generation Decky plugin |
 

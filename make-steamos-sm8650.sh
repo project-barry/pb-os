@@ -71,6 +71,7 @@ Usage: $0 [options]
 
 Env: BOOT_MIB ROOT_MIB HOME_MIB STEAMOS_SM8650_IMG STEAMOS_ROOTFS KERNEL_OUT DEVICE
      PB_OS_VERSION PB_OS_BASE
+     ABL_TARBALL (local ROCKNIX ABL tarball)  SKIP_ABL=1 (no rocknix_abl/ on BOOT)
      empty ROOT_MIB/HOME_MIB = auto (tight pack; home grows on first boot)
      PB_OS_VERSION = the release tag (e.g. alpha-v0.3); the updater compares it
      with the releases. Default: dev-<date>
@@ -353,6 +354,66 @@ detach_img_loops() {
   done < <(losetup -j "${IMG}" -O NAME -n 2>/dev/null || true)
 }
 
+# ROCKNIX ABL for first-time flashing from Android, staged on BOOT the way
+# Armada does it: rocknix_abl/<SoC>/ with the payload and root scripts.
+# ROCKNIX deletes old release files, so the tarball is kept in WORKDIR.
+ABL_SOCS=(SM8550 SM8650)
+ABL_SRC=""
+
+fetch_rocknix_abl() {
+  [[ "${SKIP_ABL:-0}" == 1 ]] && return 0
+  local ver cache tarball soc payload approved size hash
+  # shellcheck source=abl/release.env
+  source "${ROOT}/abl/release.env"
+  ver="${PBOS_ABL_VERSION}"
+  cache="${WORKDIR}/rocknix-abl"
+  tarball="${ABL_TARBALL:-${cache}/rocknix-abl-v${ver}.tar.gz}"
+  if [[ ! -f "${tarball}" ]]; then
+    log "Downloading ROCKNIX ABL v${ver}"
+    mkdir -p "${cache}"
+    curl --connect-timeout 30 --retry 3 -fsSL -o "${tarball}.part" \
+      "https://github.com/ROCKNIX/abl/releases/download/v${ver}/rocknix-abl-v${ver}.tar.gz" \
+      || die "ROCKNIX ABL v${ver} download failed (set ABL_TARBALL or SKIP_ABL=1)"
+    mv "${tarball}.part" "${tarball}"
+  fi
+  ABL_SRC="${cache}/v${ver}"
+  rm -rf "${ABL_SRC}"
+  mkdir -p "${ABL_SRC}"
+  tar -xzf "${tarball}" -C "${ABL_SRC}" --strip-components=1
+  for soc in "${ABL_SOCS[@]}"; do
+    approved="$(awk -F'\t' -v v="${ver}" -v s="${soc}" \
+      '$1 == v && $2 == s { print $3, $4 }' "${ROOT}/abl/releases.tsv")"
+    [[ -n "${approved}" ]] || die "abl/releases.tsv has no ${ver} ${soc} row"
+    read -r size hash <<<"${approved}"
+    payload="${ABL_SRC}/abl_signed-${soc}.elf"
+    [[ -f "${payload}" ]] || die "ABL tarball has no abl_signed-${soc}.elf"
+    [[ "$(stat -c %s "${payload}")" == "${size}" ]] \
+      || die "${soc} ABL size does not match abl/releases.tsv"
+    [[ "$(sha256sum "${payload}" | cut -d' ' -f1)" == "${hash}" ]] \
+      || die "${soc} ABL hash does not match abl/releases.tsv"
+  done
+  log "ROCKNIX ABL v${ver} verified (${ABL_SOCS[*]})"
+}
+
+stage_rocknix_abl() {
+  [[ -n "${ABL_SRC}" ]] || return 0
+  local dst="${MNT}/boot/rocknix_abl" soc d s
+  # vfat cannot store Unix owner/mode, so install/tee rather than cp -a.
+  sudo_run install -d "${dst}"
+  sudo_run install -m0644 "${ROOT}/abl/README" "${dst}/README"
+  for soc in "${ABL_SOCS[@]}"; do
+    d="${dst}/${soc}"
+    sudo_run install -d "${d}"
+    sudo_run install -m0644 "${ABL_SRC}/abl_signed-${soc}.elf" "${d}/"
+    (cd "${ABL_SRC}" && sha256sum "abl_signed-${soc}.elf") \
+      | sudo_run tee "${d}/abl_signed-${soc}.elf.sha256" >/dev/null
+    for s in flash_abl backup_abl restore_backup_abl; do
+      sed "s/%DEVICE%/${soc}/g" "${ROOT}/abl/${s}.sh.template" \
+        | sudo_run tee "${d}/${s}.sh" >/dev/null
+    done
+  done
+}
+
 build_image() {
   local total_mib root_uuid home_uuid disk_id
   local boot_dev root_dev home_dev
@@ -362,6 +423,7 @@ build_image() {
   command -v uuidgen >/dev/null || die "uuidgen missing"
   [[ -x "${R}/usr/bin/bash" ]] || die "rootfs not ready"
   [[ -f "${KOUT}/boot/KERNEL" ]] || die "missing ${KOUT}/boot/KERNEL"
+  fetch_rocknix_abl
 
   if [[ "${AUTO_ROOT}" -eq 1 ]]; then
     local used_mib
@@ -480,6 +542,7 @@ EOF
   sudo_run install -m0644 "${ktmp}" "${MNT}/boot/KERNEL"
   sudo_run bash -c "cd '${MNT}/boot' && md5sum KERNEL > KERNEL.md5"
   rm -f "${ktmp}"
+  stage_rocknix_abl
 
   sudo_run mkdir -p "${MNT}/root/opt/steamos-sm8650"
   sudo_run tee "${MNT}/root/opt/steamos-sm8650/IMAGE.txt" >/dev/null <<EOF
@@ -498,6 +561,7 @@ ABL reads KERNEL from this FAT partition.
 Do not rename KERNEL. After flashing to a bigger card, home grows on first boot.
 root=PARTUUID=${disk_id}-02
 ABL: Set device model -> "KONKR Pocket FIT" (or "AYANEO Pocket S2").
+First time on this device? Flash the ROCKNIX ABL from Android: rocknix_abl/README.
 EOF
 
   sync
