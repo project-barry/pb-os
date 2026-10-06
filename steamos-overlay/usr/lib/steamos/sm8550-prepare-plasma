@@ -93,6 +93,61 @@ PY
 }
 seed_touch_desktop
 
+# Retroid Pocket Nova: its 1280x960 panel at 150 % leaves an 854x640 desktop,
+# too zoomed in, so it gets 125 % (1024x768). X11 apps run at 100 %: Steam
+# draws its on-screen keyboard 1280 px wide times the X11 scale, so anything
+# above 100 % pushes it past the panel's edges (the RP6's 1920 px panel fits
+# it at 150 %). Steam's keyboard is a dock window like the panel, so the panel
+# and the launcher menu could cover it; a window rule makes it an on-screen
+# display, which stays above both. Done once, also on Novas that already got
+# 150 % (an update never touches ~/.config); only the 125 % or 150 % this
+# image sets is changed, a scale picked in Display Settings stays.
+seed_nova_desktop() {
+  local cfg="$HOME/.config/kwinoutputconfig.json"
+  local marker="${XDG_STATE_HOME:-$HOME/.local/state}/pbos-nova-desktop-seeded"
+  local rule=steam-osk-above rules
+  [[ -f "$marker" ]] && return 0
+  [[ "$(tr -d '\0' </sys/firmware/devicetree/base/model 2>/dev/null)" == "Retroid Pocket Nova" ]] || return 0
+  if [[ -f "$cfg" ]] && python3 - "$cfg" <<'PY'
+import json, sys
+path = sys.argv[1]
+with open(path) as f:
+    data = json.load(f)
+ours = False
+for section in data:
+    if section.get("name") == "outputs":
+        for out in section.get("data", []):
+            if out.get("connectorName") == "DSI-1" and out.get("scale") in (1.25, 1.5):
+                out["scale"] = 1.25; ours = True
+with open(path, "w") as f:
+    json.dump(data, f, indent=4)
+sys.exit(0 if ours else 1)
+PY
+  then
+    kwriteconfig6 --file kwinrc --group Xwayland --key Scale 1
+    kwriteconfig6 --file kdeglobals --group KScreen --key ScaleFactor 1.25
+    kwriteconfig6 --file kdeglobals --group KScreen --key ScreenScaleFactors "DSI-1=1.25"
+  fi
+  rules="$(kreadconfig6 --file kwinrulesrc --group General --key rules 2>/dev/null)"
+  if [[ ",$rules," != *",$rule,"* ]]; then
+    kwriteconfig6 --file kwinrulesrc --group "$rule" --key Description "Steam keyboard above the panel"
+    kwriteconfig6 --file kwinrulesrc --group "$rule" --key title "Steam Input On-screen Keyboard"
+    kwriteconfig6 --file kwinrulesrc --group "$rule" --key titlematch 1
+    kwriteconfig6 --file kwinrulesrc --group "$rule" --key wmclass steam
+    kwriteconfig6 --file kwinrulesrc --group "$rule" --key wmclasscomplete false
+    kwriteconfig6 --file kwinrulesrc --group "$rule" --key wmclassmatch 1
+    kwriteconfig6 --file kwinrulesrc --group "$rule" --key type 16
+    kwriteconfig6 --file kwinrulesrc --group "$rule" --key typerule 2
+    kwriteconfig6 --file kwinrulesrc --group "$rule" --key above true
+    kwriteconfig6 --file kwinrulesrc --group "$rule" --key aboverule 2
+    rules="${rules:+$rules,}$rule"
+    kwriteconfig6 --file kwinrulesrc --group General --key rules "$rules"
+    kwriteconfig6 --file kwinrulesrc --group General --key count "$(tr ',' '\n' <<<"$rules" | grep -c .)"
+  fi
+  mkdir -p "$(dirname "$marker")" && : >"$marker"
+}
+seed_nova_desktop
+
 # AYN Thor: the shipped kwinoutputconfig knows one panel, so KWin meets two
 # outputs it has no setup for. Seed the Thor's two-panel layout (top DSI-2
 # primary, bottom DSI-1 centred under it) when the file has no DSI-2 yet; a
