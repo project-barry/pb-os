@@ -420,13 +420,16 @@ GAMMA = 2.2
 FADE_IN = 0.3
 # A colour's main channels: those at least this share of its strongest one.
 MAIN = 0.25
+# Breathing goes no dimmer than where the weakest main channel has this many
+# power steps left.
+FLOOR_STEPS = 4
 # How far (in zones) a zone's light reaches during Spin: 1 = only two zones
 # share the light, each handing over as the other takes it.
 SPIN_WIDTH = 1.5
 
 
 def frame(effect: str, t: float, rgb: tuple[int, int, int], speed: int, n: int,
-          stars: list[float]) -> list[tuple[int, int, int]]:
+          stars: list[float], floor: float = 0.0) -> list[tuple[int, int, int]]:
     """Each zone's colour at time t (seconds). Zones go round each ring of
     n // 2; both sticks show the same."""
     ring = max(1, n // 2)
@@ -442,8 +445,10 @@ def frame(effect: str, t: float, rgb: tuple[int, int, int], speed: int, n: int,
         return tuple(int(x * 255) for x in colorsys.hsv_to_rgb(h % 1.0, 1.0, 1.0))
 
     if effect == "breathing":
+        # Breathes between floor (Animator.floor(): the dimmest level that
+        # still shows the colour) and full.
         period = 8 - 6.5 * fast
-        v = 0.04 + 0.96 * (1 - math.cos(2 * math.pi * t / period)) / 2
+        v = floor + (1 - floor) * (1 - math.cos(2 * math.pi * t / period)) / 2
         return [scale(rgb, v)] * n
     if effect == "cycle":
         return [hue(t / (24 - 21 * fast))] * n
@@ -540,6 +545,7 @@ class Animator:
              fade: float = 0.0) -> None:
         shown: list[Any] = [None] * len(leds)
         stars = [-100.0] * len(leds)
+        floor = self.floor(leds[0], rgb) if leds and effect == "breathing" else 0.0
         # Frame k is drawn for exactly k / FPS and written at that time, so
         # the steps are even and the rate is FPS, not FPS minus the time the
         # writes take. Behind by more than a frame (busy, or paused): skip
@@ -550,7 +556,7 @@ class Animator:
             # Fading in: the sleep hook's fade-out reversed (x ** 2.2).
             r = min(1.0, k / self.FPS / fade) if fade else 1.0
             ramp = r ** GAMMA
-            for i, c in enumerate(frame(effect, k / self.FPS, rgb, speed, len(leds), stars)):
+            for i, c in enumerate(frame(effect, k / self.FPS, rgb, speed, len(leds), stars, floor)):
                 value = self.power(leds[i], [x * ramp for x in c])
                 if value != shown[i]:
                     self._write(leds[i], "multi_intensity", value)
@@ -564,6 +570,18 @@ class Animator:
             if late > 1 / self.FPS:
                 k += int(late * self.FPS)
             stop.wait(max(0.0, t0 + k / self.FPS - time.monotonic()))
+
+    def floor(self, led: str, rgb) -> float:
+        """The dimmest level (as it looks, 0-1) at which rgb at the set
+        brightness still has FLOOR_STEPS power steps in its weakest main
+        channel. Below that the few whole steps left can't hold the colour
+        (a pink at brightness 70 turned red: blue 1, red 3) and every step is
+        a visible jump."""
+        top = int(rd(f"{led}/max_brightness", "255") or 255)
+        main = [c * self.level * top / 255 for c in rgb if c and c >= MAIN * max(rgb)]
+        if not main or min(main) <= FLOOR_STEPS:
+            return 1.0 if main else 0.0
+        return (FLOOR_STEPS / min(main)) ** (1 / GAMMA)
 
     def power(self, led: str, rgb) -> str:
         """multi_intensity for rgb (0-255, may be fractional) at the set
