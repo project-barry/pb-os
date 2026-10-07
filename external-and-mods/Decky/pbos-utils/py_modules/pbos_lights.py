@@ -23,6 +23,7 @@ import os
 import pwd
 import random
 import re
+import select
 import signal
 import subprocess
 import sys
@@ -343,110 +344,48 @@ def frame(effect: str, t: float, rgb: tuple[int, int, int], speed: int, n: int,
     return [rgb] * n
 
 
-# Audio Spectrum's bands, by PipeWire's filter-chain (native biquads; Python
-# has no numpy here): per side bass < 250 Hz, low mids 250 Hz-1 kHz, high
-# mids 1-4 kHz, treble > 4 kHz, out as an 8-channel source AUX0-7 (left
-# bass..treble, right bass..treble). Its input listens like Audio Pulse:
-# passive, not movable, the default output's monitor.
-BANDS_CONF = "/run/pbos-utils/bands.conf"
-BANDS_NODE = "pbos-utils-bands"
-BAND_FILTERS = (("bq_lowpass", 250.0, None), ("bq_bandpass", 500.0, 0.7),
-                ("bq_bandpass", 2000.0, 0.7), ("bq_highpass", 4000.0, None))
-
-
-def bands_conf() -> str:
-    # Each band is two biquads in a row: one leaked a strong tone 10-20 dB
-    # into the next band, enough to light it (Nova: a 100 Hz tone lit the
-    # low mids too).
-    nodes, links, outs = [], [], []
-    for side in ("l", "r"):
-        nodes.append(f'{{ type = builtin name = in_{side} label = copy }}')
-        for b, (label, freq, q) in enumerate(BAND_FILTERS):
-            ctl = f'"Freq" = {freq}' + (f' "Q" = {q}' if q else "")
-            for stage in (1, 2):
-                nodes.append(f'{{ type = builtin name = b{b}{stage}_{side} label = {label} control = {{ {ctl} }} }}')
-            links.append(f'{{ output = "in_{side}:Out" input = "b{b}1_{side}:In" }}')
-            links.append(f'{{ output = "b{b}1_{side}:Out" input = "b{b}2_{side}:In" }}')
-            outs.append(f'"b{b}2_{side}:Out"')
-    nl = "\n                    "
-    return f"""# Written by PB-OS Utils for Audio Spectrum; run while it shows.
-context.properties = {{ log.level = 0 }}
-context.spa-libs = {{
-    audio.convert.* = audioconvert/libspa-audioconvert
-    support.*       = support/libspa-support
-}}
-context.modules = [
-    {{ name = libpipewire-module-rt flags = [ ifexists nofail ] }}
-    {{ name = libpipewire-module-protocol-native }}
-    {{ name = libpipewire-module-client-node }}
-    {{ name = libpipewire-module-adapter }}
-    {{ name = libpipewire-module-filter-chain
-        args = {{
-            node.description = "PB-OS Utils lighting bands"
-            media.name       = "PB-OS Utils lighting bands"
-            filter.graph = {{
-                nodes = [
-                    {nl.join(nodes)}
-                ]
-                links = [
-                    {nl.join(links)}
-                ]
-                inputs  = [ "in_l:In" "in_r:In" ]
-                outputs = [ {" ".join(outs)} ]
-            }}
-            capture.props = {{
-                node.name = "{BANDS_NODE}-in"
-                audio.channels = 2
-                audio.position = [ FL FR ]
-                stream.capture.sink = true
-                node.passive = true
-                node.dont-move = true
-            }}
-            playback.props = {{
-                node.name = "{BANDS_NODE}"
-                media.class = "Audio/Source"
-                audio.channels = 8
-                audio.position = [ AUX0 AUX1 AUX2 AUX3 AUX4 AUX5 AUX6 AUX7 ]
-                node.passive = true
-            }}
-        }}
-    }}
-]
-"""
+# Audio Spectrum's bands come from four plain listeners at falling sample
+# rates: PipeWire's resampler drops everything above half the rate, in
+# native code and steeply, so the energy below 250 Hz, 1 kHz, 4 kHz and
+# 12 kHz is each a listener's, and the bands are their differences (energy
+# in separate ranges adds up). A tone lands in one band, the others 17-150
+# dB down. A filter-chain process did this first, but with it the first
+# sound after the speaker suspended could not start for 5 s or more (every
+# other sound, Nova, 15 tries); these listeners: none in 35.
+SPECTRUM_RATES = (500, 2000, 8000, 24000)
 
 
 class AudioMeter:
     """How loud the device's sound output is, for the audio effects, as the
     user that owns the sound session; never a microphone.
 
-    "pulse" (Audio Pulse): the default output's monitor in stereo, 8 kHz:
-    levels [left, right]. "spectrum" (Audio Spectrum): the same through the
-    band filter (bands_conf, its own pipewire process), 16 kHz, 8 channels:
-    levels [left bass..treble, right bass..treble].
+    "pulse" (Audio Pulse): one listener, the default output's monitor in
+    stereo at 8 kHz: levels [left, right]. "spectrum" (Audio Spectrum): four
+    listeners at SPECTRUM_RATES: levels [left bass, low mids, high mids,
+    treble, right bass, ...].
 
-    Every stream is passive (node.passive): it never keeps the sound card
+    Every listener is passive (node.passive): it never keeps the sound card
     running, so with nothing playing it gets no data and the light rests at
     its glow; and can't be moved (node.dont-move), so the sleep hook's
     shuffle of streams onto its silent stand-in can't land it on another
-    source after a wake. It runs only while an audio effect shows, and
-    starts again if it ends or the default output changes. pw-record runs
+    source after a wake. They run only while an audio effect shows, and
+    start again if one ends or the default output changes. pw-record runs
     unbuffered: it writes a pipe in 4 kB blocks, and measured on the Nova
     the light came 0.9 s after the sound; unbuffered about 0.1 s.
 
     Each channel follows loudness in dB against its own loudest of the last
     few seconds (quiet and loud playback both light, bass doesn't drown the
     treble), rising at once and falling over about 0.3 s. In "spectrum" a
-    band far below the loudest band on its side stays dark, so the filters'
-    overlap doesn't light it."""
+    band far below the loudest band on its side stays dark."""
 
     RANGE_DB = 30.0               # quietest that still lights, below the recent loudest
     GATE_DB = 15.0                # spectrum: a band this far below its side's loudest is dark
-    MODES = {"pulse": (8000, 2), "spectrum": (16000, 8)}
+    WINDOW = 1 / 15               # seconds of sound each energy is measured over
+    MODES = {"pulse": (8000,), "spectrum": SPECTRUM_RATES}
 
     def __init__(self) -> None:
         self.lock = threading.Lock()
-        self.proc: subprocess.Popen | None = None
-        self.bands: subprocess.Popen | None = None
+        self.procs: list[subprocess.Popen] = []
         self.running = threading.Event()
         self.stopped = threading.Event()     # ends the waits between tries at once
         self.thread: threading.Thread | None = None
@@ -454,7 +393,7 @@ class AudioMeter:
         self._reset()
 
     def _reset(self) -> None:
-        n = self.MODES[self.mode][1]
+        n = 2 if self.mode == "pulse" else 8
         self.levels = [0.0] * n
         self.peaks = [-60.0] * n
         self.at = 0.0                 # when the levels were last measured
@@ -493,15 +432,15 @@ class AudioMeter:
         return [v * k for v in self.levels]
 
     def _kill(self) -> None:
-        for name in ("proc", "bands"):
-            p = getattr(self, name)
-            setattr(self, name, None)
-            if p and p.poll() is None:
+        procs, self.procs = self.procs, []
+        for p in procs:
+            if p.poll() is None:
                 p.terminate()
-                try:
-                    p.wait(timeout=1)
-                except subprocess.TimeoutExpired:
-                    p.kill()
+        for p in procs:
+            try:
+                p.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                p.kill()
 
     @staticmethod
     def _session() -> tuple[str, str] | None:
@@ -522,17 +461,12 @@ class AudioMeter:
                            capture_output=True, text=True, timeout=5)
         return r.stdout.strip()
 
-    def _command(self, user: str, rt: str) -> list[str]:
-        rate, ch = self.MODES[self.mode]
-        argv = ["runuser", "-u", user, "--", "env", f"XDG_RUNTIME_DIR={rt}", "stdbuf", "-o0",
-                "pw-record", "--raw", "--rate", str(rate), "--channels", str(ch), "--format", "s16", "--latency", "32ms"]
-        if self.mode == "spectrum":
-            # The band filter's channels are AUX0-7: asked for by those names,
-            # or PipeWire matches only the two it can place (seen on the Nova).
-            return argv + ["--channel-map", ",".join(f"AUX{i}" for i in range(8)), "--target", BANDS_NODE,
-                           "-P", "{ node.passive=true node.dont-move=true node.name=pbos-utils-lighting }", "-"]
-        return argv + ["-P", "{ stream.capture.sink=true node.passive=true node.dont-move=true "
-                             "node.name=pbos-utils-lighting media.name=\"PB-OS Utils lighting\" }", "-"]
+    @staticmethod
+    def _command(user: str, rt: str, rate: int) -> list[str]:
+        return ["runuser", "-u", user, "--", "env", f"XDG_RUNTIME_DIR={rt}", "stdbuf", "-o0",
+                "pw-record", "--raw", "--rate", str(rate), "--channels", "2", "--format", "s16", "--latency", "32ms",
+                "-P", "{ stream.capture.sink=true node.passive=true node.dont-move=true "
+                      f"node.name=pbos-utils-lighting-{rate} media.name=\"PB-OS Utils lighting\" }}", "-"]
 
     def _supervise(self) -> None:
         while self.running.is_set():
@@ -543,62 +477,72 @@ class AudioMeter:
             user, rt = sess
             try:
                 sink = self._default_sink(user, rt)
-                if self.mode == "spectrum":
-                    os.makedirs(os.path.dirname(BANDS_CONF), exist_ok=True)
-                    with open(BANDS_CONF, "w", encoding="utf-8") as fh:
-                        fh.write(bands_conf())
-                    os.chmod(BANDS_CONF, 0o644)
-                    self.bands = subprocess.Popen(["runuser", "-u", user, "--", "env", f"XDG_RUNTIME_DIR={rt}",
-                                                   "pipewire", "-c", BANDS_CONF],
-                                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                    self.stopped.wait(0.5)      # its nodes appear
-                self.proc = subprocess.Popen(self._command(user, rt), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+                self.procs = [subprocess.Popen(self._command(user, rt, rate), stdout=subprocess.PIPE,
+                                               stderr=subprocess.DEVNULL) for rate in self.MODES[self.mode]]
             except (OSError, subprocess.SubprocessError) as e:
                 log(f"Audio effects: can't listen: {e}")
                 self._kill()
                 self.stopped.wait(5)
                 continue
-            self._read(self.proc, user, rt, sink)
+            self._read(user, rt, sink)
             self._kill()
             self.stopped.wait(1)
 
-    def _read(self, proc: subprocess.Popen, user: str, rt: str, sink: str) -> None:
-        rate, ch = self.MODES[self.mode]
-        fd = proc.stdout.fileno()
-        buf = b""
+    def _read(self, user: str, rt: str, sink: str) -> None:
+        rates = self.MODES[self.mode]
+        fds = {p.stdout.fileno(): i for i, p in enumerate(self.procs)}
+        bufs = [b""] * len(rates)
+        # Each listener: the last WINDOW of squared samples per side, and its
+        # energy (mean square) per side.
+        windows = [[[], []] for _ in rates]
+        energy = [[0.0, 0.0] for _ in rates]
         checked = time.monotonic()
-        n = rate // 30 * ch * 2          # one frame's worth of samples, all channels
         while self.running.is_set():
-            data = os.read(fd, 1 << 16)
-            if not data:
-                return                  # pw-record ended: start again
-            buf += data
-            while len(buf) >= n:
-                self._measure(buf[:n], ch)
-                buf = buf[n:]
+            ready, _, _ = select.select(list(fds), [], [], 1.0)
+            for fd in ready:
+                i = fds[fd]
+                data = os.read(fd, 1 << 16)
+                if not data:
+                    return              # a listener ended: start them all again
+                bufs[i] += data
+                n = len(bufs[i]) // 4 * 4
+                samples = array.array("h", bufs[i][:n])
+                bufs[i] = bufs[i][n:]
+                keep = max(8, int(rates[i] * self.WINDOW))
+                for side in (0, 1):
+                    w = windows[i][side]
+                    w.extend(x * x for x in samples[side::2])
+                    del w[:-keep]
+                    energy[i][side] = sum(w) / len(w) if w else 0.0
+                if i == len(rates) - 1:     # the fastest listener: once per frame
+                    self._measure(energy)
             if time.monotonic() - checked > 5:
                 checked = time.monotonic()
                 if self._default_sink(user, rt) != sink:
                     return              # other output (headphones): listen to that one
 
-    def _measure(self, chunk: bytes, ch: int) -> None:
-        samples = array.array("h", chunk)
-        dbs = []
-        for c in range(ch):
-            part = samples[c::ch]
-            rms = math.sqrt(sum(x * x for x in part) / max(1, len(part))) / 32768
-            dbs.append(20 * math.log10(max(rms, 1e-6)))
+    def _measure(self, energy: list[list[float]]) -> None:
+        full = 32768.0 ** 2
+        if self.mode == "pulse":
+            power = [energy[0][0], energy[0][1]]
+        else:                           # per side: below 250 Hz, then each difference up
+            power = []
+            for side in (0, 1):
+                e = [energy[i][side] for i in range(4)]
+                power += [e[0], e[1] - e[0], e[2] - e[1], e[3] - e[2]]
+        dbs = [10 * math.log10(max(x / full, 1e-12)) for x in power]
         now = time.monotonic()
         with self.lock:
             dt = now - self.at if self.at else 0.0
             prev = self.current_unlocked(now)
-            side = ch // 2 if ch > 2 else 1
+            n = len(dbs)
+            side = n // 2 if n > 2 else 1
             for c, db in enumerate(dbs):
                 # The loudest of the last few seconds, falling 3 dB a second.
                 self.peaks[c] = max(db, self.peaks[c] - 3 * dt, -60.0)
                 p = self.peaks[c]
                 target = 0.0 if p <= -55 else min(1.0, max(0.0, (db - (p - self.RANGE_DB)) / self.RANGE_DB))
-                if ch > 2 and db < max(dbs[c // side * side:(c // side + 1) * side]) - self.GATE_DB:
+                if n > 2 and db < max(dbs[c // side * side:(c // side + 1) * side]) - self.GATE_DB:
                     target = 0.0
                 self.levels[c] = target if target >= prev[c] else prev[c] + (target - prev[c]) * min(1.0, dt / 0.3)
             self.at = now
