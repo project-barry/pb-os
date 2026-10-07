@@ -53,13 +53,21 @@ RELEASES = 'https://api.github.com/repos/project-barry/pb-os/releases'
 # (SHA256SUMS.sig, scripts/sign-release.sh) from a key in this file.
 SIGNERS = Path('/usr/share/konkr-update/allowed_signers')
 SIGNER, NAMESPACE = 'pb-os-release', 'pb-os-update'
-# One image per SoC: the AYN Thor shares the SM8550 one ('rp6'). Thors still
-# on the separate Thor image look for 'thor' packages; the first shared
-# release also names its full package that way (build-update-package.py
-# --thor-bridge).
+# One image per SoC: Retroid Pocket 6, Nova and AYN Thor share 'sm8550'.
+# Releases before the rename named that image's packages 'rp6', and updaters
+# from then still look for that name only: build-update-package.py
+# --rp6-bridge also names a release's packages 'rp6' for them. Thors on the
+# separate Thor image of earlier releases look for 'thor' (--thor-bridge).
 IMAGES = {'KONKR Pocket FIT': 'pocketfit', 'AYANEO Pocket S2': 'pocketfit',
-          'Retroid Pocket 6': 'rp6', 'Retroid Pocket 6 TOP-DPAD': 'rp6', 'Retroid Pocket Nova': 'rp6',
-          'AYN Thor': 'rp6'}
+          'Retroid Pocket 6': 'sm8550', 'Retroid Pocket 6 TOP-DPAD': 'sm8550', 'Retroid Pocket Nova': 'sm8550',
+          'AYN Thor': 'sm8550'}
+# Earlier names of an image's packages, still accepted.
+OLD_NAMES = {'sm8550': ('rp6',)}
+
+
+def channel_names(image):
+    """The package names this image takes, its own first."""
+    return (image, *OLD_NAMES.get(image, ()))
 
 
 def run(*args, **kwargs):
@@ -453,11 +461,14 @@ def find_update(reinstall=False):
         # Only later releases: an older one with this device's package is not an update.
         if current and not (newer(tag, current) or (reinstall and tag == current)): continue
         # A patch release's delta is from the feature release (and covers its patches).
-        kind, name = 'delta', f"pb-os-{tag}-{image}.from-{base}.delta.tar.gz"
-        parts = parts_of(release, name) if base and base != tag else []
-        if not parts:
-            kind, name = 'full', f"pb-os-{tag}-{image}.update.tar.gz"
+        # The image's own package name first, then its earlier names.
+        candidates = [('delta', f"pb-os-{tag}-{n}.from-{base}.delta.tar.gz")
+                      for n in channel_names(image) if base and base != tag]
+        candidates += [('full', f"pb-os-{tag}-{n}.update.tar.gz") for n in channel_names(image)]
+        kind, name, parts = None, None, []
+        for kind, name in candidates:
             parts = parts_of(release, name)
+            if parts: break
         sums = next((a for a in release['assets'] if a['name'] == 'SHA256SUMS'), None)
         sig = next((a for a in release['assets'] if a['name'] == 'SHA256SUMS.sig'), None)
         if parts and sums and sig:
@@ -622,7 +633,8 @@ def packages_in(folder, image, current, base):
     """Complete pb-os packages for this image in the drive's top folder that
     update current (a delta: from its feature release, base):
     {joined name: {version, kind, files}}. Parts must run .001, .002, ... unbroken."""
-    pattern = re.compile(rf'pb-os-(.+?)-{re.escape(image)}\.(?:from-(.+)\.delta|update)\.tar\.gz(?:\.(\d{{3}}))?')
+    names = '|'.join(map(re.escape, channel_names(image)))
+    pattern = re.compile(rf'pb-os-(.+?)-(?:{names})\.(?:from-(.+)\.delta|update)\.tar\.gz(?:\.(\d{{3}}))?')
     groups = {}
     for p in folder.iterdir():
         m = pattern.fullmatch(p.name)
@@ -677,8 +689,10 @@ def find_local():
                 if not usable:
                     problems.append(f'SHA256SUMS on the {where} is from another release than the update next to it.')
                     continue
-                # Newest version first; a delta before the full package of the same version.
-                rank = lambda n: (version_key(found[n]['version']), found[n]['kind'] == 'delta')
+                # Newest version first; a delta before the full package of the same
+                # version; the image's own name before an earlier name of it.
+                rank = lambda n: (version_key(found[n]['version']), found[n]['kind'] == 'delta',
+                                  f'-{image}.' in n)
                 name = max(usable, key=rank)
                 if best and best[0] >= rank(name): continue
                 p = found[name]

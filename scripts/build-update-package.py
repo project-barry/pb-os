@@ -51,9 +51,14 @@ ap.add_argument('--device', choices=('thor',), help='ignored: the SM8550 image i
 ap.add_argument('--thor-bridge', action='store_true',
                 help='SM8550 with --release: also name the full package for the AYN Thor\'s old channel '
                      '(pb-os-<version>-thor.update.tar.gz), which Thors on a separate Thor image still look for')
+ap.add_argument('--rp6-bridge', action='store_true',
+                help='SM8550 with --release: also name every package (full and deltas) for the old SM8550 '
+                     'channel (pb-os-<version>-rp6...), the only one updaters from before the rename look for')
 a = ap.parse_args()
 if a.thor_bridge and (a.soc != 'sm8550' or not a.release or a.base_state):
     raise SystemExit('--thor-bridge needs --soc sm8550, --release and a full package (no --base-state)')
+if a.rp6_bridge and (a.soc != 'sm8550' or not a.release):
+    raise SystemExit('--rp6-bridge needs --soc sm8550 and --release')
 # Device models (DTB `model`) each package may install on: one image per SoC.
 DEVICES = {'sm8650': ['KONKR Pocket FIT', 'AYANEO Pocket S2'],
            'sm8550': ['Retroid Pocket 6', 'Retroid Pocket 6 TOP-DPAD', 'Retroid Pocket Nova', 'AYN Thor']}[a.soc]
@@ -68,7 +73,10 @@ stamped_base = root / 'usr/share/pb-os/base'
 release_base = stamped_base.read_text().strip() if stamped_base.is_file() else version
 if a.patch_state and not a.base_state: raise SystemExit('--patch-state needs --base-state')
 # Image name in release assets; the updater maps DTB models to it (IMAGES).
-image = {'sm8650': 'pocketfit', 'sm8550': 'rp6'}[a.soc]
+# SM8550 packages were named 'rp6' before the rename (alpha-v0.5.1 and
+# earlier; konkr-update.py OLD_NAMES); their state files still serve as delta bases.
+image = {'sm8650': 'pocketfit', 'sm8550': 'sm8550'}[a.soc]
+OLD_IMAGES = {'sm8550': ('rp6',)}.get(a.soc, ())
 if bool(a.output) == bool(a.release): raise SystemExit('give --output or --release')
 out_dir = Path(a.release).resolve() if a.release else Path(a.output).resolve().parent
 # The trees an update manages, and what in them is per installation.
@@ -131,9 +139,9 @@ def write_state(path, entries):
     print('state', path)
 
 
-def finish(output, bridge=False):
+def finish(output, aliases=()):
     """Checksum line, and with --release the parts under GitHub's 2 GiB limit.
-    bridge: the same parts again under the AYN Thor's old channel name."""
+    aliases: other channel names to give the same parts (--thor-bridge, --rp6-bridge)."""
     h = sha256(output)
     output.with_name(output.name + '.sha256').write_text(h + '  ' + output.name + '\n')
     print(output, h)
@@ -147,22 +155,24 @@ def finish(output, bridge=False):
                     b = f.read(min(size, 4 << 20)); part.write(b); size -= len(b)
     output.unlink()
     print(f'{n} parts; add {output.name}.sha256 to the release SHA256SUMS')
-    if bridge:
-        thor = output.name.replace(f'-{image}.update.', '-thor.update.')
+    prefix = f'pb-os-{version}-{image}.'
+    assert output.name.startswith(prefix), output.name
+    for alias in aliases:
+        other = f'pb-os-{version}-{alias}.' + output.name[len(prefix):]
         for i in range(1, n + 1):
-            dst = output.with_name(f'{thor}.{i:03d}'); dst.unlink(missing_ok=True)
+            dst = output.with_name(f'{other}.{i:03d}'); dst.unlink(missing_ok=True)
             os.link(output.with_name(f'{output.name}.{i:03d}'), dst)
-        output.with_name(thor + '.sha256').write_text(h + '  ' + thor + '\n')
-        print(f'{n} parts as {thor} too; add {thor}.sha256 to the release SHA256SUMS')
+        output.with_name(other + '.sha256').write_text(h + '  ' + other + '\n')
+        print(f'{n} parts as {other} too; add {other}.sha256 to the release SHA256SUMS')
 
 
-def pack(stage, output, manifest, members, bridge=False):
+def pack(stage, output, manifest, members, aliases=()):
     (stage / 'manifest.json').write_text(json.dumps(manifest, separators=(',', ':')))  # updaters refuse over 32 MiB
     gz = ['--use-compress-program=pigz'] if shutil.which('pigz') else ['-z']
     subprocess.run(['tar', '--xattrs', '--acls', '--numeric-owner', *gz, '-cf', str(output) + '.part',
                     '-C', str(stage), 'manifest.json', *members], check=True)
     os.replace(str(output) + '.part', output)
-    finish(output, bridge)
+    finish(output, aliases)
 
 
 if a.state_only:
@@ -181,7 +191,7 @@ PLUGINS = sorted({'decky-lsfg-vk', *bundled})
 REMOVE = sorted({'pbos-control', 'dual-screen', 'thor-screens'} - set(PLUGINS))
 def load_state(f):
     b = json.load(gzip.open(f, 'rt'))
-    if b.get('image') != image: raise SystemExit(f'{f}: state of {b.get("image")}, building {image}')
+    if b.get('image') not in (image, *OLD_IMAGES): raise SystemExit(f'{f}: state of {b.get("image")}, building {image}')
     if b.get('version') == version: raise SystemExit(f'{f}: state is of this version ({version})')
     return b
 bases = [load_state(f) for f in a.from_state]
@@ -244,7 +254,8 @@ with tempfile.TemporaryDirectory(prefix='konkr-package-', dir=output.parent) as 
     write_state(out_dir / f'pb-os-{version}-{image}.state.json.gz', new)
     # A patch release ships only its delta (feature releases bring the full system).
     if cumulative is None:
-        pack(stage, output, {'format': 1, **common, 'files': files}, ['root', 'home', 'boot'], a.thor_bridge)
+        pack(stage, output, {'format': 1, **common, 'files': files}, ['root', 'home', 'boot'],
+             ('thor',) * a.thor_bridge + ('rp6',) * a.rp6_bridge)
 
     def make_delta(olds):
         """One delta that installs on each of olds (states): every entry that
@@ -290,7 +301,7 @@ with tempfile.TemporaryDirectory(prefix='konkr-package-', dir=output.parent) as 
         # also_from: the patches it also installs on (updaters without it check `from` only).
         pack(delta, out_dir / name, {'format': 2, 'kind': 'delta', 'from': base['version'],
                                     **({'also_from': also} if also else {}), **common,
-                                    'delete': deleted, 'files': dfiles}, members)
+                                    'delete': deleted, 'files': dfiles}, members, ('rp6',) * a.rp6_bridge)
 
     for base in bases: make_delta([base])
     if cumulative: make_delta(cumulative)

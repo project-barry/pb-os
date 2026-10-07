@@ -53,7 +53,11 @@ From Konsole: `sudo python3 /usr/share/konkr-update/konkr-update.py local-check`
 
 ## Releasing an update
 
-One package per image, and one image per SoC: Pocket FIT / Pocket S2 (`pocketfit`) and SM8550, i.e. Retroid Pocket 6, Retroid Pocket Nova and AYN Thor (`rp6`). A package only installs on the DTB models in its manifest. Thors still on the separate Thor image of earlier releases look for `thor` packages: the first SM8550 feature release that includes the Thor adds `--thor-bridge`, which also names its full package `pb-os-<tag>-thor.update.tar.gz` (hard links of the same parts, plus their `.sha256` line). After it, Thors follow `rp6`.
+One package per image, and one image per SoC: Pocket FIT / Pocket S2 (`pocketfit`) and SM8550, i.e. Retroid Pocket 6, Retroid Pocket Nova and AYN Thor (`sm8550`). A package only installs on the DTB models in its manifest.
+
+Older channel names, for devices whose updater predates them (each adds hard links of the same parts, plus their `.sha256` lines; the updater takes either name):
+- `--rp6-bridge`: also names every package (full and deltas) `pb-os-<tag>-rp6...`. Until the rename (alpha-v0.5.1 and the test builds after it), SM8550 packages were named `rp6`, and those updaters look for nothing else. Add it to each SM8550 release until devices have an updater that reads `sm8550`.
+- `--thor-bridge`: also names the full package `pb-os-<tag>-thor.update.tar.gz`, for Thors still on the separate Thor image of releases before alpha-v0.5.1.
 
 1. Build the image with `PB_OS_VERSION=<release tag>`. For a patch release, also `PB_OS_BASE=<its feature release>` (e.g. `PB_OS_VERSION=alpha-v0.4.2 PB_OS_BASE=alpha-v0.4`). The image records them in `/usr/share/pb-os/version` and `/usr/share/pb-os/base`. The updater offers a release whose tag is newer than the installed version.
 2. From the same rootfs, with the same SoC:
