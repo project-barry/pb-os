@@ -36,6 +36,7 @@ const powerOff = callable("power_off");
 const getLights = callable("get_lights");
 const setLights = callable("set_lights");
 const setPowerLed = callable("set_power_led");
+const setAudioPulse = callable("set_audio_pulse");
 
 const row = (child) => jsx(DFL.PanelSectionRow, { children: child });
 const note = (text) => row(jsx("div", { style: { fontSize: "12px", opacity: 0.75 }, children: text }));
@@ -479,12 +480,15 @@ function colorHue(color) {
     return Math.round((h * 60 + 360) % 360);
 }
 const RAINBOW = "linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00)";
-// The Advanced section stays as it was left while Steam runs; closed at first.
+// The Advanced and Experimental sections stay as they were left while Steam
+// runs; closed at first.
 let advancedOpen = false;
+let experimentalOpen = false;
 
 function LightsTab() {
     const [st, setSt] = useState(null);
     const [advanced, setAdvanced] = useState(advancedOpen);
+    const [experimental, setExperimental] = useState(experimentalOpen);
     const movedAt = useRef(0);
     const refresh = useCallback(() => {
         if (Date.now() - movedAt.current < 2000) return;
@@ -527,7 +531,7 @@ function LightsTab() {
         items.push(row(jsx(DFL.DropdownItem, {
             label: "Effect",
             disabled: !usable,
-            rgOptions: effects.map((e) => ({ data: e.id, label: e.label })),
+            rgOptions: effects.map((e) => ({ data: e.id, label: e.experimental ? `${e.label} (Experimental)` : e.label })),
             selectedOption: effect.id,
             onChange: (o) => change({ effect: o.data }),
         })));
@@ -595,6 +599,26 @@ function LightsTab() {
                     onChange: (v) => { const c = rgb.slice(); c[i] = v; change({ color: toColor(c) }); },
                 }))));
                 items.push(note(`#${st.color.toUpperCase()}. The Color slider picks full colours; white and pastels are set here.`));
+            }
+        }
+        if (st.kind === "multicolor") {
+            items.push(row(jsx(DFL.ButtonItem, {
+                layout: "below",
+                onClick: () => { experimentalOpen = !experimental; setExperimental(!experimental); },
+                children: experimental ? "Experimental ▾" : "Experimental ▸",
+            })));
+            if (experimental) {
+                items.push(row(jsx(DFL.ToggleField, {
+                    label: "Audio Pulse",
+                    description: "Adds an effect that pulses the stick lights with what the device plays (never the "
+                        + "microphone), and switches to it. Other effects stay a pick away.",
+                    checked: !!st.experimental_audio,
+                    onChange: (v) => {
+                        movedAt.current = Date.now();
+                        setAudioPulse(v).then((s) => { movedAt.current = 0; setSt(s); }).catch(() => {});
+                    },
+                })));
+                items.push(note("Experimental: may cost a little battery while sound plays."));
             }
         }
     }

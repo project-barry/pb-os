@@ -31,7 +31,9 @@ import glob
 import itertools
 import json
 import math
+import array
 import os
+import pwd
 import random
 import re
 import subprocess
@@ -375,14 +377,24 @@ def pbosd_lights_set(on: bool, effect: str, color: str, brightness: int) -> None
     pbosd_set(rgb=rgb)
 
 
+# Experimental, switched on in the Lighting tab's Experimental section.
+AUDIO_EFFECT = {"id": "audio", "label": "Audio Pulse", "color": True, "speed": False, "experimental": True}
+
+
+def multicolor_effects(audio: bool) -> list[dict[str, Any]]:
+    return EFFECTS["multicolor"] + ([AUDIO_EFFECT] if audio else [])
+
+
 def multicolor_lights() -> dict[str, Any]:
     st = read_json(LIGHTS_STATE)
     # Before effects there was a mode: static or off.
     on = st.get("on", st.get("mode") != "off")
+    audio = bool(st.get("experimental_audio", False))
     effect = st.get("effect", "static")
-    if effect not in {e["id"] for e in EFFECTS["multicolor"]}:
+    if effect not in {e["id"] for e in multicolor_effects(audio)}:
         effect = "static"
     return {"on": bool(on), "effect": effect, "color": clean_color(st.get("color", DEFAULT_COLOR)),
+            "experimental_audio": audio, "effect_before_audio": st.get("effect_before_audio", "static"),
             "brightness": max(0, min(255, int(st.get("brightness", 160)))),
             "speed": max(1, min(10, int(st.get("speed", 5)))),
             "reverse_left": bool(st.get("reverse_left", False)), "reverse_right": bool(st.get("reverse_right", False)),
@@ -460,7 +472,7 @@ SPIN_WIDTH = 1.5
 
 def frame(effect: str, t: float, rgb: tuple[int, int, int], speed: int, n: int,
           stars: list[float], floor: float = 0.0,
-          reverse: tuple[bool, bool] = (False, False)) -> list[tuple[int, int, int]]:
+          reverse: tuple[bool, bool] = (False, False), level: float = 0.0) -> list[tuple[int, int, int]]:
     """Each zone's colour at time t (seconds). Zones go round each ring of
     n // 2; both sticks show the same."""
     ring = max(1, n // 2)
@@ -511,6 +523,10 @@ def frame(effect: str, t: float, rgb: tuple[int, int, int], speed: int, n: int,
             v = math.cos(math.pi * d / (2 * SPIN_WIDTH)) ** 2 if d < SPIN_WIDTH else 0.0
             out.append(scale(rgb, v))
         return out
+    if effect == "audio":
+        # level (AudioMeter): how loud the sound is now, 0-1; between the
+        # colour's dimmest true level (a glow, so it shows it's on) and full.
+        return [scale(rgb, floor + (1 - floor) * level)] * n
     if effect == "starlight":
         # Each zone twinkles on its own: every twinkle has its own length
         # (around `life`) and peak, and the wait before the next is drawn
@@ -534,6 +550,148 @@ def frame(effect: str, t: float, rgb: tuple[int, int, int], speed: int, n: int,
     return [rgb] * n
 
 
+class AudioMeter:
+    """How loud the device's sound output is, for Audio Pulse: a recording of
+    the default output's monitor (what is played; never a microphone), as
+    the user that owns the sound session. 8 kHz mono, about 16 kB/s.
+
+    The stream is passive (node.passive): it never keeps the sound card
+    running, so with nothing playing it gets no data and the light rests at
+    its glow; and it can't be moved (node.dont-move), so the sleep hook's
+    shuffle of streams onto its silent stand-in can't land it on another
+    source after a wake. It runs only while Audio Pulse shows, and starts
+    again if it ends or the default output changes.
+
+    The level follows loudness in dB against the loudest of the last few
+    seconds (so quiet and loud playback both pulse), rising at once and
+    falling over about 0.3 s."""
+
+    RATE = 8000
+    CHUNK = RATE // 30            # one frame's worth of samples
+    RANGE_DB = 30.0               # quietest that still lights, below the recent loudest
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.proc: subprocess.Popen | None = None
+        self.running = threading.Event()
+        self.stopped = threading.Event()     # ends the waits between tries at once
+        self.thread: threading.Thread | None = None
+        self.level = 0.0
+        self.at = 0.0                 # when level was last measured
+        self.peak_db = -60.0
+
+    def start(self) -> None:
+        if self.running.is_set():
+            return
+        self.stopped.clear()
+        self.running.set()
+        self.thread = threading.Thread(target=self._supervise, name="pbos-audio", daemon=True)
+        self.thread.start()
+
+    def stop(self) -> None:
+        self.running.clear()
+        self.stopped.set()
+        self._kill()
+        if self.thread:
+            self.thread.join(timeout=2)
+            self.thread = None
+        with self.lock:
+            self.level = 0.0
+
+    def current(self) -> float:
+        """The level now; it falls away when no sound has come (nothing playing)."""
+        with self.lock:
+            return self.current_unlocked(time.monotonic())
+
+    def _kill(self) -> None:
+        p, self.proc = self.proc, None
+        if p and p.poll() is None:
+            p.terminate()
+            try:
+                p.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                p.kill()
+
+    @staticmethod
+    def _session() -> tuple[str, str] | None:
+        """The user with the sound session (Game Mode's steamos) and its runtime dir."""
+        for user in ("steamos",):
+            try:
+                uid = pwd.getpwnam(user).pw_uid
+            except KeyError:
+                continue
+            rt = f"/run/user/{uid}"
+            if os.path.exists(f"{rt}/pipewire-0"):
+                return user, rt
+        return None
+
+    @staticmethod
+    def _default_sink(user: str, rt: str) -> str:
+        r = subprocess.run(["runuser", "-u", user, "--", "env", f"XDG_RUNTIME_DIR={rt}", "pactl", "get-default-sink"],
+                           capture_output=True, text=True, timeout=5)
+        return r.stdout.strip()
+
+    def _supervise(self) -> None:
+        while self.running.is_set():
+            sess = self._session()
+            if not sess:
+                self.stopped.wait(5)
+                continue
+            user, rt = sess
+            props = ("{ stream.capture.sink=true node.passive=true node.dont-move=true "
+                     "node.name=pbos-utils-lighting media.name=\"PB-OS Utils lighting\" }")
+            try:
+                sink = self._default_sink(user, rt)
+                self.proc = subprocess.Popen(
+                    ["runuser", "-u", user, "--", "env", f"XDG_RUNTIME_DIR={rt}",
+                     "pw-record", "--raw", "--rate", str(self.RATE), "--channels", "1", "--format", "s16",
+                     "--latency", "32ms", "-P", props, "-"],
+                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            except (OSError, subprocess.SubprocessError) as e:
+                decky.logger.info(f"Audio Pulse: can't listen: {e}")
+                self.stopped.wait(5)
+                continue
+            self._read(self.proc, user, rt, sink)
+            self._kill()
+            self.stopped.wait(1)
+
+    def _read(self, proc: subprocess.Popen, user: str, rt: str, sink: str) -> None:
+        fd = proc.stdout.fileno()
+        buf = b""
+        checked = time.monotonic()
+        while self.running.is_set():
+            data = os.read(fd, 4096)
+            if not data:
+                return                  # pw-record ended: start again
+            buf += data
+            n = self.CHUNK * 2
+            while len(buf) >= n:
+                self._measure(buf[:n])
+                buf = buf[n:]
+            if time.monotonic() - checked > 5:
+                checked = time.monotonic()
+                if self._default_sink(user, rt) != sink:
+                    return              # other output (headphones): listen to that one
+
+    def _measure(self, chunk: bytes) -> None:
+        samples = array.array("h", chunk)
+        rms = math.sqrt(sum(x * x for x in samples) / max(1, len(samples))) / 32768
+        db = 20 * math.log10(max(rms, 1e-6))
+        now = time.monotonic()
+        with self.lock:
+            dt = now - self.at if self.at else 0.0
+            # The loudest of the last few seconds, falling 3 dB a second.
+            self.peak_db = max(db, self.peak_db - 3 * dt, -60.0)
+            target = 0.0 if self.peak_db <= -55 else min(1.0, max(0.0, (db - (self.peak_db - self.RANGE_DB)) / self.RANGE_DB))
+            prev = self.current_unlocked(now)
+            self.level = target if target >= prev else prev + (target - prev) * min(1.0, dt / 0.3)
+            self.at = now
+
+    def current_unlocked(self, now: float) -> float:
+        idle = now - self.at
+        return self.level * math.exp(-max(0.0, idle - 0.05) / 0.3) if self.at else 0.0
+
+
 class Animator:
     """Drives the Retroid Pocket 6 / Nova stick LEDs. Static and off are
     written once; effects run in a thread at FPS, writing only zones whose
@@ -551,6 +709,7 @@ class Animator:
         self.order: dict[str, list[int]] = {}
         self.tops: dict[str, int] = {}
         self.level = 1.0
+        self.meter = AudioMeter()
 
     def apply(self, st: dict[str, Any], fade: float = 0.0) -> None:
         """Show st; with fade, brighten from off to it over that many seconds
@@ -591,13 +750,16 @@ class Animator:
             self.stop.set()
             self.thread.join(timeout=2)
             self.thread = None
+        self.meter.stop()
 
     def _run(self, leds: list[str], effect: str, rgb, speed: int, stop: threading.Event,
              fade: float = 0.0, reverse: tuple[bool, bool] = (False, False)) -> None:
         shown: list[Any] = [None] * len(leds)
         stars: list[Any] = [None] * len(leds)
-        floor = self.floor(leds[0], rgb) if leds and effect == "breathing" else 0.0
-        fine = effect in ("breathing", "starlight")    # slow fades: power_smooth
+        floor = self.floor(leds[0], rgb) if leds and effect in ("breathing", "audio") else 0.0
+        fine = effect in ("breathing", "starlight", "audio")    # fades: power_smooth
+        if effect == "audio":
+            self.meter.start()
         smooth: dict[str, Any] = {}     # Breathing: last pick per zone (power_smooth)
         # Frame k is drawn for exactly k / FPS and written at that time, so
         # the steps are even and the rate is FPS, not FPS minus the time the
@@ -609,7 +771,8 @@ class Animator:
             # Fading in: the sleep hook's fade-out reversed (x ** 2.2).
             r = min(1.0, k / self.FPS / fade) if fade else 1.0
             ramp = r ** GAMMA
-            for i, c in enumerate(frame(effect, k / self.FPS, rgb, speed, len(leds), stars, floor, reverse)):
+            level = self.meter.current() if effect == "audio" else 0.0
+            for i, c in enumerate(frame(effect, k / self.FPS, rgb, speed, len(leds), stars, floor, reverse, level)):
                 c = [x * ramp for x in c]
                 value = self.power_smooth(leds[i], c, smooth) if fine else self.power(leds[i], c)
                 if value != shown[i]:
@@ -952,6 +1115,7 @@ class Plugin:
             st = await asyncio.to_thread(pbosd_lights)
         elif self.lights == "multicolor":
             st = await asyncio.to_thread(multicolor_lights)
+            return {"kind": self.lights, "effects": multicolor_effects(st["experimental_audio"]), **st}
         else:
             return {"kind": ""}
         return {"kind": self.lights, "effects": EFFECTS[self.lights], **st}
@@ -961,7 +1125,10 @@ class Plugin:
                          reverse_right: bool = False, **_: Any) -> dict[str, Any]:
         if self.lights not in EFFECTS:
             return {"kind": ""}
-        if effect not in {e["id"] for e in EFFECTS[self.lights]}:
+        known = EFFECTS[self.lights]
+        if self.lights == "multicolor":
+            known = multicolor_effects(bool(read_json(LIGHTS_STATE).get("experimental_audio")))
+        if effect not in {e["id"] for e in known}:
             effect = "static"
         color = clean_color(color)
         brightness = max(0, min(255, int(brightness)))
@@ -969,10 +1136,34 @@ class Plugin:
         if self.lights == "pbosd":
             await asyncio.to_thread(pbosd_lights_set, bool(on), effect, color, brightness)
         else:
-            st = {"on": bool(on), "effect": effect, "color": color, "brightness": brightness, "speed": speed,
-                  "reverse_left": bool(reverse_left), "reverse_right": bool(reverse_right)}
+            st = read_json(LIGHTS_STATE)       # keeps the Experimental switches
+            st.update({"on": bool(on), "effect": effect, "color": color, "brightness": brightness, "speed": speed,
+                       "reverse_left": bool(reverse_left), "reverse_right": bool(reverse_right)})
+            st.pop("mode", None)
             await asyncio.to_thread(write_json, LIGHTS_STATE, st)
             await asyncio.to_thread(self.animator.apply, st)
+        return await self.get_lights()
+
+    async def set_audio_pulse(self, enabled: bool = False, **_: Any) -> dict[str, Any]:
+        """The Experimental switch: on adds Audio Pulse to the effects and
+        picks it (so it's plain that it happened), keeping the effect it
+        replaced; off takes it away and, if it was showing, brings that
+        effect back."""
+        if self.lights != "multicolor":
+            return await self.get_lights()
+        st = read_json(LIGHTS_STATE)
+        cur = st.get("effect", "static")
+        if enabled:
+            if cur != "audio":
+                st["effect_before_audio"] = cur
+            st.update(experimental_audio=True, effect="audio", on=True)
+        else:
+            if cur == "audio":
+                st["effect"] = st.get("effect_before_audio", "static")
+            st["experimental_audio"] = False
+        st.pop("mode", None)
+        await asyncio.to_thread(write_json, LIGHTS_STATE, st)
+        await asyncio.to_thread(self.animator.apply, await asyncio.to_thread(multicolor_lights))
         return await self.get_lights()
 
     async def set_power_led(self, on: bool = True, **_: Any) -> dict[str, Any]:
