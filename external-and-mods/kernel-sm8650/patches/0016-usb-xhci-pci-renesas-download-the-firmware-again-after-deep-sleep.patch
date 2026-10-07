@@ -1,0 +1,110 @@
+From: lavachemist <48248311+lavachemist@users.noreply.github.com>
+Subject: [PATCH] usb: xhci-pci-renesas: download the firmware again after deep sleep
+
+The uPD720201/2 on the KONKR Pocket FIT has no ROM, so its firmware lives
+in RAM. When its PCIe link powers down in deep sleep the firmware is lost
+and the xHCI resume fails ("xHC error in resume"), which takes the built-in
+controller with it. Keep the firmware image after probe (also when the
+firmware was already running, e.g. after a rebind) and download it again in
+resume_noirq when the controller reports it is no longer running.
+---
+--- a/drivers/usb/host/xhci-pci-renesas.c
++++ b/drivers/usb/host/xhci-pci-renesas.c
+@@ -575,7 +575,34 @@
+ 		dev_err(&pdev->dev, "firmware failed to download (%d).", err);
+ 	return err;
+ }
++
++/*
++ * The uPD720201/2 keep their firmware in RAM when there is no ROM. If the
++ * PCIe link is powered down in system suspend (D3cold) that firmware is
++ * lost, and the xHCI resume times out ("Controller not ready at resume")
++ * and declares the HC dead. Keep the image after probe and download it
++ * again in resume_noirq when the firmware is no longer running.
++ */
++static const struct firmware *renesas_saved_fw;
++static struct dev_pm_ops renesas_pm_ops;
+ 
++static int renesas_load_fw(struct pci_dev *pdev, const struct firmware *fw);
++static int renesas_fw_check_running(struct pci_dev *pdev);
++
++static int renesas_resume_noirq(struct device *dev)
++{
++	struct pci_dev *pdev = to_pci_dev(dev);
++
++	if (renesas_saved_fw && renesas_fw_check_running(pdev) == 1) {
++		int err = renesas_load_fw(pdev, renesas_saved_fw);
++
++		dev_info(dev, "firmware lost in suspend, reloaded (%d)\n", err);
++	}
++
++	return usb_hcd_pci_pm_ops.resume_noirq ?
++		usb_hcd_pci_pm_ops.resume_noirq(dev) : 0;
++}
++
+ static int renesas_xhci_check_request_fw(struct pci_dev *pdev,
+ 					 const struct pci_device_id *id)
+ {
+@@ -623,7 +650,10 @@
+ 
+ 	err = renesas_load_fw(pdev, fw);
+ exit:
+-	release_firmware(fw);
++	if (!err && !renesas_saved_fw)
++		renesas_saved_fw = fw;
++	else
++		release_firmware(fw);
+ 	return err;
+ }
+ 
+@@ -635,6 +665,21 @@
+ 	retval = renesas_xhci_check_request_fw(dev, id);
+ 	if (retval)
+ 		return retval;
++
++	/*
++	 * Keep the image even when the firmware was already running at probe
++	 * (bootloader, rebind, module reload), so resume can restore it.
++	 */
++	if (!renesas_saved_fw &&
++	    firmware_request_nowarn(&renesas_saved_fw, RENESAS_FW_NAME, &dev->dev))
++		renesas_saved_fw = NULL;
++	if (renesas_saved_fw && renesas_fw_verify(renesas_saved_fw->data,
++						  renesas_saved_fw->size)) {
++		release_firmware(renesas_saved_fw);
++		renesas_saved_fw = NULL;
++	}
++	dev_dbg(&dev->dev, "firmware image %s for resume\n",
++		 renesas_saved_fw ? "kept" : "NOT available");
+ 
+ 	return xhci_pci_common_probe(dev, id);
+ }
+@@ -655,11 +700,26 @@
+ 
+ 	.shutdown = 	usb_hcd_pci_shutdown,
+ 	.driver = {
+-		.pm = pm_ptr(&usb_hcd_pci_pm_ops),
++		.pm = pm_ptr(&renesas_pm_ops),
+ 	},
+ };
+-module_pci_driver(xhci_renesas_pci_driver);
+ 
++static int __init xhci_renesas_init(void)
++{
++	renesas_pm_ops = usb_hcd_pci_pm_ops;
++	renesas_pm_ops.resume_noirq = renesas_resume_noirq;
++	renesas_pm_ops.restore_noirq = renesas_resume_noirq;
++	return pci_register_driver(&xhci_renesas_pci_driver);
++}
++module_init(xhci_renesas_init);
++
++static void __exit xhci_renesas_exit(void)
++{
++	pci_unregister_driver(&xhci_renesas_pci_driver);
++	release_firmware(renesas_saved_fw);
++}
++module_exit(xhci_renesas_exit);
++
+ MODULE_DESCRIPTION("Renesas xHCI PCI Host Controller Driver");
+ MODULE_FIRMWARE(RENESAS_FW_NAME);
+ MODULE_IMPORT_NS("xhci");

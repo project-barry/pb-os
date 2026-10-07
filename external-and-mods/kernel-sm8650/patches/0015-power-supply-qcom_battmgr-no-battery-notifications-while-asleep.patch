@@ -1,0 +1,108 @@
+From: lavachemist <48248311+lavachemist@users.noreply.github.com>
+Subject: [PATCH] power: supply: qcom_battmgr: no battery notifications while asleep
+
+The ADSP charger firmware sends battery notifications every few minutes.
+In deep sleep (PSCI system suspend) each one arrives over the IPCC mailbox,
+whose interrupt stays enabled (IRQF_NO_SUSPEND), and resumes the whole
+system without a Linux wakeup record: the KONKR Pocket FIT woke itself every
+13-43 minutes. Qualcomm's downstream qti_battery_charger sends
+BC_DISABLE_NOTIFY_REQ (0x05) when the panel blanks and BC_SET_NOTIFY_REQ
+(0x04) when it unblanks. Do the same around system sleep (dev_pm_ops
+prepare/complete) and refresh the battery state after wake.
+
+Pocket FIT: a 6 h 05 min deep sleep with no self-wake (was 13-43 min).
+---
+--- a/drivers/power/supply/qcom_battmgr.c
++++ b/drivers/power/supply/qcom_battmgr.c
+@@ -30,6 +30,7 @@
+ #define BATTMGR_BAT_STATUS		0x1
+ 
+ #define BATTMGR_REQUEST_NOTIFICATION	0x4
++#define BATTMGR_DISABLE_NOTIFICATION	0x5
+ 
+ #define BATTMGR_NOTIFICATION		0x7
+ #define NOTIF_BAT_PROPERTY		0x30
+@@ -1271,6 +1272,7 @@
+ 
+ 	switch (opcode) {
+ 	case BATTMGR_REQUEST_NOTIFICATION:
++	case BATTMGR_DISABLE_NOTIFICATION:
+ 		battmgr->error = 0;
+ 		break;
+ 	case BATTMGR_BAT_INFO:
+@@ -1557,6 +1559,7 @@
+ 		}
+ 		break;
+ 	case BATTMGR_REQUEST_NOTIFICATION:
++	case BATTMGR_DISABLE_NOTIFICATION:
+ 	case BATTMGR_CHG_CTRL_LIMIT_EN:
+ 		battmgr->error = 0;
+ 		break;
+@@ -1723,6 +1726,7 @@
+ 	if (IS_ERR(battmgr->client))
+ 		return PTR_ERR(battmgr->client);
+ 
++	auxiliary_set_drvdata(adev, battmgr);
+ 	pmic_glink_client_register(battmgr->client);
+ 
+ 	return 0;
+@@ -1734,8 +1738,59 @@
+ };
+ MODULE_DEVICE_TABLE(auxiliary, qcom_battmgr_id_table);
+ 
++/*
++ * The ADSP charger firmware sends battery
++ * notifications every few minutes, and in PSCI system suspend each one
++ * resumes the whole system. Qualcomm's downstream qti_battery_charger sends
++ * BC_DISABLE_NOTIFY_REQ (0x5) when the panel blanks and BC_SET_NOTIFY_REQ
++ * (0x4) when it unblanks; do the same around system sleep and refresh the
++ * battery state afterwards.
++ */
++static int qcom_battmgr_set_notify(struct qcom_battmgr *battmgr, bool enable)
++{
++	struct qcom_battmgr_enable_request req = {
++		.hdr.owner = cpu_to_le32(PMIC_GLINK_OWNER_BATTMGR),
++		.hdr.type = cpu_to_le32(PMIC_GLINK_NOTIFY),
++		.hdr.opcode = cpu_to_le32(enable ? BATTMGR_REQUEST_NOTIFICATION :
++						   BATTMGR_DISABLE_NOTIFICATION),
++	};
++
++	return qcom_battmgr_request(battmgr, &req, sizeof(req));
++}
++
++static int qcom_battmgr_pm_prepare(struct device *dev)
++{
++	struct qcom_battmgr *battmgr = dev_get_drvdata(dev);
++	int ret;
++
++	if (!battmgr || !battmgr->service_up)
++		return 0;
++	ret = qcom_battmgr_set_notify(battmgr, false);
++	dev_info(dev, "battery notifications off for sleep: %d\n", ret);
++	return 0;
++}
++
++static void qcom_battmgr_pm_complete(struct device *dev)
++{
++	struct qcom_battmgr *battmgr = dev_get_drvdata(dev);
++	int ret;
++
++	if (!battmgr || !battmgr->service_up)
++		return;
++	ret = qcom_battmgr_set_notify(battmgr, true);
++	dev_info(dev, "battery notifications on after sleep: %d\n", ret);
++	if (battmgr->bat_psy)
++		power_supply_changed(battmgr->bat_psy);
++}
++
++static const struct dev_pm_ops qcom_battmgr_pm_ops = {
++	.prepare = qcom_battmgr_pm_prepare,
++	.complete = qcom_battmgr_pm_complete,
++};
++
+ static struct auxiliary_driver qcom_battmgr_driver = {
+ 	.name = "pmic_glink_power_supply",
++	.driver.pm = &qcom_battmgr_pm_ops,
+ 	.probe = qcom_battmgr_probe,
+ 	.id_table = qcom_battmgr_id_table,
+ };

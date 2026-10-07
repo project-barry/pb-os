@@ -1,0 +1,76 @@
+From: lavachemist <48248311+lavachemist@users.noreply.github.com>
+Subject: [PATCH] drm/msm/dsi: phy: unprepare the iface clock across system sleep
+
+The DSI PHY manages its "iface" clock (disp_cc_mdss_ahb_clk) with pm_clk,
+which prepares it at probe and only disables it on runtime suspend. A
+prepared clock under the XO keeps the XO vote, so the SM8550 handhelds never
+reached XO shutdown in system sleep even with the display off.
+
+When the PHY is already runtime-suspended, drop the prepare late in system
+suspend and take it back early in resume. Per PHY instance, so it covers
+both screens of the AYN Thor. Tested on the Retroid Pocket Nova (one DSI)
+with a test module doing the same; the Thor's second screen is untested.
+---
+--- a/drivers/gpu/drm/msm/dsi/phy/dsi_phy.c
++++ b/drivers/gpu/drm/msm/dsi/phy/dsi_phy.c
+@@ -695,6 +695,10 @@
+ 	if (ret < 0)
+ 		return dev_err_probe(dev, ret, "Unable to get iface clk\n");
+ 
++	phy->iface_vote = devm_clk_get(dev, "iface");
++	if (IS_ERR(phy->iface_vote))
++		phy->iface_vote = NULL;
++
+ 	if (phy->cfg->ops.pll_init) {
+ 		ret = phy->cfg->ops.pll_init(phy);
+ 		if (ret)
+@@ -711,8 +715,37 @@
+ 	return 0;
+ }
+ 
++/*
++ * pm_clk keeps "iface" (disp_cc_mdss_ahb_clk) prepared for the device's
++ * whole life and only disables it on runtime suspend. A prepared clock under
++ * the XO keeps the RPMh XO vote, so the SoC never reached XO shutdown in
++ * system sleep. When the PHY is already runtime-suspended (display off),
++ * unprepare it late in suspend and prepare it again early in resume.
++ */
++static int dsi_phy_suspend_noirq(struct device *dev)
++{
++	struct msm_dsi_phy *phy = dev_get_drvdata(dev);
++
++	if (!phy->iface_vote || !pm_runtime_status_suspended(dev))
++		return 0;
++	clk_unprepare(phy->iface_vote);
++	phy->iface_unprepared = true;
++	return 0;
++}
++
++static int dsi_phy_resume_noirq(struct device *dev)
++{
++	struct msm_dsi_phy *phy = dev_get_drvdata(dev);
++
++	if (!phy->iface_unprepared)
++		return 0;
++	phy->iface_unprepared = false;
++	return clk_prepare(phy->iface_vote);
++}
++
+ static const struct dev_pm_ops dsi_phy_pm_ops = {
+ 	SET_RUNTIME_PM_OPS(pm_clk_suspend, pm_clk_resume, NULL)
++	NOIRQ_SYSTEM_SLEEP_PM_OPS(dsi_phy_suspend_noirq, dsi_phy_resume_noirq)
+ };
+ 
+ static struct platform_driver dsi_phy_platform_driver = {
+--- a/drivers/gpu/drm/msm/dsi/phy/dsi_phy.h
++++ b/drivers/gpu/drm/msm/dsi/phy/dsi_phy.h
+@@ -123,6 +123,9 @@
+ 	struct clk_hw_onecell_data *provided_clocks;
+ 
+ 	bool state_saved;
++
++	struct clk *iface_vote;
++	bool iface_unprepared;
+ };
+ 
+ /*

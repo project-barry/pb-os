@@ -1,0 +1,34 @@
+From: lavachemist <48248311+lavachemist@users.noreply.github.com>
+Subject: [PATCH] PCI: qcom: allow D3 on the SM8650 root ports
+
+The SM8650 root ports (17cb:0113) set HotPlug+ in SltCap. With
+CONFIG_HOTPLUG_PCI_PCIE off, pci_bridge_d3_possible() then refuses D3, so
+the ports stay in D0 across system sleep, dw_pcie_suspend_noirq() never
+powers the links down, and the Wi-Fi and Renesas xHCI links keep their
+interconnect and power votes (no CX collapse). Allow D3 on these root
+ports. Same fix as the SM8550 set (0534). On the KONKR Pocket FIT the
+Renesas link only survives this together with the PCIe suspend OPP on
+both controllers (0013, 0014) and the Renesas firmware reload (0016).
+---
+--- a/drivers/pci/controller/dwc/pcie-qcom.c
++++ b/drivers/pci/controller/dwc/pcie-qcom.c
+@@ -2427,6 +2427,19 @@
+ 	{ }
+ };
+ 
++/*
++ * The Qualcomm root ports advertise HotPlug+ in SltCap, so the PCI core treats
++ * them as hotplug bridges and, without native pciehp, refuses D3 for them.
++ * Their links then stay up in system sleep and keep CX and DDR votes. Nothing
++ * is ever hotplugged on these boards, so allow D3.
++ */
++static void qcom_fixup_bridge_d3(struct pci_dev *dev)
++{
++	if (pci_pcie_type(dev) == PCI_EXP_TYPE_ROOT_PORT)
++		dev->bridge_d3 = 1;
++}
++DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_QCOM, 0x0113, qcom_fixup_bridge_d3);
++
+ static void qcom_fixup_class(struct pci_dev *dev)
+ {
+ 	dev->class = PCI_CLASS_BRIDGE_PCI_NORMAL;

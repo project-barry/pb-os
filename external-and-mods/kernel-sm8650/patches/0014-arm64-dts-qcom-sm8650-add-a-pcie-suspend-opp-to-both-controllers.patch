@@ -1,0 +1,51 @@
+From: lavachemist <48248311+lavachemist@users.noreply.github.com>
+Subject: [PATCH] arm64: dts: qcom: sm8650: add a PCIe suspend OPP to both controllers
+
+Give pcie0 (Wi-Fi) and pcie1 (the Renesas xHCI on the KONKR Pocket FIT) a
+suspend-only OPP, so pcie-qcom (0013) keeps a nonzero DDR/LLCC sleep-set
+vote when the links go down in deep sleep. Without it pcie-qcom votes 0/0
+and the Pocket FIT resets instead of waking once the SoC collapses CX.
+pcie0 alone (Armada 0527) was not enough: with both links down it still
+reset; with the floor on both it wakes every time (several sleeps up to
+6 h on 2026-10-07).
+
+Based on Armada's 0527 (pcie0); pcie1 added here.
+---
+--- a/arch/arm64/boot/dts/qcom/sm8650.dtsi
++++ b/arch/arm64/boot/dts/qcom/sm8650.dtsi
+@@ -3761,6 +3761,17 @@
+ 					opp-peak-kBps = <1969000 1>;
+ 					opp-level = <3>;
+ 				};
++
++				/*
++				 * Suspend-only: the synthetic opp-hz and missing opp-level
++				 * keep link-speed matching from selecting it.
++				 */
++				opp-suspend-1 {
++					opp-hz = /bits/ 64 <1>;
++					required-opps = <&rpmhpd_opp_low_svs>;
++					opp-peak-kBps = <1000 1>;
++					opp-suspend;
++				};
+ 			};
+ 
+ 			pcieport0: pcie@0 {
+@@ -3969,6 +3980,17 @@
+ 					opp-peak-kBps = <3938000 1>;
+ 					opp-level = <4>;
+ 				};
++
++				/*
++				 * Same suspend floor as pcie0, for the link behind it (the
++				 * Renesas xHCI on the KONKR Pocket FIT).
++				 */
++				opp-suspend-1 {
++					opp-hz = /bits/ 64 <1>;
++					required-opps = <&rpmhpd_opp_low_svs>;
++					opp-peak-kBps = <1000 1>;
++					opp-suspend;
++				};
+ 			};
+ 
+ 			pcie1_port0: pcie@0 {
