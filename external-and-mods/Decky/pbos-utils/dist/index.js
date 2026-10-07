@@ -517,7 +517,7 @@ function LightsTab() {
         marginLeft: "8px", verticalAlign: "middle", border: "1px solid rgba(255,255,255,0.5)", background: `#${st.color}` } });
     const items = [
         row(jsx(DFL.ToggleField, {
-            label: "Lighting",
+            label: "Stick Lights",
             disabled: !usable,
             checked: !!st.on,
             onChange: (v) => change({ on: v }),
