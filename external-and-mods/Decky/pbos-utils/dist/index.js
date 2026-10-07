@@ -491,7 +491,7 @@ function LightsTab() {
         getLights().then((s) => { if (Date.now() - movedAt.current >= 2000) setSt(s); }).catch(() => {});
     }, []);
     const send = useThrottled(useCallback((s) => {
-        setLights(s.on, s.effect, s.color, s.brightness, s.speed).catch(() => {});
+        setLights(s.on, s.effect, s.color, s.brightness, s.speed, !!s.reverse_left, !!s.reverse_right).catch(() => {});
     }, []));
     useEffect(() => {
         refresh();
@@ -552,6 +552,18 @@ function LightsTab() {
                 value: st.speed || 5, min: 1, max: 10, step: 1, notchTicksVisible: true,
                 disabled: !usable,
                 onChange: (v) => change({ speed: v }),
+            })));
+        }
+        if (effect.turns) {
+            // One line, each switch on its stick's side.
+            const reverse = (label, key) => jsxs("div", { style: { display: "flex", alignItems: "center", gap: "10px" }, children: [
+                jsx("div", { children: label }),
+                jsx(DFL.Toggle, { value: !!st[key], disabled: !usable, onChange: (v) => change({ [key]: v }) }),
+            ] });
+            items.push(row(jsxs(DFL.Focusable, {
+                "flow-children": "horizontal",
+                style: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0" },
+                children: [reverse("Reverse Left", "reverse_left"), reverse("Reverse Right", "reverse_right")],
             })));
         }
         if (kpf && effect.id === "rainbow") items.push(note("The controller runs the rainbow at its own speed and brightness."));

@@ -293,7 +293,8 @@ class MoveLog:
 # Effects, named like the RGB apps gamers know (Armoury Crate, Synapse,
 # iCUE). On the KONKR Pocket FIT the stick MCU renders them itself; on the
 # Retroid Pocket 6 and Nova, Animator does, here. "color": the effect uses
-# the picked colour; "speed": it has a speed.
+# the picked colour; "speed": it has a speed; "turns": it goes round the
+# sticks, and each stick's direction can be reversed.
 EFFECTS = {
     "pbosd": [
         {"id": "static", "label": "Static", "color": True, "speed": False},
@@ -304,8 +305,8 @@ EFFECTS = {
         {"id": "static", "label": "Static", "color": True, "speed": False},
         {"id": "breathing", "label": "Breathing", "color": True, "speed": True},
         {"id": "cycle", "label": "Color Cycle", "color": False, "speed": True},
-        {"id": "wave", "label": "Rainbow Wave", "color": False, "speed": True},
-        {"id": "spin", "label": "Spin", "color": True, "speed": True},
+        {"id": "wave", "label": "Rainbow Wave", "color": False, "speed": True, "turns": True},
+        {"id": "spin", "label": "Spin", "color": True, "speed": True, "turns": True},
         {"id": "starlight", "label": "Starlight", "color": True, "speed": True},
     ],
 }
@@ -383,7 +384,9 @@ def multicolor_lights() -> dict[str, Any]:
         effect = "static"
     return {"on": bool(on), "effect": effect, "color": clean_color(st.get("color", DEFAULT_COLOR)),
             "brightness": max(0, min(255, int(st.get("brightness", 160)))),
-            "speed": max(1, min(10, int(st.get("speed", 5)))), "available": bool(glob.glob(MULTICOLOR))}
+            "speed": max(1, min(10, int(st.get("speed", 5)))),
+            "reverse_left": bool(st.get("reverse_left", False)), "reverse_right": bool(st.get("reverse_right", False)),
+            "available": bool(glob.glob(MULTICOLOR))}
 
 
 # Each ring clockwise from the top, left stick then right, by device model.
@@ -456,11 +459,19 @@ SPIN_WIDTH = 1.5
 
 
 def frame(effect: str, t: float, rgb: tuple[int, int, int], speed: int, n: int,
-          stars: list[float], floor: float = 0.0) -> list[tuple[int, int, int]]:
+          stars: list[float], floor: float = 0.0,
+          reverse: tuple[bool, bool] = (False, False)) -> list[tuple[int, int, int]]:
     """Each zone's colour at time t (seconds). Zones go round each ring of
     n // 2; both sticks show the same."""
     ring = max(1, n // 2)
-    fast = (speed - 1) / 9                     # 0 slowest .. 1 fastest
+    fast = (speed - 1) / 9
+
+    def place(i):
+        # Zone i's place round its ring (0 = top, clockwise); a reversed
+        # stick is mirrored, so its light starts at the top and turns the
+        # other way.
+        p = i % ring
+        return (ring - p) % ring if reverse[min(i // ring, 1)] else p                     # 0 slowest .. 1 fastest
 
     def scale(c, v):
         # v is how bright it should look; LEDs look bright at low power, so
@@ -482,7 +493,7 @@ def frame(effect: str, t: float, rgb: tuple[int, int, int], speed: int, n: int,
         return [even_hue(t / (24 - 21 * fast))] * n
     if effect == "wave":
         period = 6 - 5 * fast
-        return [even_hue(t / period + (i % ring) / ring) for i in range(n)]
+        return [even_hue(t / period + place(i) / ring) for i in range(n)]
     if effect == "spin":
         # One light going round. Each zone fades up as the light comes within
         # SPIN_WIDTH zones of it and down as it leaves, so the next zone is
@@ -494,7 +505,7 @@ def frame(effect: str, t: float, rgb: tuple[int, int, int], speed: int, n: int,
         head = (t / (6 * (0.5 / 6) ** fast)) * ring
         out = []
         for i in range(n):
-            d = abs((head - i % ring + ring / 2) % ring - ring / 2)   # distance round the ring
+            d = abs((head - place(i) + ring / 2) % ring - ring / 2)   # distance round the ring
             v = math.cos(math.pi * d / (2 * SPIN_WIDTH)) ** 2 if d < SPIN_WIDTH else 0.0
             out.append(scale(rgb, v))
         return out
@@ -561,13 +572,15 @@ class Animator:
         # The colour first, then the brightness: LEDs made again (after a
         # sleep) start at full white, and brightness first flashed it.
         for i, led in enumerate(leds):
-            first = [0, 0, 0] if fade else frame(effect, 0.0, rgb, int(st.get("speed", 5)), len(leds), [-100.0] * len(leds))[i]
+            first = [0, 0, 0] if fade else frame(effect, 0.0, rgb, int(st.get("speed", 5)), len(leds), [-100.0] * len(leds),
+                                                  0.0, (bool(st.get("reverse_left")), bool(st.get("reverse_right"))))[i]
             self._write(led, "multi_intensity", self.power(led, first))
             self._write(led, "brightness", rd(f"{led}/max_brightness", "255"))
         if effect == "static" and not fade:
             return
         self.stop = threading.Event()
-        self.thread = threading.Thread(target=self._run, args=(leds, effect, rgb, int(st.get("speed", 5)), self.stop, fade),
+        reverse = (bool(st.get("reverse_left")), bool(st.get("reverse_right")))
+        self.thread = threading.Thread(target=self._run, args=(leds, effect, rgb, int(st.get("speed", 5)), self.stop, fade, reverse),
                                        name="pbos-lights", daemon=True)
         self.thread.start()
 
@@ -578,7 +591,7 @@ class Animator:
             self.thread = None
 
     def _run(self, leds: list[str], effect: str, rgb, speed: int, stop: threading.Event,
-             fade: float = 0.0) -> None:
+             fade: float = 0.0, reverse: tuple[bool, bool] = (False, False)) -> None:
         shown: list[Any] = [None] * len(leds)
         stars: list[Any] = [None] * len(leds)
         floor = self.floor(leds[0], rgb) if leds and effect == "breathing" else 0.0
@@ -594,7 +607,7 @@ class Animator:
             # Fading in: the sleep hook's fade-out reversed (x ** 2.2).
             r = min(1.0, k / self.FPS / fade) if fade else 1.0
             ramp = r ** GAMMA
-            for i, c in enumerate(frame(effect, k / self.FPS, rgb, speed, len(leds), stars, floor)):
+            for i, c in enumerate(frame(effect, k / self.FPS, rgb, speed, len(leds), stars, floor, reverse)):
                 c = [x * ramp for x in c]
                 value = self.power_smooth(leds[i], c, smooth) if fine else self.power(leds[i], c)
                 if value != shown[i]:
@@ -942,7 +955,8 @@ class Plugin:
         return {"kind": self.lights, "effects": EFFECTS[self.lights], **st}
 
     async def set_lights(self, on: bool = True, effect: str = "static", color: str = DEFAULT_COLOR,
-                         brightness: int = 160, speed: int = 5, **_: Any) -> dict[str, Any]:
+                         brightness: int = 160, speed: int = 5, reverse_left: bool = False,
+                         reverse_right: bool = False, **_: Any) -> dict[str, Any]:
         if self.lights not in EFFECTS:
             return {"kind": ""}
         if effect not in {e["id"] for e in EFFECTS[self.lights]}:
@@ -953,7 +967,8 @@ class Plugin:
         if self.lights == "pbosd":
             await asyncio.to_thread(pbosd_lights_set, bool(on), effect, color, brightness)
         else:
-            st = {"on": bool(on), "effect": effect, "color": color, "brightness": brightness, "speed": speed}
+            st = {"on": bool(on), "effect": effect, "color": color, "brightness": brightness, "speed": speed,
+                  "reverse_left": bool(reverse_left), "reverse_right": bool(reverse_right)}
             await asyncio.to_thread(write_json, LIGHTS_STATE, st)
             await asyncio.to_thread(self.animator.apply, st)
         return await self.get_lights()
