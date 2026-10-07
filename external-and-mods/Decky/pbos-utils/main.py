@@ -377,12 +377,17 @@ def pbosd_lights_set(on: bool, effect: str, color: str, brightness: int) -> None
     pbosd_set(rgb=rgb)
 
 
-# Experimental, switched on in the Lighting tab's Experimental section.
-AUDIO_EFFECT = {"id": "audio", "label": "Audio Pulse", "color": True, "speed": False, "experimental": True}
+# Experimental, switched on in the Lighting tab's Experimental section
+# (Audio Effects); they follow what the device plays.
+AUDIO_EFFECTS = [
+    {"id": "audio", "label": "Audio Pulse", "color": True, "speed": False, "experimental": True},
+    {"id": "spectrum", "label": "Audio Spectrum", "color": True, "speed": False, "experimental": True},
+]
+AUDIO_MODES = {"audio": "pulse", "spectrum": "spectrum"}
 
 
 def multicolor_effects(audio: bool) -> list[dict[str, Any]]:
-    return EFFECTS["multicolor"] + ([AUDIO_EFFECT] if audio else [])
+    return EFFECTS["multicolor"] + (AUDIO_EFFECTS if audio else [])
 
 
 def multicolor_lights() -> dict[str, Any]:
@@ -442,6 +447,10 @@ def lights_signature() -> tuple[int, ...]:
 
 
 GAMMA = 2.2
+# Audio Spectrum: which band (0 bass, 1 low mids, 2 high mids, 3 treble)
+# each place round a ring shows (0 top, clockwise), per stick: bass at the
+# bottom, treble at the top, low mids on the outer side, high mids inner.
+SPECTRUM_PLACES = ((3, 2, 0, 1), (3, 1, 0, 2))
 
 
 def even_hue(h: float) -> tuple[float, float, float]:
@@ -472,7 +481,7 @@ SPIN_WIDTH = 1.5
 
 def frame(effect: str, t: float, rgb: tuple[int, int, int], speed: int, n: int,
           stars: list[float], floor: float = 0.0,
-          reverse: tuple[bool, bool] = (False, False), level: float = 0.0) -> list[tuple[int, int, int]]:
+          reverse: tuple[bool, bool] = (False, False), level: Any = 0.0) -> list[tuple[int, int, int]]:
     """Each zone's colour at time t (seconds). Zones go round each ring of
     n // 2; both sticks show the same."""
     ring = max(1, n // 2)
@@ -523,10 +532,20 @@ def frame(effect: str, t: float, rgb: tuple[int, int, int], speed: int, n: int,
             v = math.cos(math.pi * d / (2 * SPIN_WIDTH)) ** 2 if d < SPIN_WIDTH else 0.0
             out.append(scale(rgb, v))
         return out
-    if effect == "audio":
-        # level (AudioMeter): how loud the sound is now, 0-1; between the
-        # colour's dimmest true level (a glow, so it shows it's on) and full.
-        return [scale(rgb, floor + (1 - floor) * level)] * n
+    if effect in ("audio", "spectrum"):
+        # level (AudioMeter): how loud the sound is now, 0-1 per channel;
+        # each zone between the colour's dimmest true level (a glow, so it
+        # shows it's on) and full.
+        lv = list(level) if isinstance(level, (list, tuple)) else [level, level]
+        out = []
+        for i in range(n):
+            side = min(i // ring, 1)
+            if effect == "audio":                 # stereo: each stick its side
+                v = lv[side] if len(lv) > side else lv[0]
+            else:                                 # each stick its side's four bands
+                v = lv[side * 4 + SPECTRUM_PLACES[side][i % ring]] if len(lv) >= 8 else 0.0
+            out.append(scale(rgb, floor + (1 - floor) * v))
+        return out
     if effect == "starlight":
         # Each zone twinkles on its own: every twinkle has its own length
         # (around `life`) and peak, and the wait before the next is drawn
@@ -550,39 +569,124 @@ def frame(effect: str, t: float, rgb: tuple[int, int, int], speed: int, n: int,
     return [rgb] * n
 
 
+# Audio Spectrum's bands, by PipeWire's filter-chain (native biquads; Python
+# has no numpy here): per side bass < 250 Hz, low mids 250 Hz-1 kHz, high
+# mids 1-4 kHz, treble > 4 kHz, out as an 8-channel source AUX0-7 (left
+# bass..treble, right bass..treble). Its input listens like Audio Pulse:
+# passive, not movable, the default output's monitor.
+BANDS_CONF = "/run/pbos-utils/bands.conf"
+BANDS_NODE = "pbos-utils-bands"
+BAND_FILTERS = (("bq_lowpass", 250.0, None), ("bq_bandpass", 500.0, 0.7),
+                ("bq_bandpass", 2000.0, 0.7), ("bq_highpass", 4000.0, None))
+
+
+def bands_conf() -> str:
+    nodes, links, outs = [], [], []
+    for side in ("l", "r"):
+        nodes.append(f'{{ type = builtin name = in_{side} label = copy }}')
+        for b, (label, freq, q) in enumerate(BAND_FILTERS):
+            ctl = f'"Freq" = {freq}' + (f' "Q" = {q}' if q else "")
+            nodes.append(f'{{ type = builtin name = b{b}_{side} label = {label} control = {{ {ctl} }} }}')
+            links.append(f'{{ output = "in_{side}:Out" input = "b{b}_{side}:In" }}')
+            outs.append(f'"b{b}_{side}:Out"')
+    nl = "\n                    "
+    return f"""# Written by PB-OS Utils for Audio Spectrum; run while it shows.
+context.properties = {{ log.level = 0 }}
+context.spa-libs = {{
+    audio.convert.* = audioconvert/libspa-audioconvert
+    support.*       = support/libspa-support
+}}
+context.modules = [
+    {{ name = libpipewire-module-rt flags = [ ifexists nofail ] }}
+    {{ name = libpipewire-module-protocol-native }}
+    {{ name = libpipewire-module-client-node }}
+    {{ name = libpipewire-module-adapter }}
+    {{ name = libpipewire-module-filter-chain
+        args = {{
+            node.description = "PB-OS Utils lighting bands"
+            media.name       = "PB-OS Utils lighting bands"
+            filter.graph = {{
+                nodes = [
+                    {nl.join(nodes)}
+                ]
+                links = [
+                    {nl.join(links)}
+                ]
+                inputs  = [ "in_l:In" "in_r:In" ]
+                outputs = [ {" ".join(outs)} ]
+            }}
+            capture.props = {{
+                node.name = "{BANDS_NODE}-in"
+                audio.channels = 2
+                audio.position = [ FL FR ]
+                stream.capture.sink = true
+                node.passive = true
+                node.dont-move = true
+            }}
+            playback.props = {{
+                node.name = "{BANDS_NODE}"
+                media.class = "Audio/Source"
+                audio.channels = 8
+                audio.position = [ AUX0 AUX1 AUX2 AUX3 AUX4 AUX5 AUX6 AUX7 ]
+                node.passive = true
+            }}
+        }}
+    }}
+]
+"""
+
+
 class AudioMeter:
-    """How loud the device's sound output is, for Audio Pulse: a recording of
-    the default output's monitor (what is played; never a microphone), as
-    the user that owns the sound session. 8 kHz mono, about 16 kB/s.
+    """How loud the device's sound output is, for the audio effects, as the
+    user that owns the sound session; never a microphone.
 
-    The stream is passive (node.passive): it never keeps the sound card
+    "pulse" (Audio Pulse): the default output's monitor in stereo, 8 kHz:
+    levels [left, right]. "spectrum" (Audio Spectrum): the same through the
+    band filter (bands_conf, its own pipewire process), 16 kHz, 8 channels:
+    levels [left bass..treble, right bass..treble].
+
+    Every stream is passive (node.passive): it never keeps the sound card
     running, so with nothing playing it gets no data and the light rests at
-    its glow; and it can't be moved (node.dont-move), so the sleep hook's
+    its glow; and can't be moved (node.dont-move), so the sleep hook's
     shuffle of streams onto its silent stand-in can't land it on another
-    source after a wake. It runs only while Audio Pulse shows, and starts
-    again if it ends or the default output changes.
+    source after a wake. It runs only while an audio effect shows, and
+    starts again if it ends or the default output changes. pw-record runs
+    unbuffered: it writes a pipe in 4 kB blocks, and measured on the Nova
+    the light came 0.9 s after the sound; unbuffered about 0.1 s.
 
-    The level follows loudness in dB against the loudest of the last few
-    seconds (so quiet and loud playback both pulse), rising at once and
-    falling over about 0.3 s."""
+    Each channel follows loudness in dB against its own loudest of the last
+    few seconds (quiet and loud playback both light, bass doesn't drown the
+    treble), rising at once and falling over about 0.3 s. In "spectrum" a
+    band far below the loudest band on its side stays dark, so the filters'
+    overlap doesn't light it."""
 
-    RATE = 8000
-    CHUNK = RATE // 30            # one frame's worth of samples
     RANGE_DB = 30.0               # quietest that still lights, below the recent loudest
+    GATE_DB = 24.0                # spectrum: a band this far below its side's loudest is dark
+    MODES = {"pulse": (8000, 2), "spectrum": (16000, 8)}
 
     def __init__(self) -> None:
         self.lock = threading.Lock()
         self.proc: subprocess.Popen | None = None
+        self.bands: subprocess.Popen | None = None
         self.running = threading.Event()
         self.stopped = threading.Event()     # ends the waits between tries at once
         self.thread: threading.Thread | None = None
-        self.level = 0.0
-        self.at = 0.0                 # when level was last measured
-        self.peak_db = -60.0
+        self.mode = "pulse"
+        self._reset()
 
-    def start(self) -> None:
-        if self.running.is_set():
+    def _reset(self) -> None:
+        n = self.MODES[self.mode][1]
+        self.levels = [0.0] * n
+        self.peaks = [-60.0] * n
+        self.at = 0.0                 # when the levels were last measured
+
+    def start(self, mode: str = "pulse") -> None:
+        if self.running.is_set() and mode == self.mode:
             return
+        self.stop()
+        self.mode = mode if mode in self.MODES else "pulse"
+        with self.lock:
+            self._reset()
         self.stopped.clear()
         self.running.set()
         self.thread = threading.Thread(target=self._supervise, name="pbos-audio", daemon=True)
@@ -596,21 +700,29 @@ class AudioMeter:
             self.thread.join(timeout=2)
             self.thread = None
         with self.lock:
-            self.level = 0.0
+            self.levels = [0.0] * len(self.levels)
 
-    def current(self) -> float:
-        """The level now; it falls away when no sound has come (nothing playing)."""
+    def current(self) -> list[float]:
+        """The levels now; they fall away when no sound has come (nothing playing)."""
         with self.lock:
             return self.current_unlocked(time.monotonic())
 
+    def current_unlocked(self, now: float) -> list[float]:
+        if not self.at:
+            return [0.0] * len(self.levels)
+        k = math.exp(-max(0.0, now - self.at - 0.05) / 0.3)
+        return [v * k for v in self.levels]
+
     def _kill(self) -> None:
-        p, self.proc = self.proc, None
-        if p and p.poll() is None:
-            p.terminate()
-            try:
-                p.wait(timeout=1)
-            except subprocess.TimeoutExpired:
-                p.kill()
+        for name in ("proc", "bands"):
+            p = getattr(self, name)
+            setattr(self, name, None)
+            if p and p.poll() is None:
+                p.terminate()
+                try:
+                    p.wait(timeout=1)
+                except subprocess.TimeoutExpired:
+                    p.kill()
 
     @staticmethod
     def _session() -> tuple[str, str] | None:
@@ -631,6 +743,18 @@ class AudioMeter:
                            capture_output=True, text=True, timeout=5)
         return r.stdout.strip()
 
+    def _command(self, user: str, rt: str) -> list[str]:
+        rate, ch = self.MODES[self.mode]
+        argv = ["runuser", "-u", user, "--", "env", f"XDG_RUNTIME_DIR={rt}", "stdbuf", "-o0",
+                "pw-record", "--raw", "--rate", str(rate), "--channels", str(ch), "--format", "s16", "--latency", "32ms"]
+        if self.mode == "spectrum":
+            # The band filter's channels are AUX0-7: asked for by those names,
+            # or PipeWire matches only the two it can place (seen on the Nova).
+            return argv + ["--channel-map", ",".join(f"AUX{i}" for i in range(8)), "--target", BANDS_NODE,
+                           "-P", "{ node.passive=true node.dont-move=true node.name=pbos-utils-lighting }", "-"]
+        return argv + ["-P", "{ stream.capture.sink=true node.passive=true node.dont-move=true "
+                             "node.name=pbos-utils-lighting media.name=\"PB-OS Utils lighting\" }", "-"]
+
     def _supervise(self) -> None:
         while self.running.is_set():
             sess = self._session()
@@ -638,20 +762,21 @@ class AudioMeter:
                 self.stopped.wait(5)
                 continue
             user, rt = sess
-            props = ("{ stream.capture.sink=true node.passive=true node.dont-move=true "
-                     "node.name=pbos-utils-lighting media.name=\"PB-OS Utils lighting\" }")
             try:
                 sink = self._default_sink(user, rt)
-                # Unbuffered: pw-record writes a pipe in 4 kB blocks, a
-                # quarter second each at 16 kB/s; measured on the Nova the
-                # light came 0.9 s after the sound, unbuffered about 0.1 s.
-                self.proc = subprocess.Popen(
-                    ["runuser", "-u", user, "--", "env", f"XDG_RUNTIME_DIR={rt}", "stdbuf", "-o0",
-                     "pw-record", "--raw", "--rate", str(self.RATE), "--channels", "1", "--format", "s16",
-                     "--latency", "32ms", "-P", props, "-"],
-                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+                if self.mode == "spectrum":
+                    os.makedirs(os.path.dirname(BANDS_CONF), exist_ok=True)
+                    with open(BANDS_CONF, "w", encoding="utf-8") as fh:
+                        fh.write(bands_conf())
+                    os.chmod(BANDS_CONF, 0o644)
+                    self.bands = subprocess.Popen(["runuser", "-u", user, "--", "env", f"XDG_RUNTIME_DIR={rt}",
+                                                   "pipewire", "-c", BANDS_CONF],
+                                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    self.stopped.wait(0.5)      # its nodes appear
+                self.proc = subprocess.Popen(self._command(user, rt), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
             except (OSError, subprocess.SubprocessError) as e:
-                decky.logger.info(f"Audio Pulse: can't listen: {e}")
+                decky.logger.info(f"Audio effects: can't listen: {e}")
+                self._kill()
                 self.stopped.wait(5)
                 continue
             self._read(self.proc, user, rt, sink)
@@ -659,40 +784,45 @@ class AudioMeter:
             self.stopped.wait(1)
 
     def _read(self, proc: subprocess.Popen, user: str, rt: str, sink: str) -> None:
+        rate, ch = self.MODES[self.mode]
         fd = proc.stdout.fileno()
         buf = b""
         checked = time.monotonic()
+        n = rate // 30 * ch * 2          # one frame's worth of samples, all channels
         while self.running.is_set():
-            data = os.read(fd, 4096)
+            data = os.read(fd, 1 << 16)
             if not data:
                 return                  # pw-record ended: start again
             buf += data
-            n = self.CHUNK * 2
             while len(buf) >= n:
-                self._measure(buf[:n])
+                self._measure(buf[:n], ch)
                 buf = buf[n:]
             if time.monotonic() - checked > 5:
                 checked = time.monotonic()
                 if self._default_sink(user, rt) != sink:
                     return              # other output (headphones): listen to that one
 
-    def _measure(self, chunk: bytes) -> None:
+    def _measure(self, chunk: bytes, ch: int) -> None:
         samples = array.array("h", chunk)
-        rms = math.sqrt(sum(x * x for x in samples) / max(1, len(samples))) / 32768
-        db = 20 * math.log10(max(rms, 1e-6))
+        dbs = []
+        for c in range(ch):
+            part = samples[c::ch]
+            rms = math.sqrt(sum(x * x for x in part) / max(1, len(part))) / 32768
+            dbs.append(20 * math.log10(max(rms, 1e-6)))
         now = time.monotonic()
         with self.lock:
             dt = now - self.at if self.at else 0.0
-            # The loudest of the last few seconds, falling 3 dB a second.
-            self.peak_db = max(db, self.peak_db - 3 * dt, -60.0)
-            target = 0.0 if self.peak_db <= -55 else min(1.0, max(0.0, (db - (self.peak_db - self.RANGE_DB)) / self.RANGE_DB))
             prev = self.current_unlocked(now)
-            self.level = target if target >= prev else prev + (target - prev) * min(1.0, dt / 0.3)
+            side = ch // 2 if ch > 2 else 1
+            for c, db in enumerate(dbs):
+                # The loudest of the last few seconds, falling 3 dB a second.
+                self.peaks[c] = max(db, self.peaks[c] - 3 * dt, -60.0)
+                p = self.peaks[c]
+                target = 0.0 if p <= -55 else min(1.0, max(0.0, (db - (p - self.RANGE_DB)) / self.RANGE_DB))
+                if ch > 2 and db < max(dbs[c // side * side:(c // side + 1) * side]) - self.GATE_DB:
+                    target = 0.0
+                self.levels[c] = target if target >= prev[c] else prev[c] + (target - prev[c]) * min(1.0, dt / 0.3)
             self.at = now
-
-    def current_unlocked(self, now: float) -> float:
-        idle = now - self.at
-        return self.level * math.exp(-max(0.0, idle - 0.05) / 0.3) if self.at else 0.0
 
 
 class Animator:
@@ -759,10 +889,11 @@ class Animator:
              fade: float = 0.0, reverse: tuple[bool, bool] = (False, False)) -> None:
         shown: list[Any] = [None] * len(leds)
         stars: list[Any] = [None] * len(leds)
-        floor = self.floor(leds[0], rgb) if leds and effect in ("breathing", "audio") else 0.0
-        fine = effect in ("breathing", "starlight", "audio")    # fades: power_smooth
-        if effect == "audio":
-            self.meter.start()
+        audio = AUDIO_MODES.get(effect)
+        floor = self.floor(leds[0], rgb) if leds and (effect == "breathing" or audio) else 0.0
+        fine = effect in ("breathing", "starlight") or bool(audio)    # fades: power_smooth
+        if audio:
+            self.meter.start(audio)
         smooth: dict[str, Any] = {}     # Breathing: last pick per zone (power_smooth)
         # Frame k is drawn for exactly k / FPS and written at that time, so
         # the steps are even and the rate is FPS, not FPS minus the time the
@@ -774,7 +905,7 @@ class Animator:
             # Fading in: the sleep hook's fade-out reversed (x ** 2.2).
             r = min(1.0, k / self.FPS / fade) if fade else 1.0
             ramp = r ** GAMMA
-            level = self.meter.current() if effect == "audio" else 0.0
+            level = self.meter.current() if audio else 0.0
             for i, c in enumerate(frame(effect, k / self.FPS, rgb, speed, len(leds), stars, floor, reverse, level)):
                 c = [x * ramp for x in c]
                 value = self.power_smooth(leds[i], c, smooth) if fine else self.power(leds[i], c)
@@ -1148,20 +1279,20 @@ class Plugin:
         return await self.get_lights()
 
     async def set_audio_pulse(self, enabled: bool = False, **_: Any) -> dict[str, Any]:
-        """The Experimental switch: on adds Audio Pulse to the effects and
-        picks it (so it's plain that it happened), keeping the effect it
-        replaced; off takes it away and, if it was showing, brings that
-        effect back."""
+        """The Experimental switch (Audio Effects): on adds Audio Pulse and
+        Audio Spectrum to the effects and picks Audio Pulse (so it's plain
+        that it happened), keeping the effect it replaced; off takes them
+        away and, if one was showing, brings that effect back."""
         if self.lights != "multicolor":
             return await self.get_lights()
         st = read_json(LIGHTS_STATE)
         cur = st.get("effect", "static")
         if enabled:
-            if cur != "audio":
+            if cur not in AUDIO_MODES:
                 st["effect_before_audio"] = cur
             st.update(experimental_audio=True, effect="audio", on=True)
         else:
-            if cur == "audio":
+            if cur in AUDIO_MODES:
                 st["effect"] = st.get("effect_before_audio", "static")
             st["experimental_audio"] = False
         st.pop("mode", None)

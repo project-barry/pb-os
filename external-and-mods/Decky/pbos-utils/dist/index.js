@@ -609,9 +609,10 @@ function LightsTab() {
             })));
             if (experimental) {
                 items.push(row(jsx(DFL.ToggleField, {
-                    label: "Audio Pulse",
-                    description: "Adds an effect that pulses the stick lights with what the device plays (never the "
-                        + "microphone), and switches to it. Other effects stay a pick away.",
+                    label: "Audio Effects",
+                    description: "Adds effects that follow what the device plays (never the microphone) and switches "
+                        + "to Audio Pulse: Audio Pulse lights each stick with its side's loudness, Audio Spectrum "
+                        + "shows four bands per stick (bass at the bottom, treble at the top). Other effects stay a pick away.",
                     checked: !!st.experimental_audio,
                     onChange: (v) => {
                         movedAt.current = Date.now();
