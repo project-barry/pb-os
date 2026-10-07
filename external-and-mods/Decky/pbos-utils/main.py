@@ -401,20 +401,23 @@ def zones() -> list[str]:
     return sorted(found.values(), key=lambda p: (p[-2], p[-1]))
 
 
-def lights_signature() -> tuple[Any, ...]:
-    """Changes when the stick LEDs may have lost what was set: after a
-    system sleep, or when their devices were made again (the SM8550 sleep
-    hook unbinds the LED controllers for sleep; they come back white and off)."""
+def lights_signature() -> tuple[int, ...]:
+    """Changes when the stick LED devices were made again, which loses what
+    was set (white and off): the SM8550 sleep test unbinds their controllers
+    for sleep. A plain sleep keeps the LEDs; the sleep hook fades them."""
     inodes = []
     for z in zones():
         try:
             inodes.append(os.stat(z).st_ino)
         except OSError:
             inodes.append(0)
-    return rd("/sys/power/suspend_stats/success"), tuple(inodes)
+    return tuple(inodes)
 
 
 GAMMA = 2.2
+# Seconds the stick lights take to come back after a sleep: the sleep hook's
+# fade-out (sm8550-sleep), the other way round.
+FADE_IN = 0.3
 # A colour's main channels: those at least this share of its strongest one.
 MAIN = 0.25
 # How far (in zones) a zone's light reaches during Spin: 1 = only two zones
@@ -495,7 +498,9 @@ class Animator:
         self.order: dict[str, list[int]] = {}
         self.level = 1.0
 
-    def apply(self, st: dict[str, Any]) -> None:
+    def apply(self, st: dict[str, Any], fade: float = 0.0) -> None:
+        """Show st; with fade, brighten from off to it over that many seconds
+        (the effect already running underneath)."""
         self.halt()
         self.failed = set()
         self.order = {}   # read again: the devices may be new
@@ -512,12 +517,12 @@ class Animator:
         if not on:
             return
         effect = st.get("effect", "static")
-        if effect == "static":
+        if effect == "static" and not fade:
             for led in leds:
                 self._write(led, "multi_intensity", self.power(led, rgb))
             return
         self.stop = threading.Event()
-        self.thread = threading.Thread(target=self._run, args=(leds, effect, rgb, int(st.get("speed", 5)), self.stop),
+        self.thread = threading.Thread(target=self._run, args=(leds, effect, rgb, int(st.get("speed", 5)), self.stop, fade),
                                        name="pbos-lights", daemon=True)
         self.thread.start()
 
@@ -527,7 +532,8 @@ class Animator:
             self.thread.join(timeout=2)
             self.thread = None
 
-    def _run(self, leds: list[str], effect: str, rgb, speed: int, stop: threading.Event) -> None:
+    def _run(self, leds: list[str], effect: str, rgb, speed: int, stop: threading.Event,
+             fade: float = 0.0) -> None:
         shown: list[Any] = [None] * len(leds)
         stars = [-100.0] * len(leds)
         # Frame k is drawn for exactly k / FPS and written at that time, so
@@ -537,11 +543,18 @@ class Animator:
         t0 = time.monotonic()
         k = 0
         while not stop.is_set():
+            # Fading in: the sleep hook's fade-out reversed (x ** 2.2).
+            r = min(1.0, k / self.FPS / fade) if fade else 1.0
+            ramp = r ** GAMMA
             for i, c in enumerate(frame(effect, k / self.FPS, rgb, speed, len(leds), stars)):
-                value = self.power(leds[i], c)
+                value = self.power(leds[i], [x * ramp for x in c])
                 if value != shown[i]:
                     self._write(leds[i], "multi_intensity", value)
                     shown[i] = value
+            if effect == "static" and r >= 1:
+                return          # faded in; static needs no more frames
+            if self.failed:
+                return          # LEDs gone (unbound for sleep): the fade-in starts it again
             k += 1
             late = time.monotonic() - (t0 + k / self.FPS)
             if late > 1 / self.FPS:
@@ -803,23 +816,24 @@ class Plugin:
     # -------------------------------------------------------------- lights --
     async def _watch_lights(self) -> None:
         # pbosd puts the KONKR lights back itself; the multicolor ones are set
-        # again here after a sleep, once all zones are back.
+        # again here when their devices come back after a sleep, fading in
+        # (the sleep hook's own fade-in found no LEDs).
         if self.lights != "multicolor":
             return
         last = await asyncio.to_thread(lights_signature)
         while True:
-            await asyncio.sleep(2)
+            await asyncio.sleep(0.5)
             now = await asyncio.to_thread(lights_signature)
             if now == last:
                 continue
-            if 0 in now[1] or len(now[1]) != len(last[1]):
+            if 0 in now or len(now) != len(last):
                 continue        # still coming back
-            await asyncio.sleep(1)
+            await asyncio.sleep(0.3)
             if await asyncio.to_thread(lights_signature) != now:
                 continue
             last = now
             decky.logger.info("stick lights: set again after sleep")
-            await asyncio.to_thread(self.animator.apply, await asyncio.to_thread(multicolor_lights))
+            await asyncio.to_thread(self.animator.apply, await asyncio.to_thread(multicolor_lights), FADE_IN)
 
     async def get_lights(self, **_: Any) -> dict[str, Any]:
         if self.lights == "pbosd":
