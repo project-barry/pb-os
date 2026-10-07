@@ -487,16 +487,23 @@ def frame(effect: str, t: float, rgb: tuple[int, int, int], speed: int, n: int,
             out.append(scale(rgb, v))
         return out
     if effect == "starlight":
-        # Each zone lights up at random, fades in and out over `life`.
+        # Each zone twinkles on its own: every twinkle has its own length
+        # (around `life`) and peak, and the wait before the next is drawn
+        # like natural random events (exponential), so no rhythm forms.
+        # stars[i] = [start, length, peak] of the zone's current or next
+        # twinkle; the times are seconds, so the frame rate doesn't matter.
         life = 2.4 - 1.8 * fast
         out = []
         for i in range(n):
-            age = t - stars[i]
-            if age > life:
-                if random.random() < 0.02 + 0.05 * fast:
-                    stars[i] = t
-                    age = 0.0
-            v = math.sin(math.pi * age / life) if 0 <= age <= life else 0.0
+            if i >= len(stars) or not isinstance(stars[i], list):
+                stars[i:i + 1] = [[t + random.expovariate(1 / life), 0.0, 0.0]]
+            st = stars[i]
+            if st[1] == 0.0 or t > st[0] + st[1]:    # new twinkle after a random wait
+                st[0] = max(t, st[0] + st[1]) + random.expovariate(1 / (0.8 * life))
+                st[1] = life * random.uniform(0.6, 1.4)
+                st[2] = random.uniform(0.45, 1.0)
+            age = t - st[0]
+            v = st[2] * math.sin(math.pi * age / st[1]) if 0 <= age <= st[1] else 0.0
             out.append(scale(rgb, v))
         return out
     return [rgb] * n
@@ -560,8 +567,9 @@ class Animator:
     def _run(self, leds: list[str], effect: str, rgb, speed: int, stop: threading.Event,
              fade: float = 0.0) -> None:
         shown: list[Any] = [None] * len(leds)
-        stars = [-100.0] * len(leds)
+        stars: list[Any] = [None] * len(leds)
         floor = self.floor(leds[0], rgb) if leds and effect == "breathing" else 0.0
+        fine = effect in ("breathing", "starlight")    # slow fades: power_smooth
         smooth: dict[str, Any] = {}     # Breathing: last pick per zone (power_smooth)
         # Frame k is drawn for exactly k / FPS and written at that time, so
         # the steps are even and the rate is FPS, not FPS minus the time the
@@ -575,7 +583,7 @@ class Animator:
             ramp = r ** GAMMA
             for i, c in enumerate(frame(effect, k / self.FPS, rgb, speed, len(leds), stars, floor)):
                 c = [x * ramp for x in c]
-                value = self.power_smooth(leds[i], c, smooth) if effect == "breathing" else self.power(leds[i], c)
+                value = self.power_smooth(leds[i], c, smooth) if fine else self.power(leds[i], c)
                 if value != shown[i]:
                     self._write(leds[i], "multi_intensity", value)
                     shown[i] = value
