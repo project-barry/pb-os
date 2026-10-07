@@ -401,8 +401,9 @@ class AudioMeter:
     """How the device's sound output moves, for the audio effects, as the
     user that owns the sound session; never a microphone.
 
-    "pulse" (Audio Pulse): one listener, the default output's monitor in
-    stereo at 8 kHz; channels [left, right]. "spectrum" (Audio Spectrum):
+    "pulse" (Audio Pulse): the default output's monitor in stereo at 24 kHz
+    (through the speakers less a listener at the lowest edge); channels
+    [left, right]. "spectrum" (Audio Spectrum):
     listeners at listener_rates(EDGES_SPEAKER or EDGES_FULL, by
     on_speakers()); channels [left bass, low mids, high mids, treble, right
     bass, ...].
@@ -428,6 +429,11 @@ class AudioMeter:
     GATE_DB = 15.0                # spectrum: a band this far below its side's loudest is dark
     HIT_DB = (9.0, 9.0, 5.0, 5.0)       # per band: rise over its recent average that is a hit
     HIT_FADE = (0.30, 0.30, 0.15, 0.12)  # per band: seconds a hit fades over
+    # A hit is a rise over the band's average of about the last HIT_AVG
+    # seconds (floored at -60 dB): short, so a held note stops counting
+    # within a few frames (over 0.5 s, a tone after silence held a zone at
+    # full for a second on the Nova).
+    HIT_AVG = 0.12
     WINDOW = 1 / 15               # seconds of sound each energy is measured over
 
     def __init__(self) -> None:
@@ -525,7 +531,13 @@ class AudioMeter:
                       f"node.name=pbos-utils-lighting-{rate} media.name=\"PB-OS Utils lighting\" }}", "-"]
 
     def _rates(self) -> tuple[int, ...]:
-        return (8000,) if self.mode == "pulse" else listener_rates(self.edges)
+        if self.mode == "pulse":
+            # Up to 12 kHz, the hi-hats too (at 8 kHz, so below 4 kHz, they
+            # never showed); through the speakers less what they can't play
+            # (a listener at the lowest edge, subtracted).
+            top = 2 * self.edges[-1]
+            return (2 * self.edges[0], top) if self.edges[0] else (top,)
+        return listener_rates(self.edges)
 
     def _supervise(self) -> None:
         while self.running.is_set():
@@ -586,6 +598,8 @@ class AudioMeter:
     def band_power(self, energy: list[list[float]]) -> list[float]:
         """Mean-square power per channel from the listeners' energies."""
         if self.mode == "pulse":
+            if len(energy) == 2:            # the speakers: less what they can't play
+                return [max(0.0, energy[1][s] - energy[0][s]) for s in (0, 1)]
             return [energy[0][0], energy[0][1]]
         # e[k]: energy below the k-th non-zero edge; with a lowest edge (the
         # speakers) everything below it is taken away first.
@@ -621,7 +635,7 @@ class AudioMeter:
                 if not gated and p > -55 and rise > self.HIT_DB[band]:
                     acc = max(acc, min(1.0, 0.5 + (rise - self.HIT_DB[band]) / 12))
                 self.accents[c] = acc
-                self.averages[c] += (db - self.averages[c]) * min(1.0, dt / 0.5)
+                self.averages[c] = max(-60.0, self.averages[c] + (db - self.averages[c]) * min(1.0, dt / self.HIT_AVG))
             self.at = now
 
 
