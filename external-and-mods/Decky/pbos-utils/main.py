@@ -437,11 +437,14 @@ def frame(effect: str, t: float, rgb: tuple[int, int, int], speed: int, n: int,
         period = 6 - 5 * fast
         return [hue(t / period + (i % ring) / ring) for i in range(n)]
     if effect == "spin":
-        # One wave going round: each zone's level is a cosine of its distance
-        # from the light (full there, off only at the zone opposite), so every
-        # zone is always fading up or down and at most one is ever off.
+        # One light going round: between two zones, one fades down exactly as
+        # the next fades up (cos² + sin² = 1, so the ring stays as bright).
         head = (t / (3 - 2.5 * fast)) * ring
-        return [scale(rgb, (1 + math.cos(2 * math.pi * (head - i % ring) / ring)) / 2) for i in range(n)]
+        out = []
+        for i in range(n):
+            d = abs((head - i % ring + ring / 2) % ring - ring / 2)   # distance round the ring
+            out.append(scale(rgb, math.cos(math.pi * d / 2) ** 2 if d < 1 else 0.0))
+        return out
     if effect == "starlight":
         # Each zone lights up at random, fades in and out over `life`.
         life = 2.4 - 1.8 * fast
