@@ -2,24 +2,77 @@
 # sm8550-sleep pre|post: run by systemd-suspend.service (drop-in) around
 # every system sleep on SM8550.
 #
-# pre:  Bluetooth off (its UART clock keeps the SoC's XO on), and every
-#       PipeWire output/input suspended until all audio streams are closed.
-#       An open stream (Steam plays a sound when it goes to sleep) keeps
-#       the audio DSP graph and its clocks up, and the SoC never reaches
-#       full sleep.
-# post: undo both.
+# pre:  the stick LEDs fade out first (they would otherwise stay lit until
+#       the kernel suspends, after the screen is already dark), Bluetooth off
+#       (its UART clock keeps the SoC's XO on), and every audio stream off
+#       the hardware. An open stream keeps the audio DSP graph and its
+#       clocks up, and the SoC never reaches full sleep. Steam plays a sound
+#       when it goes to sleep, and its web helper (Chromium) keeps that
+#       stream open for about 15 s; suspending the sink does not stop a
+#       stream that is playing. So every stream moves to a silent null sink
+#       first, then the hardware sinks and sources are suspended.
+# post: undo all of it (the LEDs fade back in); removing the null sink sends
+#       the streams back to the default devices.
 BT_MARK=/run/sm8550-sleep-bt-was-on
+LED_SAVE=/run/sm8550-sleep-leds
+NULL=sm8550-sleep
 
-pactl_all() {
-    # $1 = 1 (suspend) or 0 (resume), for every user with a PipeWire socket.
+leds() {
+    # The stick LEDs: multicolor groups (the RGB rings). The charge LED is left alone.
+    for d in /sys/class/leds/*; do
+        [ "$(basename "$(readlink "$d/device/driver" 2>/dev/null)")" = leds_group_multicolor ] && echo "$d"
+    done
+}
+
+fade() {
+    # $1 = out|in: every LED in $LED_SAVE ("led brightness" lines) from its saved
+    # brightness to 0, or back up to it, over 0.3 s. Each LED steps through every
+    # level it passes, on a gamma curve so the fade looks even to the eye.
+    python3 - "$1" "$LED_SAVE" <<'PY'
+import sys, time
+way, save = sys.argv[1], sys.argv[2]
+leds = [(open(d + '/brightness', 'w'), int(b)) for d, b in (l.split() for l in open(save) if l.strip())]
+T, start, last = 0.3, time.monotonic(), {}
+while True:
+    x = min((time.monotonic() - start) / T, 1.0)
+    k = (1 - x) ** 2.2 if way == 'out' else x ** 2.2
+    for f, b in leds:
+        v = round(b * k)
+        if last.get(f) != v:
+            f.write(str(v)); f.flush(); last[f] = v
+    if x >= 1: break
+    time.sleep(0.01)
+PY
+}
+
+pactl_users() {
+    # Runs "$@" once per user with a PipeWire socket, with $p set to that user's pactl.
     for sock in /run/user/*/pulse/native; do
         [ -S "$sock" ] || continue
         rt=${sock%/pulse/native}; uid=${rt##*/}
         user=$(id -nu "$uid" 2>/dev/null) || continue
         p="runuser -u $user -- env XDG_RUNTIME_DIR=$rt pactl"
-        for s in $($p list sinks short 2>/dev/null | cut -f2); do $p suspend-sink "$s" "$1"; done
-        for s in $($p list sources short 2>/dev/null | cut -f2); do $p suspend-source "$s" "$1"; done
+        "$@"
     done
+}
+
+audio_off() {
+    mod=$($p load-module module-null-sink sink_name=$NULL 2>/dev/null) && echo "$mod" > "/run/sm8550-sleep-null-$uid"
+    for i in $($p list sink-inputs short 2>/dev/null | cut -f1); do $p move-sink-input "$i" $NULL; done
+    for o in $($p list source-outputs short 2>/dev/null | cut -f1); do $p move-source-output "$o" $NULL.monitor; done
+    for s in $($p list sinks short 2>/dev/null | cut -f2); do [ "$s" = $NULL ] || $p suspend-sink "$s" 1; done
+    for s in $($p list sources short 2>/dev/null | cut -f2); do
+        [ "$s" = $NULL.monitor ] || $p suspend-source "$s" 1
+    done
+}
+
+audio_on() {
+    for s in $($p list sinks short 2>/dev/null | cut -f2); do $p suspend-sink "$s" 0; done
+    for s in $($p list sources short 2>/dev/null | cut -f2); do $p suspend-source "$s" 0; done
+    if [ -e "/run/sm8550-sleep-null-$uid" ]; then
+        $p unload-module "$(cat "/run/sm8550-sleep-null-$uid")"
+        rm -f "/run/sm8550-sleep-null-$uid"
+    fi
 }
 
 streams_open() {
@@ -32,15 +85,24 @@ streams_open() {
 
 case "$1" in
 pre)
+    : > "$LED_SAVE"
+    for d in $(leds); do
+        b=$(cat "$d/brightness") && [ "$b" != 0 ] && echo "$d $b" >> "$LED_SAVE"
+    done
+    fade out
     if rfkill list bluetooth 2>/dev/null | grep -q "Soft blocked: no"; then
         rfkill block bluetooth && touch "$BT_MARK"
     fi
-    pactl_all 1
+    pactl_users audio_off
     i=0
     while streams_open && [ $i -lt 30 ]; do sleep 0.5; i=$((i + 1)); done
     ;;
 post)
-    pactl_all 0
+    if [ -e "$LED_SAVE" ]; then
+        fade in
+        rm -f "$LED_SAVE"
+    fi
+    pactl_users audio_on
     if [ -e "$BT_MARK" ]; then
         rm -f "$BT_MARK"
         rfkill unblock bluetooth
