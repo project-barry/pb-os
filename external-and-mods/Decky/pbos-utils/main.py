@@ -27,7 +27,6 @@ Lights   stick lighting: on/off, a colour, brightness and effects. On the
 from __future__ import annotations
 
 import asyncio
-import colorsys
 import glob
 import itertools
 import json
@@ -457,9 +456,6 @@ def frame(effect: str, t: float, rgb: tuple[int, int, int], speed: int, n: int,
         # seem to snap on and hang before going off.
         return tuple(x * v ** GAMMA for x in c)   # rounded once, in Animator
 
-    def hue(h):
-        return tuple(int(x * 255) for x in colorsys.hsv_to_rgb(h % 1.0, 1.0, 1.0))
-
     if effect == "breathing":
         # Breathes between floor (Animator.floor(): the dimmest level that
         # still shows the colour) and full.
@@ -474,7 +470,7 @@ def frame(effect: str, t: float, rgb: tuple[int, int, int], speed: int, n: int,
         return [even_hue(t / (24 - 21 * fast))] * n
     if effect == "wave":
         period = 6 - 5 * fast
-        return [hue(t / period + (i % ring) / ring) for i in range(n)]
+        return [even_hue(t / period + (i % ring) / ring) for i in range(n)]
     if effect == "spin":
         # One light going round. Each zone fades up as the light comes within
         # SPIN_WIDTH zones of it and down as it leaves, so the next zone is
