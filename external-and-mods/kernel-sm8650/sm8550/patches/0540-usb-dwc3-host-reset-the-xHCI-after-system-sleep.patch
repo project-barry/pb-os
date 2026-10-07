@@ -1,0 +1,52 @@
+From: lavachemist <48248311+lavachemist@users.noreply.github.com>
+Subject: [PATCH] usb: dwc3: host: reset the xHCI after system sleep
+
+A USB drive that stayed plugged into an SM8550 Retroid Pocket 6 across
+system sleep (deep or s2idle) was gone after wake: the xHCI reported
+"Host System Error" on resume, the drive stopped answering ("device not
+accepting address", -108) and was disconnected. Without wakeup, dwc3
+suspends the host with dwc3_core_exit(), which resets the controller,
+but the xHCI then tried to restore its old state.
+
+Give the dwc3 xHCI a new "xhci-reset-on-resume-quirk" property that
+xhci-plat turns into XHCI_RESET_ON_RESUME, so the controller is
+reinitialised and its devices are reset-resumed.
+---
+--- a/drivers/usb/dwc3/host.c
++++ b/drivers/usb/dwc3/host.c
+@@ -129,7 +129,7 @@
+ 
+ int dwc3_host_init(struct dwc3 *dwc)
+ {
+-	struct property_entry	props[6];
++	struct property_entry	props[8];
+ 	struct platform_device	*xhci;
+ 	int			ret, irq;
+ 	int			prop_idx = 0;
+@@ -167,6 +167,14 @@
+ 
+ 	props[prop_idx++] = PROPERTY_ENTRY_BOOL("write-64-hi-lo-quirk");
+ 
++	/*
++	 * System suspend without wakeup runs dwc3_core_exit(), which resets the
++	 * controller, so the xHCI has lost its state on resume. Restoring it
++	 * failed with "Host System Error" and dropped every device that stayed
++	 * plugged in (Retroid Pocket 6, SM8550); reinitialise it instead.
++	 */
++	props[prop_idx++] = PROPERTY_ENTRY_BOOL("xhci-reset-on-resume-quirk");
++
+ 	if (dwc->usb3_lpm_capable)
+ 		props[prop_idx++] = PROPERTY_ENTRY_BOOL("usb3-lpm-capable");
+ 
+--- a/drivers/usb/host/xhci-plat.c
++++ b/drivers/usb/host/xhci-plat.c
+@@ -277,6 +277,9 @@
+ 		if (device_property_read_bool(tmpdev, "xhci-skip-phy-init-quirk"))
+ 			xhci->quirks |= XHCI_SKIP_PHY_INIT;
+ 
++		if (device_property_read_bool(tmpdev, "xhci-reset-on-resume-quirk"))
++			xhci->quirks |= XHCI_RESET_ON_RESUME;
++
+ 		device_property_read_u32(tmpdev, "imod-interval-ns",
+ 					 &xhci->imod_interval);
+ 		device_property_read_u16(tmpdev, "num-hc-interrupters",
