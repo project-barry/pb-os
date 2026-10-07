@@ -392,6 +392,19 @@ def zones() -> list[str]:
     return sorted(glob.glob(MULTICOLOR), key=lambda p: (p[-2], p[-1]))
 
 
+def lights_signature() -> tuple[Any, ...]:
+    """Changes when the stick LEDs may have lost what was set: after a
+    system sleep, or when their devices were made again (the SM8550 sleep
+    hook unbinds the LED controllers for sleep; they come back white and off)."""
+    inodes = []
+    for z in zones():
+        try:
+            inodes.append(os.stat(z).st_ino)
+        except OSError:
+            inodes.append(0)
+    return rd("/sys/power/suspend_stats/success"), tuple(inodes)
+
+
 def frame(effect: str, t: float, rgb: tuple[int, int, int], speed: int, n: int,
           stars: list[float]) -> list[tuple[int, int, int]]:
     """Each zone's colour at time t (seconds). Zones go round each ring of
@@ -447,9 +460,11 @@ class Animator:
     def __init__(self) -> None:
         self.thread: threading.Thread | None = None
         self.stop = threading.Event()
+        self.failed: set[str] = set()
 
     def apply(self, st: dict[str, Any]) -> None:
         self.halt()
+        self.failed = set()
         leds = zones()
         on = st.get("on", True)
         rgb = rgb_of(clean_color(st.get("color", DEFAULT_COLOR)))
@@ -491,13 +506,15 @@ class Animator:
         top = int(rd(f"{led}/max_brightness", "255") or 255)
         self._write(led, "multi_intensity", " ".join(str(c * top // 255) for c in rgb))
 
-    @staticmethod
-    def _write(led: str, attr: str, value: Any) -> None:
+    def _write(self, led: str, attr: str, value: Any) -> None:
         try:
             with open(f"{led}/{attr}", "w") as fh:
                 fh.write(str(value))
         except OSError as e:
-            decky.logger.info(f"{led}/{attr}: {e}")
+            # Gone while the controller is unbound for sleep: say so once.
+            if led not in self.failed:
+                self.failed.add(led)
+                decky.logger.info(f"{led}/{attr}: {e}")
 
 
 class Plugin:
@@ -517,7 +534,8 @@ class Plugin:
         if self.lights == "multicolor":
             await asyncio.to_thread(self.animator.apply, await asyncio.to_thread(multicolor_lights))
         self.tasks = [asyncio.create_task(t) for t in
-                      (self._watch(), self._watch_drives(), self._cleanup(), self._watch_move())]
+                      (self._watch(), self._watch_drives(), self._cleanup(), self._watch_move(),
+                       self._watch_lights())]
 
     async def _unload(self) -> None:
         for t in self.tasks:
@@ -722,6 +740,26 @@ class Plugin:
         return True
 
     # -------------------------------------------------------------- lights --
+    async def _watch_lights(self) -> None:
+        # pbosd puts the KONKR lights back itself; the multicolor ones are set
+        # again here after a sleep, once all zones are back.
+        if self.lights != "multicolor":
+            return
+        last = await asyncio.to_thread(lights_signature)
+        while True:
+            await asyncio.sleep(2)
+            now = await asyncio.to_thread(lights_signature)
+            if now == last:
+                continue
+            if 0 in now[1] or len(now[1]) != len(last[1]):
+                continue        # still coming back
+            await asyncio.sleep(1)
+            if await asyncio.to_thread(lights_signature) != now:
+                continue
+            last = now
+            decky.logger.info("stick lights: set again after sleep")
+            await asyncio.to_thread(self.animator.apply, await asyncio.to_thread(multicolor_lights))
+
     async def get_lights(self, **_: Any) -> dict[str, Any]:
         if self.lights == "pbosd":
             st = await asyncio.to_thread(pbosd_lights)
