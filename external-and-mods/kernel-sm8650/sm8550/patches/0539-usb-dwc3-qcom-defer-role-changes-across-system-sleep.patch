@@ -1,0 +1,79 @@
+From: lavachemist <48248311+lavachemist@users.noreply.github.com>
+Subject: [PATCH] usb: dwc3: qcom: defer role changes across system sleep
+
+A USB device plugged in or pulled out while an SM8550 Retroid Pocket 6
+was asleep (deep or s2idle) made it reset on wake, before anything was
+logged. The cable change reaches dwc3_qcom_set_role_notifier() from UCSI
+work that runs while devices are still resuming. dwc3_qcom_pm_suspend()
+has turned the glue's clocks off by then, but its runtime PM status is
+still active, so pm_runtime_resume_and_get() returns at once and the
+QSCRATCH VBUS override writes hit an unclocked block.
+
+Keep a role change that arrives during system sleep and apply it in
+dwc3_qcom_pm_resume(), once the clocks are back on.
+---
+--- a/drivers/usb/dwc3/dwc3-qcom.c
++++ b/drivers/usb/dwc3/dwc3-qcom.c
+@@ -85,6 +85,9 @@
+ 	struct icc_path		*icc_path_apps;
+ 
+ 	enum usb_role		current_role;
++	/* A role change during system sleep, for dwc3_qcom_pm_resume(). */
++	bool			role_pending;
++	enum usb_role		pending_role;
+ };
+ 
+ #define to_dwc3_qcom(d) container_of((d), struct dwc3_qcom, dwc)
+@@ -558,10 +561,8 @@
+ 	return 0;
+ }
+ 
+-static void dwc3_qcom_set_role_notifier(struct dwc3 *dwc, enum usb_role next_role)
++static void dwc3_qcom_apply_role(struct dwc3_qcom *qcom, enum usb_role next_role)
+ {
+-	struct dwc3_qcom *qcom = to_dwc3_qcom(dwc);
+-
+ 	if (qcom->current_role == next_role)
+ 		return;
+ 
+@@ -585,6 +586,28 @@
+ 	qcom->current_role = next_role;
+ }
+ 
++static void dwc3_qcom_set_role_notifier(struct dwc3 *dwc, enum usb_role next_role)
++{
++	struct dwc3_qcom *qcom = to_dwc3_qcom(dwc);
++
++	/*
++	 * A cable plugged in or pulled out during system sleep reaches this
++	 * from UCSI work that runs while devices are still resuming. The glue's
++	 * clocks are off then (dwc3_qcom_pm_suspend()) while its runtime PM
++	 * status is still active, so pm_runtime_resume_and_get() does not turn
++	 * them on and the QSCRATCH writes hit an unclocked block; on the
++	 * Retroid Pocket 6 (SM8550) that reset the SoC. Apply the role once the
++	 * glue has resumed.
++	 */
++	if (qcom->pm_suspended) {
++		qcom->pending_role = next_role;
++		qcom->role_pending = true;
++		return;
++	}
++
++	dwc3_qcom_apply_role(qcom, next_role);
++}
++
+ static void dwc3_qcom_run_stop_notifier(struct dwc3 *dwc, bool is_on)
+ {
+ 	struct dwc3_qcom *qcom = to_dwc3_qcom(dwc);
+@@ -778,6 +801,11 @@
+ 
+ 	qcom->pm_suspended = false;
+ 
++	if (qcom->role_pending) {
++		qcom->role_pending = false;
++		dwc3_qcom_apply_role(qcom, qcom->pending_role);
++	}
++
+ 	ret = dwc3_pm_resume(&qcom->dwc);
+ 	if (ret)
+ 		return ret;
