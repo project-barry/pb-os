@@ -72,8 +72,9 @@ const GB = DFL.GamepadButton || {};
 const BUMPER_LEFT = GB.BUMPER_LEFT != null ? GB.BUMPER_LEFT : 5;
 const BUMPER_RIGHT = GB.BUMPER_RIGHT != null ? GB.BUMPER_RIGHT : 6;
 
-// The tab shown, kept while Steam runs.
-let lastTab = "update";
+// The tab shown, kept while Steam runs; at first the first tab (Lighting
+// where the device has it).
+let lastTab = null;
 
 function TabBar({ tabs, active, onPick }) {
     return jsx(DFL.Focusable, {
@@ -505,7 +506,7 @@ function LightsTab() {
         marginLeft: "8px", verticalAlign: "middle", border: "1px solid rgba(255,255,255,0.5)", background: `#${st.color}` } });
     const items = [
         row(jsx(DFL.ToggleField, {
-            label: "Stick lights",
+            label: "Lighting",
             disabled: !usable,
             checked: !!st.on,
             onChange: (v) => change({ on: v }),
@@ -574,7 +575,7 @@ function LightsTab() {
             }
         }
     }
-    return jsx(DFL.PanelSection, { title: "Stick lights", children: items });
+    return jsx(DFL.PanelSection, { title: "Lighting", children: items });
 }
 
 // ---------------------------------------------------------------- panel ---
@@ -585,12 +586,15 @@ function Content() {
     useEffect(() => {
         getLights().then((s) => setLightsKind(s.kind || "")).catch(() => setLightsKind(""));
     }, []);
+    // Until it's known whether there are lights: Lighting comes first where
+    // there are, and the panel shouldn't open on Update and then jump.
+    if (lights === null) return jsx(DFL.PanelSection, { children: note("Loading…") });
     const tabs = [
+        ...(lights ? [{ id: "lights", icon: LightsIcon }] : []),
         { id: "update", icon: UpdateIcon },
         { id: "install", icon: InstallIcon },
-        ...(lights ? [{ id: "lights", icon: LightsIcon }] : []),
     ];
-    const shown = tabs.some((t) => t.id === tab) ? tab : "update";
+    const shown = tabs.some((t) => t.id === tab) ? tab : tabs[0].id;
     const step = (by) => {
         const i = tabs.findIndex((t) => t.id === shown);
         pick(tabs[(i + by + tabs.length) % tabs.length].id);

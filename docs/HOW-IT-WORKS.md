@@ -93,7 +93,7 @@ konkr-game compat %command%    # strict TSO / split locks for crashing games
 - Power LED (PM8550 LPG, RGB): profile colour flash on change (blue = Low Power, green = Balanced),
   then amber while charging, green when full, red pulse below 15%.
 - Stick RGB rings (MCU link): static / breath / rainbow / off from PB-OS
-  Utils → Lights, `pbosctl rgb`, or the K button (with Steam Remap off).
+  Utils → Lighting, `pbosctl rgb`, or the K button (with Steam Remap off).
 
 ### Quick Access panels (Decky)
 

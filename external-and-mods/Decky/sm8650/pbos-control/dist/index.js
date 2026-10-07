@@ -128,7 +128,7 @@ function Content() {
         jsxs(DFL.PanelSection, { title: "Hardware", children: [
             row(jsx(DFL.ToggleField, {
                 label: "Controller MCU link",
-                description: "Needed for the KONKR, Performance and Quick Access buttons and stick lighting (PB-OS Utils → Lights)",
+                description: "Needed for the KONKR, Performance and Quick Access buttons and stick lighting (PB-OS Utils → Lighting)",
                 checked: st.mcu_enabled,
                 onChange: (v) => setMcu(v).then(() => {
                     toaster.toast({ title: "PB-OS Control", body: v ? "MCU link enabled" : "MCU link disabled" });
