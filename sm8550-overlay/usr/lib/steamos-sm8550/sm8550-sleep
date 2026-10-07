@@ -28,16 +28,33 @@ fade() {
     # $1 = out|in: every LED in $LED_SAVE ("led brightness" lines) from its saved
     # brightness to 0, or back up to it, over 0.3 s. Each LED steps through every
     # level it passes, on a gamma curve so the fade looks even to the eye.
+    # The kernel scales each colour channel by the brightness and rounds down,
+    # so near 0 a pink would show red alone (blue already 0): below the level
+    # where every main channel of its colour (a quarter of the strongest or
+    # more) still lights, the LED is off.
     python3 - "$1" "$LED_SAVE" <<'PY'
-import sys, time
+import math, sys, time
 way, save = sys.argv[1], sys.argv[2]
-leds = [(open(d + '/brightness', 'w'), int(b)) for d, b in (l.split() for l in open(save) if l.strip())]
+
+def lowest(d):
+    try:
+        ch = [int(c) for c in open(d + '/multi_intensity').read().split()]
+        top = int(open(d + '/max_brightness').read())
+    except (OSError, ValueError):
+        return 0
+    main = [c for c in ch if c and c >= max(ch) / 4]
+    return math.ceil(top / min(main)) if main else 0
+
+leds = [(open(d + '/brightness', 'w'), int(b), lowest(d))
+        for d, b in (l.split() for l in open(save) if l.strip())]
 T, start, last = 0.3, time.monotonic(), {}
 while True:
     x = min((time.monotonic() - start) / T, 1.0)
     k = (1 - x) ** 2.2 if way == 'out' else x ** 2.2
-    for f, b in leds:
+    for f, b, low in leds:
         v = round(b * k)
+        if v < low:
+            v = 0
         if last.get(f) != v:
             f.write(str(v)); f.flush(); last[f] = v
     if x >= 1: break
