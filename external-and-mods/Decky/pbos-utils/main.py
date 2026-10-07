@@ -522,14 +522,22 @@ class Animator:
     def _run(self, leds: list[str], effect: str, rgb, speed: int, stop: threading.Event) -> None:
         shown: list[Any] = [None] * len(leds)
         stars = [-100.0] * len(leds)
+        # Frame k is drawn for exactly k / FPS and written at that time, so
+        # the steps are even and the rate is FPS, not FPS minus the time the
+        # writes take. Behind by more than a frame (busy, or paused): skip
+        # to the current one rather than rush to catch up.
         t0 = time.monotonic()
+        k = 0
         while not stop.is_set():
-            now = time.monotonic() - t0
-            for i, c in enumerate(frame(effect, now, rgb, speed, len(leds), stars)):
+            for i, c in enumerate(frame(effect, k / self.FPS, rgb, speed, len(leds), stars)):
                 if c != shown[i]:
                     self._color(leds[i], c)
                     shown[i] = c
-            stop.wait(1 / self.FPS)
+            k += 1
+            late = time.monotonic() - (t0 + k / self.FPS)
+            if late > 1 / self.FPS:
+                k += int(late * self.FPS)
+            stop.wait(max(0.0, t0 + k / self.FPS - time.monotonic()))
 
     def _color(self, led: str, rgb) -> None:
         top = int(rd(f"{led}/max_brightness", "255") or 255)
