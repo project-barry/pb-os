@@ -17,18 +17,22 @@ Install  moves SteamOS between the microSD card and internal storage, with
          Either runs as the transient unit pbos-utils-move, with sleep held
          off, and writes its log to MOVE_LOG.
 
-Lights   stick lighting. On the KONKR Pocket FIT pbosd owns it (its state
-         file, applied on SIGHUP, shared with the K button and pbosctl); on the
-         Retroid Pocket 6 and Nova this sets the multicolor LEDs itself and
-         sets them again at each start. The AYN Thor's lights stay in Barry
-         Launcher.
+Lights   stick lighting: on/off, a colour, brightness and effects. On the
+         KONKR Pocket FIT pbosd owns it (its state file, applied on SIGHUP,
+         shared with the K button and pbosctl) and the stick MCU renders the
+         effects; on the Retroid Pocket 6 and Nova this drives the multicolor
+         LEDs itself (Animator) and sets them again at each start. The AYN
+         Thor's lights stay in Barry Launcher.
 """
 from __future__ import annotations
 
 import asyncio
+import colorsys
 import glob
 import json
+import math
 import os
+import random
 import re
 import subprocess
 import threading
@@ -286,7 +290,30 @@ class MoveLog:
 
 
 # ------------------------------------------------------------------ lights --
-# Presets shared by both backends; "breath" only where pbosd can do it.
+# Effects, named like the RGB apps gamers know (Armoury Crate, Synapse,
+# iCUE). On the KONKR Pocket FIT the stick MCU renders them itself; on the
+# Retroid Pocket 6 and Nova, Animator does, here. "color": the effect uses
+# the picked colour; "speed": it has a speed.
+EFFECTS = {
+    "pbosd": [
+        {"id": "static", "label": "Static", "color": True, "speed": False},
+        {"id": "breathing", "label": "Breathing", "color": True, "speed": False},
+        {"id": "rainbow", "label": "Rainbow", "color": False, "speed": False},
+    ],
+    "multicolor": [
+        {"id": "static", "label": "Static", "color": True, "speed": False},
+        {"id": "breathing", "label": "Breathing", "color": True, "speed": True},
+        {"id": "cycle", "label": "Color Cycle", "color": False, "speed": True},
+        {"id": "wave", "label": "Rainbow Wave", "color": False, "speed": True},
+        {"id": "spin", "label": "Spin", "color": True, "speed": True},
+        {"id": "starlight", "label": "Starlight", "color": True, "speed": True},
+    ],
+}
+# pbosd's state names for the MCU's modes.
+PBOSD_MODES = {"static": "static", "breathing": "breath", "rainbow": "rainbow"}
+DEFAULT_COLOR = "ff3c00"
+
+
 def lights_kind() -> str:
     compat = rd("/sys/firmware/devicetree/base/compatible")
     if "ayn,thor" in compat:
@@ -300,11 +327,27 @@ def lights_kind() -> str:
     return ""
 
 
+def clean_color(color: Any) -> str:
+    color = str(color).lstrip("#").lower()[:6]
+    return color if re.fullmatch(r"[0-9a-f]{6}", color) else DEFAULT_COLOR
+
+
+def rgb_of(color: str) -> tuple[int, int, int]:
+    return tuple(int(color[i:i + 2], 16) for i in (0, 2, 4))  # type: ignore[return-value]
+
+
 def pbosd_lights() -> dict[str, Any]:
     st = read_json(PBOSD_STATE)
-    rgb = st.get("rgb") or {"mode": "static", "color": "ff3c00", "brightness": 160}
-    return {"mode": rgb.get("mode", "static"), "color": rgb.get("color", "ff3c00"),
-            "brightness": int(rgb.get("brightness", 160)), "power_led": st.get("power_led", True) is not False,
+    rgb = st.get("rgb") or {}
+    mode = rgb.get("mode", "static")
+    on = mode != "off"
+    # Off keeps what was on in last_mode/last_color, as pbosd's K button does.
+    shown = mode if on else rgb.get("last_mode", "static")
+    effect = next((e for e, m in PBOSD_MODES.items() if m == shown), "static")
+    color = rgb.get("color") if on else rgb.get("last_color", rgb.get("color"))
+    return {"on": on, "effect": effect, "color": clean_color(color or DEFAULT_COLOR),
+            "brightness": int(rgb.get("brightness", 160)), "speed": 5,
+            "power_led": st.get("power_led", True) is not False,
             "available": bool(glob.glob("/sys/class/leds/*joysticks*")),
             "daemon": subprocess.run(["systemctl", "is-active", "--quiet", "pbosd"]).returncode == 0}
 
@@ -317,25 +360,144 @@ def pbosd_set(**changes: Any) -> None:
     subprocess.run(["systemctl", "kill", "-s", "HUP", "pbosd.service"], check=False)
 
 
+def pbosd_lights_set(on: bool, effect: str, color: str, brightness: int) -> None:
+    old = read_json(PBOSD_STATE).get("rgb") or {}
+    mode = PBOSD_MODES.get(effect, "static")
+    if on:
+        rgb = {"mode": mode, "color": color, "brightness": brightness}
+    else:
+        rgb = {"mode": "off", "color": color, "brightness": brightness,
+               "last_mode": mode, "last_color": color}
+    for k in ("last_mode", "last_color"):
+        if on and k in old:
+            rgb[k] = old[k]
+    pbosd_set(rgb=rgb)
+
+
 def multicolor_lights() -> dict[str, Any]:
     st = read_json(LIGHTS_STATE)
-    return {"mode": st.get("mode", "static"), "color": st.get("color", "ff3c00"),
-            "brightness": int(st.get("brightness", 160)), "available": bool(glob.glob(MULTICOLOR))}
+    # Before effects there was a mode: static or off.
+    on = st.get("on", st.get("mode") != "off")
+    effect = st.get("effect", "static")
+    if effect not in {e["id"] for e in EFFECTS["multicolor"]}:
+        effect = "static"
+    return {"on": bool(on), "effect": effect, "color": clean_color(st.get("color", DEFAULT_COLOR)),
+            "brightness": max(0, min(255, int(st.get("brightness", 160)))),
+            "speed": max(1, min(10, int(st.get("speed", 5)))), "available": bool(glob.glob(MULTICOLOR))}
 
 
-def multicolor_apply(st: dict[str, Any]) -> None:
-    color = str(st.get("color", "ff3c00"))
-    rgb = [int(color[i:i + 2], 16) for i in (0, 2, 4)] if re.fullmatch(r"[0-9a-f]{6}", color) else [255, 60, 0]
-    on = st.get("mode") != "off"
-    for led in glob.glob(MULTICOLOR):
-        try:
+def zones() -> list[str]:
+    """The stick LEDs in ring order, left stick then right: l1..l4, r1..r4
+    (the device tree numbers them around each ring)."""
+    return sorted(glob.glob(MULTICOLOR), key=lambda p: (p[-2], p[-1]))
+
+
+def frame(effect: str, t: float, rgb: tuple[int, int, int], speed: int, n: int,
+          stars: list[float]) -> list[tuple[int, int, int]]:
+    """Each zone's colour at time t (seconds). Zones go round each ring of
+    n // 2; both sticks show the same."""
+    ring = max(1, n // 2)
+    fast = (speed - 1) / 9                     # 0 slowest .. 1 fastest
+
+    def scale(c, v):
+        return tuple(int(x * v) for x in c)
+
+    def hue(h):
+        return tuple(int(x * 255) for x in colorsys.hsv_to_rgb(h % 1.0, 1.0, 1.0))
+
+    if effect == "breathing":
+        period = 8 - 6.5 * fast
+        v = 0.04 + 0.96 * (1 - math.cos(2 * math.pi * t / period)) / 2
+        return [scale(rgb, v)] * n
+    if effect == "cycle":
+        return [hue(t / (24 - 21 * fast))] * n
+    if effect == "wave":
+        period = 6 - 5 * fast
+        return [hue(t / period + (i % ring) / ring) for i in range(n)]
+    if effect == "spin":
+        head = (t / (3 - 2.5 * fast)) * ring
+        out = []
+        for i in range(n):
+            behind = (head - i % ring) % ring   # how far the head has passed this zone
+            out.append(scale(rgb, max(0.0, 1 - behind / 1.8)))
+        return out
+    if effect == "starlight":
+        # Each zone lights up at random, fades in and out over `life`.
+        life = 2.4 - 1.8 * fast
+        out = []
+        for i in range(n):
+            age = t - stars[i]
+            if age > life:
+                if random.random() < 0.02 + 0.05 * fast:
+                    stars[i] = t
+                    age = 0.0
+            v = math.sin(math.pi * age / life) if 0 <= age <= life else 0.0
+            out.append(scale(rgb, v))
+        return out
+    return [rgb] * n
+
+
+class Animator:
+    """Drives the Retroid Pocket 6 / Nova stick LEDs. Static and off are
+    written once; effects run in a thread at FPS, writing only zones whose
+    colour changed (each write is an I2C transfer to the LED driver)."""
+
+    FPS = 20
+
+    def __init__(self) -> None:
+        self.thread: threading.Thread | None = None
+        self.stop = threading.Event()
+
+    def apply(self, st: dict[str, Any]) -> None:
+        self.halt()
+        leds = zones()
+        on = st.get("on", True)
+        rgb = rgb_of(clean_color(st.get("color", DEFAULT_COLOR)))
+        for led in leds:
             top = int(rd(f"{led}/max_brightness", "255") or 255)
-            with open(f"{led}/multi_intensity", "w") as fh:
-                fh.write(" ".join(str(c * top // 255) for c in rgb))
-            with open(f"{led}/brightness", "w") as fh:
-                fh.write(str(max(0, min(top, int(st.get("brightness", 160)) * top // 255)) if on else 0))
+            level = max(0, min(top, int(st.get("brightness", 160)) * top // 255)) if on else 0
+            self._write(led, "brightness", level)
+        if not on:
+            return
+        effect = st.get("effect", "static")
+        if effect == "static":
+            for led in leds:
+                self._color(led, rgb)
+            return
+        self.stop = threading.Event()
+        self.thread = threading.Thread(target=self._run, args=(leds, effect, rgb, int(st.get("speed", 5)), self.stop),
+                                       name="pbos-lights", daemon=True)
+        self.thread.start()
+
+    def halt(self) -> None:
+        if self.thread:
+            self.stop.set()
+            self.thread.join(timeout=2)
+            self.thread = None
+
+    def _run(self, leds: list[str], effect: str, rgb, speed: int, stop: threading.Event) -> None:
+        shown: list[Any] = [None] * len(leds)
+        stars = [-100.0] * len(leds)
+        t0 = time.monotonic()
+        while not stop.is_set():
+            now = time.monotonic() - t0
+            for i, c in enumerate(frame(effect, now, rgb, speed, len(leds), stars)):
+                if c != shown[i]:
+                    self._color(leds[i], c)
+                    shown[i] = c
+            stop.wait(1 / self.FPS)
+
+    def _color(self, led: str, rgb) -> None:
+        top = int(rd(f"{led}/max_brightness", "255") or 255)
+        self._write(led, "multi_intensity", " ".join(str(c * top // 255) for c in rgb))
+
+    @staticmethod
+    def _write(led: str, attr: str, value: Any) -> None:
+        try:
+            with open(f"{led}/{attr}", "w") as fh:
+                fh.write(str(value))
         except OSError as e:
-            decky.logger.info(f"{led}: {e}")
+            decky.logger.info(f"{led}/{attr}: {e}")
 
 
 class Plugin:
@@ -351,14 +513,16 @@ class Plugin:
         self.movelog = MoveLog()
         self.move_was_running = await asyncio.to_thread(active, MOVE_UNIT)
         self.lights = await asyncio.to_thread(lights_kind)
+        self.animator = Animator()
         if self.lights == "multicolor":
-            await asyncio.to_thread(multicolor_apply, read_json(LIGHTS_STATE))
+            await asyncio.to_thread(self.animator.apply, await asyncio.to_thread(multicolor_lights))
         self.tasks = [asyncio.create_task(t) for t in
                       (self._watch(), self._watch_drives(), self._cleanup(), self._watch_move())]
 
     async def _unload(self) -> None:
         for t in self.tasks:
             t.cancel()
+        await asyncio.to_thread(self.animator.halt)
 
     # -------------------------------------------------------------- update --
     async def _cleanup(self) -> None:
@@ -560,27 +724,28 @@ class Plugin:
     # -------------------------------------------------------------- lights --
     async def get_lights(self, **_: Any) -> dict[str, Any]:
         if self.lights == "pbosd":
-            return {"kind": "pbosd", **await asyncio.to_thread(pbosd_lights)}
-        if self.lights == "multicolor":
-            return {"kind": "multicolor", **await asyncio.to_thread(multicolor_lights)}
-        return {"kind": ""}
-
-    async def set_lights(self, mode: str = "static", color: str = "ff3c00", brightness: int = 160,
-                         **_: Any) -> dict[str, Any]:
-        color = color.lstrip("#").lower()[:6]
-        if not re.fullmatch(r"[0-9a-f]{6}", color):
-            color = "ff3c00"
-        brightness = max(0, min(255, int(brightness)))
-        if self.lights == "pbosd":
-            if mode not in ("static", "breath", "off"):
-                mode = "static"
-            await asyncio.to_thread(pbosd_set, rgb={"mode": mode, "color": color, "brightness": brightness})
+            st = await asyncio.to_thread(pbosd_lights)
         elif self.lights == "multicolor":
-            if mode not in ("static", "off"):
-                mode = "static"
-            st = {"mode": mode, "color": color, "brightness": brightness}
+            st = await asyncio.to_thread(multicolor_lights)
+        else:
+            return {"kind": ""}
+        return {"kind": self.lights, "effects": EFFECTS[self.lights], **st}
+
+    async def set_lights(self, on: bool = True, effect: str = "static", color: str = DEFAULT_COLOR,
+                         brightness: int = 160, speed: int = 5, **_: Any) -> dict[str, Any]:
+        if self.lights not in EFFECTS:
+            return {"kind": ""}
+        if effect not in {e["id"] for e in EFFECTS[self.lights]}:
+            effect = "static"
+        color = clean_color(color)
+        brightness = max(0, min(255, int(brightness)))
+        speed = max(1, min(10, int(speed)))
+        if self.lights == "pbosd":
+            await asyncio.to_thread(pbosd_lights_set, bool(on), effect, color, brightness)
+        else:
+            st = {"on": bool(on), "effect": effect, "color": color, "brightness": brightness, "speed": speed}
             await asyncio.to_thread(write_json, LIGHTS_STATE, st)
-            await asyncio.to_thread(multicolor_apply, st)
+            await asyncio.to_thread(self.animator.apply, st)
         return await self.get_lights()
 
     async def set_power_led(self, on: bool = True, **_: Any) -> dict[str, Any]:

@@ -451,24 +451,36 @@ function InstallTab() {
 }
 
 // --------------------------------------------------------------- lights ---
-const PRESETS = [
-    { label: "Ember", mode: "static", color: "ff3c00" },
-    { label: "Ice", mode: "static", color: "00b4ff" },
-    { label: "Violet", mode: "static", color: "a000ff" },
-    { label: "Green", mode: "static", color: "00ff40" },
-    { label: "White", mode: "static", color: "ffffff" },
-    { label: "Breathe", mode: "breath", color: "ff0040", pbosd: true },
-    { label: "Off", mode: "off", color: "000000" },
-];
+const hex2 = (n) => Math.max(0, Math.min(255, Math.round(n))).toString(16).padStart(2, "0");
+const toRgb = (color) => [0, 2, 4].map((i) => parseInt(color.slice(i, i + 2), 16) || 0);
+const toColor = (rgb) => rgb.map(hex2).join("");
+// Full-colour hue (0-359) to RRGGBB, and back (grey has no hue: 0).
+function hueColor(h) {
+    const f = (n) => { const k = (n + h / 60) % 6; return 255 * (1 - Math.max(0, Math.min(k, 4 - k, 1))); };
+    return toColor([f(5), f(3), f(1)]);
+}
+function colorHue(color) {
+    const [r, g, b] = toRgb(color).map((c) => c / 255);
+    const max = Math.max(r, g, b), d = max - Math.min(r, g, b);
+    if (!d) return 0;
+    const h = max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+    return Math.round((h * 60 + 360) % 360);
+}
+const RAINBOW = "linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00)";
+// The Advanced section stays as it was left while Steam runs; closed at first.
+let advancedOpen = false;
 
 function LightsTab() {
     const [st, setSt] = useState(null);
+    const [advanced, setAdvanced] = useState(advancedOpen);
     const movedAt = useRef(0);
     const refresh = useCallback(() => {
         if (Date.now() - movedAt.current < 2000) return;
         getLights().then((s) => { if (Date.now() - movedAt.current >= 2000) setSt(s); }).catch(() => {});
     }, []);
-    const send = useThrottled(useCallback((s) => { setLights(s.mode, s.color, s.brightness).catch(() => {}); }, []));
+    const send = useThrottled(useCallback((s) => {
+        setLights(s.on, s.effect, s.color, s.brightness, s.speed).catch(() => {});
+    }, []));
     useEffect(() => {
         refresh();
         const t = setInterval(refresh, 2000);
@@ -477,41 +489,92 @@ function LightsTab() {
 
     if (!st) return jsx(DFL.PanelSection, { children: note("Loading…") });
     if (!st.kind) return jsx(DFL.PanelSection, { children: note("This device has no stick lights pb-os can set.") });
-    const presets = PRESETS.filter((p) => !p.pbosd || st.kind === "pbosd");
-    const current = Math.max(0, presets.findIndex((p) => p.mode === st.mode && (p.mode === "off" || p.color === st.color)));
+    // Every change goes out whole (on, effect, colour, brightness, speed).
+    const change = (patch) => {
+        movedAt.current = Date.now();
+        const next = { ...st, ...patch };
+        setSt(next);
+        send(next);
+    };
+    const effects = st.effects || [];
+    const effect = effects.find((e) => e.id === st.effect) || effects[0] || { id: "static", color: true };
     const usable = st.available !== false;
-    return jsxs(DFL.PanelSection, { title: "Stick lights", children: [
-        row(jsx(DFL.DropdownItem, {
-            label: "Lighting",
+    const kpf = st.kind === "pbosd";
+    const rgb = toRgb(st.color);
+    const swatch = jsx("span", { style: { display: "inline-block", width: "14px", height: "14px", borderRadius: "7px",
+        marginLeft: "8px", verticalAlign: "middle", border: "1px solid rgba(255,255,255,0.5)", background: `#${st.color}` } });
+    const items = [
+        row(jsx(DFL.ToggleField, {
+            label: "Stick lights",
             disabled: !usable,
-            rgOptions: presets.map((p, i) => ({ data: i, label: p.label })),
-            selectedOption: current,
-            onChange: (o) => {
-                const p = presets[o.data];
-                setLights(p.mode, p.color, st.brightness).then(setSt).catch(() => {});
-            },
+            checked: !!st.on,
+            onChange: (v) => change({ on: v }),
         })),
-        row(jsx(DFL.SliderField, {
+    ];
+    if (st.on) {
+        items.push(row(jsx(DFL.DropdownItem, {
+            label: "Effect",
+            disabled: !usable,
+            rgOptions: effects.map((e) => ({ data: e.id, label: e.label })),
+            selectedOption: effect.id,
+            onChange: (o) => change({ effect: o.data }),
+        })));
+        if (effect.color) {
+            items.push(row(jsx(DFL.SliderField, {
+                label: jsxs("span", { children: ["Color", swatch] }),
+                description: jsx("div", { style: { height: "8px", borderRadius: "4px", background: RAINBOW } }),
+                value: colorHue(st.color), min: 0, max: 359, step: 3,
+                disabled: !usable,
+                onChange: (h) => change({ color: hueColor(h) }),
+            })));
+        }
+        items.push(row(jsx(DFL.SliderField, {
             label: "Brightness",
             value: st.brightness, min: 10, max: 255, step: 5,
-            disabled: !usable || st.mode !== "static",
-            onChange: (v) => {
-                movedAt.current = Date.now();
-                const next = { ...st, brightness: v };
-                setSt(next);
-                send(next);
-            },
-        })),
-        st.kind === "pbosd" ? row(jsx(DFL.ToggleField, {
+            disabled: !usable || (kpf && effect.id === "rainbow"),
+            onChange: (v) => change({ brightness: v }),
+        })));
+        if (effect.speed) {
+            items.push(row(jsx(DFL.SliderField, {
+                label: "Speed",
+                value: st.speed || 5, min: 1, max: 10, step: 1, notchTicksVisible: true,
+                disabled: !usable,
+                onChange: (v) => change({ speed: v }),
+            })));
+        }
+        if (kpf && effect.id === "rainbow") items.push(note("The controller runs the rainbow at its own speed and brightness."));
+    }
+    if (kpf) {
+        items.push(row(jsx(DFL.ToggleField, {
             label: "Power LED",
             description: "Charging / full / low-battery colours and profile flashes",
             checked: st.power_led !== false,
             onChange: (v) => setPowerLed(v).then(setSt).catch(() => {}),
-        })) : null,
-        st.kind === "pbosd" && !usable ? note("Stick lighting needs the controller MCU link: PB-OS Control → Hardware.") : null,
-        st.kind === "pbosd" && st.daemon === false ? warn("pbosd is not running.") : null,
-        st.kind === "pbosd" ? note("The K button can cycle these too (PB-OS Control → Buttons).") : null,
-    ] });
+        })));
+        if (!usable) items.push(note("Stick lighting needs the controller MCU link: PB-OS Control → Hardware."));
+        if (st.daemon === false) items.push(warn("pbosd is not running."));
+        items.push(note("The K button can cycle stick lighting too (PB-OS Control → Buttons)."));
+    }
+    if (st.on && usable) {
+        items.push(row(jsx(DFL.ButtonItem, {
+            layout: "below",
+            onClick: () => { advancedOpen = !advanced; setAdvanced(!advanced); },
+            children: advanced ? "Advanced ▾" : "Advanced ▸",
+        })));
+        if (advanced) {
+            if (!effect.color) {
+                items.push(note(`${effect.label} picks its own colours.`));
+            } else {
+                ["Red", "Green", "Blue"].forEach((name, i) => items.push(row(jsx(DFL.SliderField, {
+                    label: name,
+                    value: rgb[i], min: 0, max: 255, step: 1, showValue: true, editableValue: true,
+                    onChange: (v) => { const c = rgb.slice(); c[i] = v; change({ color: toColor(c) }); },
+                }))));
+                items.push(note(`#${st.color.toUpperCase()}. The Color slider picks full colours; white and pastels are set here.`));
+            }
+        }
+    }
+    return jsx(DFL.PanelSection, { title: "Stick lights", children: items });
 }
 
 // ---------------------------------------------------------------- panel ---

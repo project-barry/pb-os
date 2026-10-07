@@ -203,8 +203,6 @@ def load_state() -> dict:
         st["buttons_mode"] = "steam"
     for key, act in st["buttons"].items():
         st["buttons"][key] = legacy_action(act)
-    if st["rgb"].get("mode") == "rainbow":
-        st["rgb"]["mode"] = "static"
     st["profile"] = LEGACY_PROFILES.get(st["profile"], st["profile"])
     if st["profile"] not in PROFILES:
         st["profile"] = "balanced"
@@ -620,7 +618,11 @@ class Leds:
         rgb = tuple(int(color[i:i + 2], 16) for i in (0, 2, 4))
         eff = f"{self.sticks}/effect"
         if mode == "breath":
-            wr(eff, "breath {} {} {}".format(*rgb))
+            # The MCU pulses the colour it is given: brightness scales it.
+            level = max(0, min(255, int(cfg.get("brightness", 160))))
+            wr(eff, "breath {} {} {}".format(*(c * level // 255 for c in rgb)))
+        elif mode == "rainbow":
+            wr(eff, "rainbow")   # the MCU's own hue cycle
         else:
             wr(eff, "static")
             led_rgb(self.sticks, rgb, int(cfg.get("brightness", 160)))
