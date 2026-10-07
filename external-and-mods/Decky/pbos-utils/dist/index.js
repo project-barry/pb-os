@@ -326,10 +326,17 @@ function HomeChoice({ value, onChange, sizes, room }) {
     ];
 }
 
+// The Install tab's picks. A dropdown's list remounts the panel, which put
+// "Bring along" back on Everything right after picking No games (and the
+// Android size back on the recommended one).
+const installPicks = { home: "all", android: null };
+
 function InstallTab() {
     const [st, setSt] = useState(null);
-    const [home, setHome] = useState("all");
-    const [android, setAndroid] = useState(null);
+    const [home, setHomeState] = useState(installPicks.home);
+    const [android, setAndroidState] = useState(installPicks.android);
+    const setHome = (v) => { installPicks.home = v; setHomeState(v); };
+    const setAndroid = (v) => { installPicks.android = v; setAndroidState(v); };
     const [ack, setAck] = useState(false);
     const [starting, setStarting] = useState(false);
     const [error, setError] = useState("");
