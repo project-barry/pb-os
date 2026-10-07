@@ -416,6 +416,19 @@ def lights_signature() -> tuple[int, ...]:
 
 
 GAMMA = 2.2
+
+
+def even_hue(h: float) -> tuple[float, float, float]:
+    """A full colour of hue h (0-1) at the same total power for every hue:
+    red to green to blue and back, each pair crossing over linearly. The
+    usual rainbow lights two channels fully for yellow, cyan and magenta,
+    twice the power of red, green or blue, and looked brighter there."""
+    h = (h % 1.0) * 3
+    i, f = int(h) % 3, h - int(h)
+    ch = [0.0, 0.0, 0.0]
+    ch[i], ch[(i + 1) % 3] = 255 * (1 - f), 255 * f
+    return tuple(ch)
+
 # Seconds the stick lights take to come back after a sleep: the sleep hook's
 # fade-out (sm8550-sleep), the other way round.
 FADE_IN = 0.3
@@ -458,7 +471,7 @@ def frame(effect: str, t: float, rgb: tuple[int, int, int], speed: int, n: int,
         v = floor + (1 - floor) * math.sin(math.pi / 2 * w)
         return [scale(rgb, v)] * n
     if effect == "cycle":
-        return [hue(t / (24 - 21 * fast))] * n
+        return [even_hue(t / (24 - 21 * fast))] * n
     if effect == "wave":
         period = 6 - 5 * fast
         return [hue(t / period + (i % ring) / ring) for i in range(n)]
