@@ -2,59 +2,127 @@ From: lavachemist <48248311+lavachemist@users.noreply.github.com>
 Subject: [PATCH] input: rsinput: close the UART across system sleep
 
 rsinput keeps its serdev port open through system sleep. The open GENI
-serial engine keeps its clock (QUP wrap2 s7 on the Retroid Pocket Nova)
-prepared, which holds the SoC's XO vote. Close the port after the MCU is
-stopped in suspend and reopen it with the probe settings before the
-re-init commands in resume. Tested on the Nova by unbinding the driver
-across sleep (same release); the pad came back each time.
+serial engine keeps its clock (QUP wrap2 s7 on the Retroid Pocket 6/Nova)
+prepared, which holds the SoC's XO vote, so the SoC never reaches CX
+collapse.
+
+Closing the port in the driver's suspend callback does not help: the GENI
+driver releases the clock through pm_runtime_put_sync(), which the PM core
+blocks once system suspend has started (seen on the Retroid Pocket 6: the
+clock stayed prepared at syscore suspend). Close the port from a PM
+notifier before device suspend instead, and reopen it and re-init the MCU
+from the notifier after resume.
 ---
 --- a/drivers/input/joystick/rsinput.c
 +++ b/drivers/input/joystick/rsinput.c
-@@ -664,6 +664,19 @@
+@@ -15,6 +15,7 @@
+ #include <linux/minmax.h>
+ #include <linux/of.h>
+ #include <linux/regulator/consumer.h>
++#include <linux/suspend.h>
+ #include <linux/serdev.h>
+ #include <linux/slab.h>
+ #include <linux/platform_device.h>
+@@ -140,8 +141,13 @@
+     uint8_t rx_buf[1024];
+     size_t rx_len;
+     uint8_t sequence_number;
++    struct notifier_block pm_nb;
++    bool uart_closed;
+ };
+ 
++static int rsinput_pm_notify(struct notifier_block *nb, unsigned long action,
++                             void *data);
++
+ static bool rumble_enable = true;
+ module_param(rumble_enable, bool, 0660);
+ 
+@@ -646,13 +652,18 @@
+         return error;
+     }
+ 
++    drv->pm_nb.notifier_call = rsinput_pm_notify;
++    register_pm_notifier(&drv->pm_nb);
++
+     return 0;
+ }
+ 
+ static void rsinput_remove(struct serdev_device *serdev) {
+     struct rsinput_driver *drv = serdev_device_get_drvdata(serdev);
+ 
+-    serdev_device_close(serdev);
++    unregister_pm_notifier(&drv->pm_nb);
++    if (!drv->uart_closed)
++        serdev_device_close(serdev);
+     input_unregister_device(drv->input);
+     if (drv->enable_gpio)
+         gpiod_set_value_cansleep(drv->enable_gpio, 0);
+@@ -664,6 +675,48 @@
          regulator_disable(drv->vdd);
  }
  
-+static int rsinput_open_uart(struct rsinput_driver *drv)
++/*
++ * An open serdev port keeps its GENI serial engine clock prepared (QUP wrap2
++ * s7), which keeps the SoC's XO on in system sleep. Closing the port in
++ * rsinput_suspend() is too late: the GENI driver drops the clock through
++ * pm_runtime_put_sync(), and the PM core blocks runtime suspend from the
++ * prepare phase on. Close it before device suspend starts, and reopen it and
++ * re-init the MCU once resume is complete.
++ */
++static int rsinput_pm_notify(struct notifier_block *nb, unsigned long action,
++                             void *data)
 +{
-+    int error = serdev_device_open(drv->serdev);
++    struct rsinput_driver *drv = container_of(nb, struct rsinput_driver, pm_nb);
++    int error;
 +
-+    if (error) {
-+        dev_err(&drv->serdev->dev, "Unable to reopen UART: %d\n", error);
-+        return error;
++    switch (action) {
++    case PM_SUSPEND_PREPARE:
++        /* Stop the MCU reports first (see rsinput_suspend()). */
++        if (drv->enable_gpio)
++            gpiod_set_value_cansleep(drv->enable_gpio, 0);
++        if (drv->reset_gpio)
++            gpiod_set_value_cansleep(drv->reset_gpio, 0);
++        serdev_device_close(drv->serdev);
++        drv->uart_closed = true;
++        break;
++    case PM_POST_SUSPEND:
++        if (!drv->uart_closed)
++            break;
++        error = serdev_device_open(drv->serdev);
++        if (error) {
++            dev_err(&drv->serdev->dev, "Unable to reopen UART: %d\n", error);
++            break;
++        }
++        drv->uart_closed = false;
++        serdev_device_set_baudrate(drv->serdev, 115200);
++        serdev_device_set_flow_control(drv->serdev, false);
++        rsinput_init_commands(drv);
++        break;
 +    }
-+    serdev_device_set_baudrate(drv->serdev, 115200);
-+    serdev_device_set_flow_control(drv->serdev, false);
-+    return 0;
++
++    return NOTIFY_DONE;
 +}
 +
  static int rsinput_suspend(struct device *dev)
  {
      struct rsinput_driver *drv = dev_get_drvdata(dev);
-@@ -680,10 +693,17 @@
-     if (drv->reset_gpio)
-         gpiod_set_value_cansleep(drv->reset_gpio, 0);
- 
-+    /*
-+     * Close the UART as well: an open serdev port keeps its GENI serial
-+     * engine clock prepared, which keeps the SoC's XO on in system sleep.
-+     */
-+    serdev_device_close(drv->serdev);
-+
-     if (!drv->vdd_off) {
+@@ -684,7 +737,8 @@
          error = regulator_disable(drv->vdd);
          if (error) {
              dev_err(dev, "Failed to disable MCU supply: %d\n", error);
-+            rsinput_open_uart(drv);
-             rsinput_init_commands(drv);
+-            rsinput_init_commands(drv);
++            if (!drv->uart_closed)
++                rsinput_init_commands(drv);
              return error;
          }
-@@ -707,6 +727,10 @@
+         drv->vdd_off = true;
+@@ -707,6 +761,10 @@
          drv->vdd_off = false;
      }
  
-+    error = rsinput_open_uart(drv);
-+    if (error)
-+        return error;
++    /* The UART is still closed: rsinput_pm_notify() re-inits the MCU. */
++    if (drv->uart_closed)
++        return 0;
 +
      return rsinput_init_commands(drv);
  }
