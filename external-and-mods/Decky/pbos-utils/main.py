@@ -524,6 +524,7 @@ class Animator:
         self.stop = threading.Event()
         self.failed: set[str] = set()
         self.order: dict[str, list[int]] = {}
+        self.tops: dict[str, int] = {}
         self.level = 1.0
 
     def apply(self, st: dict[str, Any], fade: float = 0.0) -> None:
@@ -531,7 +532,7 @@ class Animator:
         (the effect already running underneath)."""
         self.halt()
         self.failed = set()
-        self.order = {}   # read again: the devices may be new
+        self.order, self.tops = {}, {}   # read again: the devices may be new
         leds = zones()
         on = st.get("on", True)
         rgb = rgb_of(clean_color(st.get("color", DEFAULT_COLOR)))
@@ -597,13 +598,29 @@ class Animator:
                 k += int(late * self.FPS)
             stop.wait(max(0.0, t0 + k / self.FPS - time.monotonic()))
 
+    def top(self, led: str) -> int:
+        """The zone's max_brightness, read once per apply (each power() runs
+        30 times a second per zone)."""
+        if led not in self.tops:
+            self.tops[led] = int(rd(f"{led}/max_brightness", "255") or 255)
+        return self.tops[led]
+
+    def channels(self, led: str) -> list[int]:
+        """Where red, green and blue go in multi_intensity: its multi_index,
+        which on the Retroid Pocket 6 / Nova is "blue green red"."""
+        if led not in self.order:
+            names = rd(f"{led}/multi_index").split()
+            self.order[led] = [("red", "green", "blue").index(n) for n in names] \
+                if sorted(names) == ["blue", "green", "red"] else [0, 1, 2]
+        return self.order[led]
+
     def floor(self, led: str, rgb) -> float:
         """The dimmest level (as it looks, 0-1) at which rgb at the set
         brightness still has FLOOR_STEPS power steps in its weakest main
         channel. Below that the few whole steps left can't hold the colour
         (a pink at brightness 70 turned red: blue 1, red 3) and every step is
         a visible jump."""
-        top = int(rd(f"{led}/max_brightness", "255") or 255)
+        top = self.top(led)
         main = [c * self.level * top / 255 for c in rgb if c and c >= MAIN * max(rgb)]
         if not main or min(main) <= FLOOR_STEPS:
             return 1.0 if main else 0.0
@@ -616,8 +633,7 @@ class Animator:
         channel alone (Nova, pink at 50: largest step 25 % -> 13 %). While
         the target dims the light may only stay or dim, and the other way
         round, so it never wobbles. No channel is more than one step off."""
-        top = int(rd(f"{led}/max_brightness", "255") or 255)
-        self.power(led, (0, 0, 0))                      # learns the channel order
+        top = self.top(led)
         want = [c * self.level * top / 255 for c in rgb]
         light = lambda ch: sum(w * x for w, x in zip(LUMA, ch))
         main = [i for i, x in enumerate(want) if x and x >= MAIN * max(want)]
@@ -634,7 +650,7 @@ class Animator:
                 best = (cost, ch)
         ch = best[1] if best else (prev or (0, 0, 0))
         last[led] = (ch, want)
-        return " ".join(str(ch[i]) for i in self.order[led])
+        return " ".join(str(ch[i]) for i in self.channels(led))
 
     def power(self, led: str, rgb) -> str:
         """multi_intensity for rgb (0-255, may be fractional) at the set
@@ -642,18 +658,12 @@ class Animator:
         a fade a main channel of the colour (MAIN of the strongest or more)
         would round to 0 while another is still lit, tinting the zone, so the
         zone is off from there."""
-        top = int(rd(f"{led}/max_brightness", "255") or 255)
-        # multi_intensity follows the zone's multi_index, which on the Retroid
-        # Pocket 6 / Nova is "blue green red".
-        if led not in self.order:
-            names = rd(f"{led}/multi_index").split()
-            self.order[led] = [("red", "green", "blue").index(n) for n in names] \
-                if sorted(names) == ["blue", "green", "red"] else [0, 1, 2]
+        top = self.top(led)
         ch = [c * self.level * top / 255 for c in rgb]
         strongest = max(ch)
         if any(x < 0.5 for x in ch if x >= MAIN * strongest):
             ch = [0.0, 0.0, 0.0]
-        return " ".join(str(round(ch[i])) for i in self.order[led])
+        return " ".join(str(round(ch[i])) for i in self.channels(led))
 
     def _write(self, led: str, attr: str, value: Any) -> None:
         try:
