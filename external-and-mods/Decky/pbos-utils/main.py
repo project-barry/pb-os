@@ -479,7 +479,10 @@ class Animator:
     written once; effects run in a thread at FPS, writing only zones whose
     colour changed (each write is an I2C transfer to the LED driver)."""
 
-    FPS = 20
+    # Measured on the Nova (Spin, 20 s each): 20 and 30 fps both cost ~1.7 %
+    # of one core, 60 fps 3.7 %; a frame's writes take under 1 ms. Battery
+    # draw was below what the rest of the system varies by at all three.
+    FPS = 30
 
     def __init__(self) -> None:
         self.thread: threading.Thread | None = None
