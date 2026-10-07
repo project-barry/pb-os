@@ -386,10 +386,19 @@ def multicolor_lights() -> dict[str, Any]:
             "speed": max(1, min(10, int(st.get("speed", 5)))), "available": bool(glob.glob(MULTICOLOR))}
 
 
+# Each ring clockwise from the top, left stick then right. The device tree
+# numbers the zones differently on each stick (seen on the Retroid Pocket
+# Nova, 2026-10-07; the RP6 has the same tree).
+RING_ORDER = ("l3", "l2", "l1", "l4", "r4", "r1", "r2", "r3")
+
+
 def zones() -> list[str]:
-    """The stick LEDs in ring order, left stick then right: l1..l4, r1..r4
-    (the device tree numbers them around each ring)."""
-    return sorted(glob.glob(MULTICOLOR), key=lambda p: (p[-2], p[-1]))
+    """The stick LEDs in ring order (RING_ORDER), so Spin and Rainbow Wave
+    go round each stick."""
+    found = {p.rsplit(":", 1)[-1]: p for p in glob.glob(MULTICOLOR)}
+    if set(found) == set(RING_ORDER):
+        return [found[z] for z in RING_ORDER]
+    return sorted(found.values(), key=lambda p: (p[-2], p[-1]))
 
 
 def lights_signature() -> tuple[Any, ...]:
