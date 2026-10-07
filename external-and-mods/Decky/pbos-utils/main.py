@@ -493,7 +493,9 @@ def frame(effect: str, t: float, rgb: tuple[int, int, int], speed: int, n: int,
         return [even_hue(t / (24 - 21 * fast))] * n
     if effect == "wave":
         period = 6 - 5 * fast
-        return [even_hue(t / period + place(i) / ring) for i in range(n)]
+        # Hues laid round the ring the other way from its places, so the
+        # rainbow turns clockwise like Spin.
+        return [even_hue(t / period + (ring - place(i)) % ring / ring) for i in range(n)]
     if effect == "spin":
         # One light going round. Each zone fades up as the light comes within
         # SPIN_WIDTH zones of it and down as it leaves, so the next zone is
