@@ -642,8 +642,11 @@ class AudioMeter:
                      "node.name=pbos-utils-lighting media.name=\"PB-OS Utils lighting\" }")
             try:
                 sink = self._default_sink(user, rt)
+                # Unbuffered: pw-record writes a pipe in 4 kB blocks, a
+                # quarter second each at 16 kB/s; measured on the Nova the
+                # light came 0.9 s after the sound, unbuffered about 0.1 s.
                 self.proc = subprocess.Popen(
-                    ["runuser", "-u", user, "--", "env", f"XDG_RUNTIME_DIR={rt}",
+                    ["runuser", "-u", user, "--", "env", f"XDG_RUNTIME_DIR={rt}", "stdbuf", "-o0",
                      "pw-record", "--raw", "--rate", str(self.RATE), "--channels", "1", "--format", "s16",
                      "--latency", "32ms", "-P", props, "-"],
                     stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
