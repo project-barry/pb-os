@@ -62,9 +62,13 @@ const InstallIcon = svg([
     jsx("path", { d: "M7 2h8l4 4v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zm0 2v16h10V6.8L14.2 4H13v3h-1.5V4H10v3H8.5V4z" }, "c"),
     jsx("path", { d: "M8.5 13h4.3l-1.6-1.6 1-1 3.3 3.3-3.3 3.3-1-1 1.6-1.6H8.5z" }, "a"),
 ]);
+// A classic 5 mm LED from an electronics kit: domed lens with a highlight,
+// the rim at its base, and two legs (the longer one the anode).
 const LightsIcon = svg([
-    jsx("circle", { cx: 12, cy: 12, r: 4 }, "c"),
-    jsx("path", { d: "M12 2a10 10 0 1 1 0 20 10 10 0 0 1 0-20zm0 2a8 8 0 1 0 0 16 8 8 0 0 0 0-16z", opacity: 0.6 }, "r"),
+    jsx("path", { fillRule: "evenodd", d: "M7.5 9.5a4.5 4.5 0 0 1 9 0V15h-9zM9.4 9.6a2.6 2.6 0 0 1 2.6-2.6v1.3a1.3 1.3 0 0 0-1.3 1.3z" }, "lens"),
+    jsx("rect", { x: 6.3, y: 15, width: 11.4, height: 1.9, rx: 0.4 }, "rim"),
+    jsx("rect", { x: 9.2, y: 16.9, width: 1.5, height: 6.1, rx: 0.3 }, "anode"),
+    jsx("rect", { x: 13.3, y: 16.9, width: 1.5, height: 4.6, rx: 0.3 }, "cathode"),
 ]);
 
 // LB and RB: the controller's bumpers, in Steam's button numbering.
