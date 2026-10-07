@@ -90,6 +90,7 @@ EFFECTS = {
 # pbosd's state names for the MCU's modes.
 PBOSD_MODES = {"static": "static", "breathing": "breath", "rainbow": "rainbow"}
 DEFAULT_COLOR = "ff3c00"
+DEFAULT_COLOR2 = "ffffff"        # the audio effects' intensity colour
 
 
 def lights_kind() -> str:
@@ -174,7 +175,7 @@ def multicolor_lights() -> dict[str, Any]:
     if effect not in {e["id"] for e in multicolor_effects(audio)}:
         effect = "static"
     return {"on": bool(on), "effect": effect, "color": clean_color(st.get("color", DEFAULT_COLOR)),
-            "experimental_audio": audio, "effect_before_audio": st.get("effect_before_audio", "static"),
+            "color2": clean_color(st.get("color2", DEFAULT_COLOR2)), "experimental_audio": audio, "effect_before_audio": st.get("effect_before_audio", "static"),
             "brightness": max(0, min(255, int(st.get("brightness", 160)))),
             "speed": max(1, min(10, int(st.get("speed", 5)))),
             "reverse_left": bool(st.get("reverse_left", False)), "reverse_right": bool(st.get("reverse_right", False)),
@@ -222,6 +223,12 @@ def lights_signature() -> tuple[int, ...]:
 
 
 GAMMA = 2.2
+# Audio effects, as the eye sees it: the base colour rests at a dim
+# background (or its dimmest true level, if higher); loudness lifts a zone
+# AUDIO_LEVEL_SHARE of the way from there to the brightness setting, and
+# only hits go all the way, so they stand out over loud sound.
+AUDIO_BACKGROUND = 0.2
+AUDIO_LEVEL_SHARE = 0.6
 # Audio Spectrum: which band (0 bass, 1 low mids, 2 high mids, 3 treble)
 # each place round a ring shows (0 top, clockwise), per stick: bass at the
 # bottom, treble at the top, low mids on the outer side, high mids inner.
@@ -256,7 +263,8 @@ SPIN_WIDTH = 1.5
 
 def frame(effect: str, t: float, rgb: tuple[int, int, int], speed: int, n: int,
           stars: list[float], floor: float = 0.0,
-          reverse: tuple[bool, bool] = (False, False), level: Any = 0.0) -> list[tuple[int, int, int]]:
+          reverse: tuple[bool, bool] = (False, False), level: Any = 0.0,
+          rgb2: tuple[int, int, int] | None = None) -> list[tuple[int, int, int]]:
     """Each zone's colour at time t (seconds). Zones go round each ring of
     n // 2; both sticks show the same."""
     ring = max(1, n // 2)
@@ -308,18 +316,28 @@ def frame(effect: str, t: float, rgb: tuple[int, int, int], speed: int, n: int,
             out.append(scale(rgb, v))
         return out
     if effect in ("audio", "spectrum"):
-        # level (AudioMeter): how loud the sound is now, 0-1 per channel;
-        # each zone between the colour's dimmest true level (a glow, so it
-        # shows it's on) and full.
-        lv = list(level) if isinstance(level, (list, tuple)) else [level, level]
+        # level (AudioMeter.current()): (levels, accents), 0-1 per channel.
+        # The zone rests at the background in the base colour; loudness
+        # lifts it, a hit (accent) takes it towards rgb2, the intensity
+        # colour, and up to full: the brightness setting is the peak.
+        if isinstance(level, tuple) and len(level) == 2 and isinstance(level[0], (list, tuple)):
+            lv, ac = list(level[0]), list(level[1])
+        else:
+            lv = list(level) if isinstance(level, (list, tuple)) else [level, level]
+            ac = [0.0] * len(lv)
+        hot = rgb2 or rgb
         out = []
         for i in range(n):
             side = min(i // ring, 1)
             if effect == "audio":                 # stereo: each stick its side
-                v = lv[side] if len(lv) > side else lv[0]
+                c = side if len(lv) > side else 0
             else:                                 # each stick its side's four bands
-                v = lv[side * 4 + SPECTRUM_PLACES[side][i % ring]] if len(lv) >= 8 else 0.0
-            out.append(scale(rgb, floor + (1 - floor) * v))
+                c = side * 4 + SPECTRUM_PLACES[side][i % ring] if len(lv) >= 8 else -1
+            v_level, a = (lv[c], ac[c]) if c >= 0 else (0.0, 0.0)
+            bg = max(floor, AUDIO_BACKGROUND)
+            v = bg + (1 - bg) * max(AUDIO_LEVEL_SHARE * v_level, a)
+            col = tuple(x + (y - x) * a for x, y in zip(rgb, hot))
+            out.append(scale(col, v))
         return out
     if effect == "starlight":
         # Each zone twinkles on its own: every twinkle has its own length
@@ -344,44 +362,73 @@ def frame(effect: str, t: float, rgb: tuple[int, int, int], speed: int, n: int,
     return [rgb] * n
 
 
-# Audio Spectrum's bands come from four plain listeners at falling sample
-# rates: PipeWire's resampler drops everything above half the rate, in
-# native code and steeply, so the energy below 250 Hz, 1 kHz, 4 kHz and
-# 12 kHz is each a listener's, and the bands are their differences (energy
-# in separate ranges adds up). A tone lands in one band, the others 17-150
-# dB down. A filter-chain process did this first, but with it the first
-# sound after the speaker suspended could not start for 5 s or more (every
-# other sound, Nova, 15 tries); these listeners: none in 35.
-SPECTRUM_RATES = (500, 2000, 8000, 24000)
+# Audio Spectrum's bands come from plain listeners at falling sample rates:
+# PipeWire's resampler drops everything above half the rate, in native code
+# and steeply, so each listener holds the energy below one edge and the
+# bands are differences (energy in separate ranges adds up). A tone lands
+# in one band, the others 17-150 dB down. A filter-chain process did this
+# first, but with it the first sound after the speaker suspended could not
+# start for 5 s or more (every other sound, Nova, 15 tries); these: none.
+#
+# The edges, Hz: below the first nothing counts; then bass, low mids, high
+# mids (a snare's snap), treble (hi-hats). Through the built-in speakers
+# only what they can play counts: small handheld drivers give little below
+# about SPEAKER_LOW_HZ (an estimate, not measured on these devices).
+SPEAKER_LOW_HZ = 300
+EDGES_FULL = (0, 250, 1000, 5000, 12000)
+EDGES_SPEAKER = (SPEAKER_LOW_HZ, 600, 1500, 5000, 12000)
+
+
+def on_speakers(sink: str) -> bool:
+    """The sound goes out of the built-in speakers: the default output is the
+    device's own card and nothing is in the headphone jack or video out."""
+    if not sink.startswith("alsa_output.platform-sound"):
+        return False                    # Bluetooth, USB, ...
+    for jack in ("Headphone Jack", "DP0 Jack"):
+        r = subprocess.run(["amixer", "-c", "0", "cget", f"iface=CARD,name={jack}"],
+                           capture_output=True, text=True, timeout=5)
+        if "values=on" in r.stdout:
+            return False
+    return True
+
+
+def listener_rates(edges: tuple[int, ...]) -> tuple[int, ...]:
+    """One listener per edge (none for 0): a rate of twice the edge."""
+    return tuple(2 * e for e in edges if e)
 
 
 class AudioMeter:
-    """How loud the device's sound output is, for the audio effects, as the
+    """How the device's sound output moves, for the audio effects, as the
     user that owns the sound session; never a microphone.
 
     "pulse" (Audio Pulse): one listener, the default output's monitor in
-    stereo at 8 kHz: levels [left, right]. "spectrum" (Audio Spectrum): four
-    listeners at SPECTRUM_RATES: levels [left bass, low mids, high mids,
-    treble, right bass, ...].
+    stereo at 8 kHz; channels [left, right]. "spectrum" (Audio Spectrum):
+    listeners at listener_rates(EDGES_SPEAKER or EDGES_FULL, by
+    on_speakers()); channels [left bass, low mids, high mids, treble, right
+    bass, ...].
+
+    Per channel it gives a level (loudness in dB against its own loudest of
+    the last few seconds, rising at once, falling over 0.3 s; in "spectrum"
+    a band far below its side's loudest stays dark) and an accent: a hit, a
+    sudden rise against its own recent average, which flashes and fades. The
+    high mids and treble (snare, hi-hats) hit easiest and fastest and take
+    their full level from a narrower loudness range, so they show most.
 
     Every listener is passive (node.passive): it never keeps the sound card
     running, so with nothing playing it gets no data and the light rests at
     its glow; and can't be moved (node.dont-move), so the sleep hook's
     shuffle of streams onto its silent stand-in can't land it on another
     source after a wake. They run only while an audio effect shows, and
-    start again if one ends or the default output changes. pw-record runs
-    unbuffered: it writes a pipe in 4 kB blocks, and measured on the Nova
-    the light came 0.9 s after the sound; unbuffered about 0.1 s.
+    start again if one ends, or the output or its kind (speakers or not)
+    changes. pw-record runs unbuffered: it writes a pipe in 4 kB blocks, and
+    measured on the Nova the light came 0.9 s after the sound; unbuffered
+    about 0.1 s."""
 
-    Each channel follows loudness in dB against its own loudest of the last
-    few seconds (quiet and loud playback both light, bass doesn't drown the
-    treble), rising at once and falling over about 0.3 s. In "spectrum" a
-    band far below the loudest band on its side stays dark."""
-
-    RANGE_DB = 30.0               # quietest that still lights, below the recent loudest
+    RANGE_DB = (30.0, 30.0, 22.0, 22.0)     # per band: quietest that lights, below its loudest
     GATE_DB = 15.0                # spectrum: a band this far below its side's loudest is dark
+    HIT_DB = (9.0, 9.0, 5.0, 5.0)       # per band: rise over its recent average that is a hit
+    HIT_FADE = (0.30, 0.30, 0.15, 0.12)  # per band: seconds a hit fades over
     WINDOW = 1 / 15               # seconds of sound each energy is measured over
-    MODES = {"pulse": (8000,), "spectrum": SPECTRUM_RATES}
 
     def __init__(self) -> None:
         self.lock = threading.Lock()
@@ -390,19 +437,22 @@ class AudioMeter:
         self.stopped = threading.Event()     # ends the waits between tries at once
         self.thread: threading.Thread | None = None
         self.mode = "pulse"
+        self.edges = EDGES_FULL
         self._reset()
 
     def _reset(self) -> None:
         n = 2 if self.mode == "pulse" else 8
         self.levels = [0.0] * n
+        self.accents = [0.0] * n
         self.peaks = [-60.0] * n
+        self.averages = [-60.0] * n
         self.at = 0.0                 # when the levels were last measured
 
     def start(self, mode: str = "pulse") -> None:
         if self.running.is_set() and mode == self.mode:
             return
         self.stop()
-        self.mode = mode if mode in self.MODES else "pulse"
+        self.mode = mode if mode in ("pulse", "spectrum") else "pulse"
         with self.lock:
             self._reset()
         self.stopped.clear()
@@ -419,17 +469,23 @@ class AudioMeter:
             self.thread = None
         with self.lock:
             self.levels = [0.0] * len(self.levels)
+            self.accents = [0.0] * len(self.accents)
 
-    def current(self) -> list[float]:
-        """The levels now; they fall away when no sound has come (nothing playing)."""
+    def current(self) -> tuple[list[float], list[float]]:
+        """(levels, accents) now; they fall away when no sound has come."""
         with self.lock:
             return self.current_unlocked(time.monotonic())
 
-    def current_unlocked(self, now: float) -> list[float]:
+    def _band(self, c: int) -> int:
+        return 0 if self.mode == "pulse" else c % 4
+
+    def current_unlocked(self, now: float) -> tuple[list[float], list[float]]:
         if not self.at:
-            return [0.0] * len(self.levels)
-        k = math.exp(-max(0.0, now - self.at - 0.05) / 0.3)
-        return [v * k for v in self.levels]
+            return [0.0] * len(self.levels), [0.0] * len(self.accents)
+        idle = max(0.0, now - self.at)
+        k = math.exp(-max(0.0, idle - 0.05) / 0.3)
+        acc = [a * math.exp(-idle / self.HIT_FADE[self._band(c)]) for c, a in enumerate(self.accents)]
+        return [v * k for v in self.levels], acc
 
     def _kill(self) -> None:
         procs, self.procs = self.procs, []
@@ -468,6 +524,9 @@ class AudioMeter:
                 "-P", "{ stream.capture.sink=true node.passive=true node.dont-move=true "
                       f"node.name=pbos-utils-lighting-{rate} media.name=\"PB-OS Utils lighting\" }}", "-"]
 
+    def _rates(self) -> tuple[int, ...]:
+        return (8000,) if self.mode == "pulse" else listener_rates(self.edges)
+
     def _supervise(self) -> None:
         while self.running.is_set():
             sess = self._session()
@@ -477,19 +536,21 @@ class AudioMeter:
             user, rt = sess
             try:
                 sink = self._default_sink(user, rt)
+                speakers = on_speakers(sink)
+                self.edges = EDGES_SPEAKER if speakers else EDGES_FULL
                 self.procs = [subprocess.Popen(self._command(user, rt, rate), stdout=subprocess.PIPE,
-                                               stderr=subprocess.DEVNULL) for rate in self.MODES[self.mode]]
+                                               stderr=subprocess.DEVNULL) for rate in self._rates()]
             except (OSError, subprocess.SubprocessError) as e:
                 log(f"Audio effects: can't listen: {e}")
                 self._kill()
                 self.stopped.wait(5)
                 continue
-            self._read(user, rt, sink)
+            self._read(user, rt, sink, speakers)
             self._kill()
             self.stopped.wait(1)
 
-    def _read(self, user: str, rt: str, sink: str) -> None:
-        rates = self.MODES[self.mode]
+    def _read(self, user: str, rt: str, sink: str, speakers: bool) -> None:
+        rates = self._rates()
         fds = {p.stdout.fileno(): i for i, p in enumerate(self.procs)}
         bufs = [b""] * len(rates)
         # Each listener: the last WINDOW of squared samples per side, and its
@@ -518,33 +579,49 @@ class AudioMeter:
                     self._measure(energy)
             if time.monotonic() - checked > 5:
                 checked = time.monotonic()
-                if self._default_sink(user, rt) != sink:
-                    return              # other output (headphones): listen to that one
+                now_sink = self._default_sink(user, rt)
+                if now_sink != sink or on_speakers(now_sink) != speakers:
+                    return              # other output, or headphones in or out: listen again
+
+    def band_power(self, energy: list[list[float]]) -> list[float]:
+        """Mean-square power per channel from the listeners' energies."""
+        if self.mode == "pulse":
+            return [energy[0][0], energy[0][1]]
+        # e[k]: energy below the k-th non-zero edge; with a lowest edge (the
+        # speakers) everything below it is taken away first.
+        power = []
+        skip = 1 if self.edges[0] else 0
+        for side in (0, 1):
+            e = [0.0] * (1 - skip) + [energy[i][side] for i in range(len(energy))]
+            power += [max(0.0, e[k + 1] - e[k]) for k in range(4)]
+        return power
 
     def _measure(self, energy: list[list[float]]) -> None:
         full = 32768.0 ** 2
-        if self.mode == "pulse":
-            power = [energy[0][0], energy[0][1]]
-        else:                           # per side: below 250 Hz, then each difference up
-            power = []
-            for side in (0, 1):
-                e = [energy[i][side] for i in range(4)]
-                power += [e[0], e[1] - e[0], e[2] - e[1], e[3] - e[2]]
-        dbs = [10 * math.log10(max(x / full, 1e-12)) for x in power]
+        dbs = [10 * math.log10(max(x / full, 1e-12)) for x in self.band_power(energy)]
         now = time.monotonic()
         with self.lock:
             dt = now - self.at if self.at else 0.0
-            prev = self.current_unlocked(now)
+            prev, prev_acc = self.current_unlocked(now)
             n = len(dbs)
             side = n // 2 if n > 2 else 1
             for c, db in enumerate(dbs):
+                band = self._band(c)
                 # The loudest of the last few seconds, falling 3 dB a second.
                 self.peaks[c] = max(db, self.peaks[c] - 3 * dt, -60.0)
-                p = self.peaks[c]
-                target = 0.0 if p <= -55 else min(1.0, max(0.0, (db - (p - self.RANGE_DB)) / self.RANGE_DB))
-                if n > 2 and db < max(dbs[c // side * side:(c // side + 1) * side]) - self.GATE_DB:
+                p, rng = self.peaks[c], self.RANGE_DB[band]
+                target = 0.0 if p <= -55 else min(1.0, max(0.0, (db - (p - rng)) / rng))
+                gated = n > 2 and db < max(dbs[c // side * side:(c // side + 1) * side]) - self.GATE_DB
+                if gated:
                     target = 0.0
                 self.levels[c] = target if target >= prev[c] else prev[c] + (target - prev[c]) * min(1.0, dt / 0.3)
+                # A hit: a sudden rise over the band's own recent average.
+                rise = db - self.averages[c]
+                acc = prev_acc[c]
+                if not gated and p > -55 and rise > self.HIT_DB[band]:
+                    acc = max(acc, min(1.0, 0.5 + (rise - self.HIT_DB[band]) / 12))
+                self.accents[c] = acc
+                self.averages[c] += (db - self.averages[c]) * min(1.0, dt / 0.5)
             self.at = now
 
 
@@ -597,7 +674,8 @@ class Animator:
             return
         self.stop = threading.Event()
         reverse = (bool(st.get("reverse_left")), bool(st.get("reverse_right")))
-        self.thread = threading.Thread(target=self._run, args=(leds, effect, rgb, int(st.get("speed", 5)), self.stop, fade, reverse),
+        rgb2 = rgb_of(clean_color(st.get("color2", DEFAULT_COLOR2)))
+        self.thread = threading.Thread(target=self._run, args=(leds, effect, rgb, int(st.get("speed", 5)), self.stop, fade, reverse, rgb2),
                                        name="pbos-lights", daemon=True)
         self.thread.start()
 
@@ -609,7 +687,7 @@ class Animator:
         self.meter.stop()
 
     def _run(self, leds: list[str], effect: str, rgb, speed: int, stop: threading.Event,
-             fade: float = 0.0, reverse: tuple[bool, bool] = (False, False)) -> None:
+             fade: float = 0.0, reverse: tuple[bool, bool] = (False, False), rgb2=None) -> None:
         shown: list[Any] = [None] * len(leds)
         stars: list[Any] = [None] * len(leds)
         audio = AUDIO_MODES.get(effect)
@@ -629,7 +707,7 @@ class Animator:
             r = min(1.0, k / self.FPS / fade) if fade else 1.0
             ramp = r ** GAMMA
             level = self.meter.current() if audio else 0.0
-            for i, c in enumerate(frame(effect, k / self.FPS, rgb, speed, len(leds), stars, floor, reverse, level)):
+            for i, c in enumerate(frame(effect, k / self.FPS, rgb, speed, len(leds), stars, floor, reverse, level, rgb2)):
                 c = [x * ramp for x in c]
                 value = self.power_smooth(leds[i], c, smooth) if fine else self.power(leds[i], c)
                 if value != shown[i]:

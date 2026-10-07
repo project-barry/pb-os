@@ -495,7 +495,7 @@ function LightsTab() {
         getLights().then((s) => { if (Date.now() - movedAt.current >= 2000) setSt(s); }).catch(() => {});
     }, []);
     const send = useThrottled(useCallback((s) => {
-        setLights(s.on, s.effect, s.color, s.brightness, s.speed, !!s.reverse_left, !!s.reverse_right).catch(() => {});
+        setLights(s.on, s.effect, s.color, s.brightness, s.speed, !!s.reverse_left, !!s.reverse_right, s.color2 || "").catch(() => {});
     }, []));
     useEffect(() => {
         refresh();
@@ -543,6 +543,22 @@ function LightsTab() {
                 disabled: !usable,
                 onChange: (h) => change({ color: hueColor(h) }),
             })));
+        }
+        const audioFx = effect.id === "audio" || effect.id === "spectrum";
+        if (audioFx) {
+            // The audio effects' second colour: what a hit turns a zone towards.
+            const c2 = st.color2 || "ffffff";
+            const swatch2 = jsx("span", { style: { display: "inline-block", width: "14px", height: "14px", borderRadius: "7px",
+                marginLeft: "8px", verticalAlign: "middle", border: "1px solid rgba(255,255,255,0.5)", background: `#${c2}` } });
+            items.push(row(jsx(DFL.SliderField, {
+                label: jsxs("span", { children: ["Intensity Color", swatch2] }),
+                description: jsx("div", { style: { height: "8px", borderRadius: "4px", background: RAINBOW } }),
+                value: colorHue(c2), min: 0, max: 359, step: 3,
+                disabled: !usable,
+                onChange: (h) => change({ color2: hueColor(h) }),
+            })));
+            items.push(note("Hits on the beat turn a zone towards the Intensity Color and up to full Brightness; "
+                + "between hits the Color glows dimmer, with room above it."));
         }
         items.push(row(jsx(DFL.SliderField, {
             label: "Brightness",
@@ -599,6 +615,14 @@ function LightsTab() {
                     onChange: (v) => { const c = rgb.slice(); c[i] = v; change({ color: toColor(c) }); },
                 }))));
                 items.push(note(`#${st.color.toUpperCase()}. The Color slider picks full colours; white and pastels are set here.`));
+                if (effect.id === "audio" || effect.id === "spectrum") {
+                    const rgb2 = toRgb(st.color2 || "ffffff");
+                    ["Intensity Red", "Intensity Green", "Intensity Blue"].forEach((name, i) => items.push(row(jsx(DFL.SliderField, {
+                        label: name,
+                        value: rgb2[i], min: 0, max: 255, step: 1, showValue: true, editableValue: true,
+                        onChange: (v) => { const c = rgb2.slice(); c[i] = v; change({ color2: toColor(c) }); },
+                    }))));
+                }
             }
         }
         if (st.kind === "multicolor") {

@@ -553,7 +553,7 @@ class Plugin:
 
     async def set_lights(self, on: bool = True, effect: str = "static", color: str = DEFAULT_COLOR,
                          brightness: int = 160, speed: int = 5, reverse_left: bool = False,
-                         reverse_right: bool = False, **_: Any) -> dict[str, Any]:
+                         reverse_right: bool = False, color2: str = "", **_: Any) -> dict[str, Any]:
         if self.lights not in EFFECTS:
             return {"kind": ""}
         known = EFFECTS[self.lights]
@@ -570,6 +570,8 @@ class Plugin:
             st = read_json(LIGHTS_STATE)       # keeps the Experimental switches
             st.update({"on": bool(on), "effect": effect, "color": color, "brightness": brightness, "speed": speed,
                        "reverse_left": bool(reverse_left), "reverse_right": bool(reverse_right)})
+            if color2:
+                st["color2"] = clean_color(color2)     # the audio effects' intensity colour
             st.pop("mode", None)
             await asyncio.to_thread(write_json, LIGHTS_STATE, st)
             await asyncio.to_thread(nudge_engine)
