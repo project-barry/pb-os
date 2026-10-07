@@ -415,6 +415,8 @@ def lights_signature() -> tuple[Any, ...]:
 
 
 GAMMA = 2.2
+# A colour's main channels: those at least this share of its strongest one.
+MAIN = 0.25
 # How far (in zones) a zone's light reaches during Spin: 1 = only two zones
 # share the light, each handing over as the other takes it.
 SPIN_WIDTH = 1.5
@@ -431,7 +433,7 @@ def frame(effect: str, t: float, rgb: tuple[int, int, int], speed: int, n: int,
         # v is how bright it should look; LEDs look bright at low power, so
         # the power is v ** 2.2 (as the sleep hook's fade), or fades would
         # seem to snap on and hang before going off.
-        return tuple(round(x * v ** GAMMA) for x in c)
+        return tuple(x * v ** GAMMA for x in c)   # rounded once, in Animator
 
     def hue(h):
         return tuple(int(x * 255) for x in colorsys.hsv_to_rgb(h % 1.0, 1.0, 1.0))
@@ -491,6 +493,7 @@ class Animator:
         self.stop = threading.Event()
         self.failed: set[str] = set()
         self.order: dict[str, list[int]] = {}
+        self.level = 1.0
 
     def apply(self, st: dict[str, Any]) -> None:
         self.halt()
@@ -499,16 +502,19 @@ class Animator:
         leds = zones()
         on = st.get("on", True)
         rgb = rgb_of(clean_color(st.get("color", DEFAULT_COLOR)))
+        # The zones' own brightness stays at full and the set brightness goes
+        # into the channels (power()): the kernel would otherwise scale each
+        # channel again and round it down, and a fading pink came out as red
+        # alone near the end (blue already 0, red still 1).
+        self.level = max(0, min(255, int(st.get("brightness", 160)))) / 255
         for led in leds:
-            top = int(rd(f"{led}/max_brightness", "255") or 255)
-            level = max(0, min(top, int(st.get("brightness", 160)) * top // 255)) if on else 0
-            self._write(led, "brightness", level)
+            self._write(led, "brightness", rd(f"{led}/max_brightness", "255") if on else 0)
         if not on:
             return
         effect = st.get("effect", "static")
         if effect == "static":
             for led in leds:
-                self._color(led, rgb)
+                self._write(led, "multi_intensity", self.power(led, rgb))
             return
         self.stop = threading.Event()
         self.thread = threading.Thread(target=self._run, args=(leds, effect, rgb, int(st.get("speed", 5)), self.stop),
@@ -532,16 +538,22 @@ class Animator:
         k = 0
         while not stop.is_set():
             for i, c in enumerate(frame(effect, k / self.FPS, rgb, speed, len(leds), stars)):
-                if c != shown[i]:
-                    self._color(leds[i], c)
-                    shown[i] = c
+                value = self.power(leds[i], c)
+                if value != shown[i]:
+                    self._write(leds[i], "multi_intensity", value)
+                    shown[i] = value
             k += 1
             late = time.monotonic() - (t0 + k / self.FPS)
             if late > 1 / self.FPS:
                 k += int(late * self.FPS)
             stop.wait(max(0.0, t0 + k / self.FPS - time.monotonic()))
 
-    def _color(self, led: str, rgb) -> None:
+    def power(self, led: str, rgb) -> str:
+        """multi_intensity for rgb (0-255, may be fractional) at the set
+        brightness: each channel's final power, rounded once. Near the end of
+        a fade a main channel of the colour (MAIN of the strongest or more)
+        would round to 0 while another is still lit, tinting the zone, so the
+        zone is off from there."""
         top = int(rd(f"{led}/max_brightness", "255") or 255)
         # multi_intensity follows the zone's multi_index, which on the Retroid
         # Pocket 6 / Nova is "blue green red".
@@ -549,7 +561,11 @@ class Animator:
             names = rd(f"{led}/multi_index").split()
             self.order[led] = [("red", "green", "blue").index(n) for n in names] \
                 if sorted(names) == ["blue", "green", "red"] else [0, 1, 2]
-        self._write(led, "multi_intensity", " ".join(str(rgb[i] * top // 255) for i in self.order[led]))
+        ch = [c * self.level * top / 255 for c in rgb]
+        strongest = max(ch)
+        if any(x < 0.5 for x in ch if x >= MAIN * strongest):
+            ch = [0.0, 0.0, 0.0]
+        return " ".join(str(round(ch[i])) for i in self.order[led])
 
     def _write(self, led: str, attr: str, value: Any) -> None:
         try:
