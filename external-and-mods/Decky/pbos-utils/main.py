@@ -461,10 +461,12 @@ class Animator:
         self.thread: threading.Thread | None = None
         self.stop = threading.Event()
         self.failed: set[str] = set()
+        self.order: dict[str, list[int]] = {}
 
     def apply(self, st: dict[str, Any]) -> None:
         self.halt()
         self.failed = set()
+        self.order = {}   # read again: the devices may be new
         leds = zones()
         on = st.get("on", True)
         rgb = rgb_of(clean_color(st.get("color", DEFAULT_COLOR)))
@@ -504,7 +506,13 @@ class Animator:
 
     def _color(self, led: str, rgb) -> None:
         top = int(rd(f"{led}/max_brightness", "255") or 255)
-        self._write(led, "multi_intensity", " ".join(str(c * top // 255) for c in rgb))
+        # multi_intensity follows the zone's multi_index, which on the Retroid
+        # Pocket 6 / Nova is "blue green red".
+        if led not in self.order:
+            names = rd(f"{led}/multi_index").split()
+            self.order[led] = [("red", "green", "blue").index(n) for n in names] \
+                if sorted(names) == ["blue", "green", "red"] else [0, 1, 2]
+        self._write(led, "multi_intensity", " ".join(str(rgb[i] * top // 255) for i in self.order[led]))
 
     def _write(self, led: str, attr: str, value: Any) -> None:
         try:
