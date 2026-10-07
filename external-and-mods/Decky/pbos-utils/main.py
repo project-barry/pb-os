@@ -20,28 +20,31 @@ Install  moves SteamOS between the microSD card and internal storage, with
 Lights   stick lighting: on/off, a colour, brightness and effects. On the
          KONKR Pocket FIT pbosd owns it (its state file, applied on SIGHUP,
          shared with the K button and pbosctl) and the stick MCU renders the
-         effects; on the Retroid Pocket 6 and Nova this drives the multicolor
-         LEDs itself (Animator) and sets them again at each start. The AYN
-         Thor's lights stay in Barry Launcher.
+         effects; on the Retroid Pocket 6 and Nova the light engine
+         (py_modules/pbos_lights.py, its own unit on the system's native
+         Python) drives the multicolor LEDs and sets them again after a
+         sleep; this saves the settings and nudges it. The AYN Thor's lights
+         stay in Barry Launcher.
 """
 from __future__ import annotations
 
 import asyncio
-import glob
-import itertools
 import json
-import math
-import array
 import os
-import pwd
-import random
 import re
 import subprocess
+import sys
 import threading
 import time
 from typing import Any
 
 import decky
+
+# The light engine module, shared with its native process (see ENGINE).
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "py_modules"))
+from pbos_lights import (  # noqa: E402
+    AUDIO_MODES, DEFAULT_COLOR, EFFECTS, LIGHTS_STATE, clean_color, lights_kind,
+    multicolor_effects, multicolor_lights, pbosd_lights, pbosd_lights_set, pbosd_set)
 
 UPDATER = "/usr/share/konkr-update/konkr-update.py"
 UNIT = "pbos-update"
@@ -89,11 +92,6 @@ PERCENT = re.compile(r"\s(\d{1,3})%\s")
 # takes a while, so they are kept this long.
 SIZES_TTL = 600
 
-PBOSD_STATE = "/var/lib/pbosd/state.json"
-LIGHTS_STATE = "/var/lib/pbos-utils/lights.json"
-# Retroid Pocket 6 / Nova: four RGB groups around each stick
-# (leds-group-multicolor, functions l1..l4 and r1..r4).
-MULTICOLOR = "/sys/class/leds/rgb:[lr][1-4]"
 CLEAN_ENV = {"PATH": "/usr/bin:/usr/sbin", "LANG": "C.UTF-8"}
 
 
@@ -291,713 +289,34 @@ class MoveLog:
                 "exit": self.exit, "lines": self.lines}
 
 
-# ------------------------------------------------------------------ lights --
-# Effects, named like the RGB apps gamers know (Armoury Crate, Synapse,
-# iCUE). On the KONKR Pocket FIT the stick MCU renders them itself; on the
-# Retroid Pocket 6 and Nova, Animator does, here. "color": the effect uses
-# the picked colour; "speed": it has a speed; "turns": it goes round the
-# sticks, and each stick's direction can be reversed.
-EFFECTS = {
-    "pbosd": [
-        {"id": "static", "label": "Static", "color": True, "speed": False},
-        {"id": "breathing", "label": "Breathing", "color": True, "speed": False},
-        {"id": "rainbow", "label": "Rainbow", "color": False, "speed": False},
-    ],
-    "multicolor": [
-        {"id": "static", "label": "Static", "color": True, "speed": False},
-        {"id": "breathing", "label": "Breathing", "color": True, "speed": True},
-        {"id": "cycle", "label": "Color Cycle", "color": False, "speed": True},
-        {"id": "wave", "label": "Rainbow Wave", "color": False, "speed": True, "turns": True},
-        {"id": "spin", "label": "Spin", "color": True, "speed": True, "turns": True},
-        {"id": "starlight", "label": "Starlight", "color": True, "speed": True},
-    ],
-}
-# pbosd's state names for the MCU's modes.
-PBOSD_MODES = {"static": "static", "breathing": "breath", "rainbow": "rainbow"}
-DEFAULT_COLOR = "ff3c00"
-
-
-def lights_kind() -> str:
-    compat = rd("/sys/firmware/devicetree/base/compatible")
-    if "ayn,thor" in compat:
-        return ""   # Barry Launcher's Lights tab
-    # pbosd ships in the SM8550 image too, but only runs on these (its unit's
-    # ExecCondition).
-    if re.search(r"KONKR Pocket FIT|AYANEO Pocket S2", rd("/sys/firmware/devicetree/base/model")):
-        return "pbosd"
-    if glob.glob(MULTICOLOR):
-        return "multicolor"
-    return ""
-
-
-def clean_color(color: Any) -> str:
-    color = str(color).lstrip("#").lower()[:6]
-    return color if re.fullmatch(r"[0-9a-f]{6}", color) else DEFAULT_COLOR
-
-
-def rgb_of(color: str) -> tuple[int, int, int]:
-    return tuple(int(color[i:i + 2], 16) for i in (0, 2, 4))  # type: ignore[return-value]
-
-
-def pbosd_lights() -> dict[str, Any]:
-    st = read_json(PBOSD_STATE)
-    rgb = st.get("rgb") or {}
-    mode = rgb.get("mode", "static")
-    on = mode != "off"
-    # Off keeps what was on in last_mode/last_color, as pbosd's K button does.
-    shown = mode if on else rgb.get("last_mode", "static")
-    effect = next((e for e, m in PBOSD_MODES.items() if m == shown), "static")
-    color = rgb.get("color") if on else rgb.get("last_color", rgb.get("color"))
-    return {"on": on, "effect": effect, "color": clean_color(color or DEFAULT_COLOR),
-            "brightness": int(rgb.get("brightness", 160)), "speed": 5,
-            "power_led": st.get("power_led", True) is not False,
-            "available": bool(glob.glob("/sys/class/leds/*joysticks*")),
-            "daemon": subprocess.run(["systemctl", "is-active", "--quiet", "pbosd"]).returncode == 0}
-
-
-def pbosd_set(**changes: Any) -> None:
-    # Only the lighting keys: PB-OS Control writes the same file for the rest.
-    st = read_json(PBOSD_STATE)
-    st.update(changes)
-    write_json(PBOSD_STATE, st)
-    subprocess.run(["systemctl", "kill", "-s", "HUP", "pbosd.service"], check=False)
-
-
-def pbosd_lights_set(on: bool, effect: str, color: str, brightness: int) -> None:
-    old = read_json(PBOSD_STATE).get("rgb") or {}
-    mode = PBOSD_MODES.get(effect, "static")
-    if on:
-        rgb = {"mode": mode, "color": color, "brightness": brightness}
-    else:
-        rgb = {"mode": "off", "color": color, "brightness": brightness,
-               "last_mode": mode, "last_color": color}
-    for k in ("last_mode", "last_color"):
-        if on and k in old:
-            rgb[k] = old[k]
-    pbosd_set(rgb=rgb)
-
-
-# Experimental, switched on in the Lighting tab's Experimental section
-# (Audio Effects); they follow what the device plays.
-AUDIO_EFFECTS = [
-    {"id": "audio", "label": "Audio Pulse", "color": True, "speed": False, "experimental": True},
-    {"id": "spectrum", "label": "Audio Spectrum", "color": True, "speed": False, "experimental": True},
-]
-AUDIO_MODES = {"audio": "pulse", "spectrum": "spectrum"}
-
-
-def multicolor_effects(audio: bool) -> list[dict[str, Any]]:
-    return EFFECTS["multicolor"] + (AUDIO_EFFECTS if audio else [])
-
-
-def multicolor_lights() -> dict[str, Any]:
-    st = read_json(LIGHTS_STATE)
-    # Before effects there was a mode: static or off.
-    on = st.get("on", st.get("mode") != "off")
-    audio = bool(st.get("experimental_audio", False))
-    effect = st.get("effect", "static")
-    if effect not in {e["id"] for e in multicolor_effects(audio)}:
-        effect = "static"
-    return {"on": bool(on), "effect": effect, "color": clean_color(st.get("color", DEFAULT_COLOR)),
-            "experimental_audio": audio, "effect_before_audio": st.get("effect_before_audio", "static"),
-            "brightness": max(0, min(255, int(st.get("brightness", 160)))),
-            "speed": max(1, min(10, int(st.get("speed", 5)))),
-            "reverse_left": bool(st.get("reverse_left", False)), "reverse_right": bool(st.get("reverse_right", False)),
-            "available": bool(glob.glob(MULTICOLOR))}
-
-
-# Each ring clockwise from the top, left stick then right, by device model.
-# The zones' numbers don't follow the rings the same way on every stick or
-# device, though both share a device tree (mapped by eye 2026-10-07: on the
-# RP6 the left ring sits a quarter turn on from the Nova's and the right is
-# numbered the other way round).
-RING_ORDERS = {
-    "Retroid Pocket Nova": ("l3", "l2", "l1", "l4", "r4", "r1", "r2", "r3"),
-    "Retroid Pocket 6": ("l2", "l1", "l4", "l3", "r3", "r2", "r1", "r4"),
-}
-RING_ORDER = RING_ORDERS["Retroid Pocket Nova"]
-
-
-def ring_order() -> tuple[str, ...]:
-    model = rd("/sys/firmware/devicetree/base/model").rstrip("\0")
-    return next((o for name, o in RING_ORDERS.items() if model.startswith(name)), RING_ORDER)
-
-
-def zones() -> list[str]:
-    """The stick LEDs in ring order (ring_order()), so Spin and Rainbow Wave
-    go round each stick, both sticks in step."""
-    found = {p.rsplit(":", 1)[-1]: p for p in glob.glob(MULTICOLOR)}
-    order = ring_order()
-    if set(found) == set(order):
-        return [found[z] for z in order]
-    return sorted(found.values(), key=lambda p: (p[-2], p[-1]))
-
-
-def lights_signature() -> tuple[int, ...]:
-    """Changes when the stick LED devices were made again, which loses what
-    was set (white and off): the SM8550 sleep test unbinds their controllers
-    for sleep. A plain sleep keeps the LEDs; the sleep hook fades them."""
-    inodes = []
-    for z in zones():
-        try:
-            inodes.append(os.stat(z).st_ino)
-        except OSError:
-            inodes.append(0)
-    return tuple(inodes)
-
-
-GAMMA = 2.2
-# Audio Spectrum: which band (0 bass, 1 low mids, 2 high mids, 3 treble)
-# each place round a ring shows (0 top, clockwise), per stick: bass at the
-# bottom, treble at the top, low mids on the outer side, high mids inner.
-SPECTRUM_PLACES = ((3, 2, 0, 1), (3, 1, 0, 2))
-
-
-def even_hue(h: float) -> tuple[float, float, float]:
-    """A full colour of hue h (0-1) at the same total power for every hue:
-    red to green to blue and back, each pair crossing over linearly. The
-    usual rainbow lights two channels fully for yellow, cyan and magenta,
-    twice the power of red, green or blue, and looked brighter there."""
-    h = (h % 1.0) * 3
-    i, f = int(h) % 3, h - int(h)
-    ch = [0.0, 0.0, 0.0]
-    ch[i], ch[(i + 1) % 3] = 255 * (1 - f), 255 * f
-    return tuple(ch)
-
-# Seconds the stick lights take to come back after a sleep: the sleep hook's
-# fade-out (sm8550-sleep), the other way round.
-FADE_IN = 0.3
-# A colour's main channels: those at least this share of its strongest one.
-MAIN = 0.25
-# How much light each channel gives the eye (Rec. 709 luma: red, green, blue).
-LUMA = (0.2126, 0.7152, 0.0722)
-# Breathing goes no dimmer than where the weakest main channel has this many
-# power steps left.
-FLOOR_STEPS = 4
-# How far (in zones) a zone's light reaches during Spin: 1 = only two zones
-# share the light, each handing over as the other takes it.
-SPIN_WIDTH = 1.5
-
-
-def frame(effect: str, t: float, rgb: tuple[int, int, int], speed: int, n: int,
-          stars: list[float], floor: float = 0.0,
-          reverse: tuple[bool, bool] = (False, False), level: Any = 0.0) -> list[tuple[int, int, int]]:
-    """Each zone's colour at time t (seconds). Zones go round each ring of
-    n // 2; both sticks show the same."""
-    ring = max(1, n // 2)
-    fast = (speed - 1) / 9
-
-    def place(i):
-        # Zone i's place round its ring (0 = top, clockwise); a reversed
-        # stick is mirrored, so its light starts at the top and turns the
-        # other way.
-        p = i % ring
-        return (ring - p) % ring if reverse[min(i // ring, 1)] else p                     # 0 slowest .. 1 fastest
-
-    def scale(c, v):
-        # v is how bright it should look; LEDs look bright at low power, so
-        # the power is v ** 2.2 (as the sleep hook's fade), or fades would
-        # seem to snap on and hang before going off.
-        return tuple(x * v ** GAMMA for x in c)   # rounded once, in Animator
-
-    if effect == "breathing":
-        # Breathes between floor (Animator.floor(): the dimmest level that
-        # still shows the colour) and full.
-        # Steady through the dim end and slowing only towards full: a sine
-        # lingered at the bottom, where one power step is a visible jump, so
-        # it held there and then jumped (Nova, brightness 70).
-        period = 8 - 6.5 * fast
-        w = 1 - abs(2 * ((t / period) % 1) - 1)          # 0 -> 1 -> 0, straight
-        v = floor + (1 - floor) * math.sin(math.pi / 2 * w)
-        return [scale(rgb, v)] * n
-    if effect == "cycle":
-        return [even_hue(t / (24 - 21 * fast))] * n
-    if effect == "wave":
-        period = 6 - 5 * fast
-        # Hues laid round the ring the other way from its places, so the
-        # rainbow turns clockwise like Spin.
-        return [even_hue(t / period + (ring - place(i)) % ring / ring) for i in range(n)]
-    if effect == "spin":
-        # One light going round. Each zone fades up as the light comes within
-        # SPIN_WIDTH zones of it and down as it leaves, so the next zone is
-        # already rising while this one peaks and the last is still fading:
-        # through the Nova's clear shell, no gap between zones. The raised
-        # cosines add up to the same total wherever the light is.
-        # One turn takes 6 s at speed 1 down to 0.5 s at 10, each notch the
-        # same factor faster.
-        head = (t / (6 * (0.5 / 6) ** fast)) * ring
-        out = []
-        for i in range(n):
-            d = abs((head - place(i) + ring / 2) % ring - ring / 2)   # distance round the ring
-            v = math.cos(math.pi * d / (2 * SPIN_WIDTH)) ** 2 if d < SPIN_WIDTH else 0.0
-            out.append(scale(rgb, v))
-        return out
-    if effect in ("audio", "spectrum"):
-        # level (AudioMeter): how loud the sound is now, 0-1 per channel;
-        # each zone between the colour's dimmest true level (a glow, so it
-        # shows it's on) and full.
-        lv = list(level) if isinstance(level, (list, tuple)) else [level, level]
-        out = []
-        for i in range(n):
-            side = min(i // ring, 1)
-            if effect == "audio":                 # stereo: each stick its side
-                v = lv[side] if len(lv) > side else lv[0]
-            else:                                 # each stick its side's four bands
-                v = lv[side * 4 + SPECTRUM_PLACES[side][i % ring]] if len(lv) >= 8 else 0.0
-            out.append(scale(rgb, floor + (1 - floor) * v))
-        return out
-    if effect == "starlight":
-        # Each zone twinkles on its own: every twinkle has its own length
-        # (around `life`) and peak, and the wait before the next is drawn
-        # like natural random events (exponential), so no rhythm forms.
-        # stars[i] = [start, length, peak] of the zone's current or next
-        # twinkle; the times are seconds, so the frame rate doesn't matter.
-        life = 2.4 - 1.8 * fast
-        out = []
-        for i in range(n):
-            if i >= len(stars) or not isinstance(stars[i], list):
-                stars[i:i + 1] = [[t + random.expovariate(1 / life), 0.0, 0.0]]
-            st = stars[i]
-            if st[1] == 0.0 or t > st[0] + st[1]:    # new twinkle after a random wait
-                st[0] = max(t, st[0] + st[1]) + random.expovariate(1 / (0.8 * life))
-                st[1] = life * random.uniform(0.6, 1.4)
-                st[2] = random.uniform(0.45, 1.0)
-            age = t - st[0]
-            v = st[2] * math.sin(math.pi * age / st[1]) if 0 <= age <= st[1] else 0.0
-            out.append(scale(rgb, v))
-        return out
-    return [rgb] * n
-
-
-# Audio Spectrum's bands, by PipeWire's filter-chain (native biquads; Python
-# has no numpy here): per side bass < 250 Hz, low mids 250 Hz-1 kHz, high
-# mids 1-4 kHz, treble > 4 kHz, out as an 8-channel source AUX0-7 (left
-# bass..treble, right bass..treble). Its input listens like Audio Pulse:
-# passive, not movable, the default output's monitor.
-BANDS_CONF = "/run/pbos-utils/bands.conf"
-BANDS_NODE = "pbos-utils-bands"
-BAND_FILTERS = (("bq_lowpass", 250.0, None), ("bq_bandpass", 500.0, 0.7),
-                ("bq_bandpass", 2000.0, 0.7), ("bq_highpass", 4000.0, None))
-
-
-def bands_conf() -> str:
-    nodes, links, outs = [], [], []
-    for side in ("l", "r"):
-        nodes.append(f'{{ type = builtin name = in_{side} label = copy }}')
-        for b, (label, freq, q) in enumerate(BAND_FILTERS):
-            ctl = f'"Freq" = {freq}' + (f' "Q" = {q}' if q else "")
-            nodes.append(f'{{ type = builtin name = b{b}_{side} label = {label} control = {{ {ctl} }} }}')
-            links.append(f'{{ output = "in_{side}:Out" input = "b{b}_{side}:In" }}')
-            outs.append(f'"b{b}_{side}:Out"')
-    nl = "\n                    "
-    return f"""# Written by PB-OS Utils for Audio Spectrum; run while it shows.
-context.properties = {{ log.level = 0 }}
-context.spa-libs = {{
-    audio.convert.* = audioconvert/libspa-audioconvert
-    support.*       = support/libspa-support
-}}
-context.modules = [
-    {{ name = libpipewire-module-rt flags = [ ifexists nofail ] }}
-    {{ name = libpipewire-module-protocol-native }}
-    {{ name = libpipewire-module-client-node }}
-    {{ name = libpipewire-module-adapter }}
-    {{ name = libpipewire-module-filter-chain
-        args = {{
-            node.description = "PB-OS Utils lighting bands"
-            media.name       = "PB-OS Utils lighting bands"
-            filter.graph = {{
-                nodes = [
-                    {nl.join(nodes)}
-                ]
-                links = [
-                    {nl.join(links)}
-                ]
-                inputs  = [ "in_l:In" "in_r:In" ]
-                outputs = [ {" ".join(outs)} ]
-            }}
-            capture.props = {{
-                node.name = "{BANDS_NODE}-in"
-                audio.channels = 2
-                audio.position = [ FL FR ]
-                stream.capture.sink = true
-                node.passive = true
-                node.dont-move = true
-            }}
-            playback.props = {{
-                node.name = "{BANDS_NODE}"
-                media.class = "Audio/Source"
-                audio.channels = 8
-                audio.position = [ AUX0 AUX1 AUX2 AUX3 AUX4 AUX5 AUX6 AUX7 ]
-                node.passive = true
-            }}
-        }}
-    }}
-]
-"""
-
-
-class AudioMeter:
-    """How loud the device's sound output is, for the audio effects, as the
-    user that owns the sound session; never a microphone.
-
-    "pulse" (Audio Pulse): the default output's monitor in stereo, 8 kHz:
-    levels [left, right]. "spectrum" (Audio Spectrum): the same through the
-    band filter (bands_conf, its own pipewire process), 16 kHz, 8 channels:
-    levels [left bass..treble, right bass..treble].
-
-    Every stream is passive (node.passive): it never keeps the sound card
-    running, so with nothing playing it gets no data and the light rests at
-    its glow; and can't be moved (node.dont-move), so the sleep hook's
-    shuffle of streams onto its silent stand-in can't land it on another
-    source after a wake. It runs only while an audio effect shows, and
-    starts again if it ends or the default output changes. pw-record runs
-    unbuffered: it writes a pipe in 4 kB blocks, and measured on the Nova
-    the light came 0.9 s after the sound; unbuffered about 0.1 s.
-
-    Each channel follows loudness in dB against its own loudest of the last
-    few seconds (quiet and loud playback both light, bass doesn't drown the
-    treble), rising at once and falling over about 0.3 s. In "spectrum" a
-    band far below the loudest band on its side stays dark, so the filters'
-    overlap doesn't light it."""
-
-    RANGE_DB = 30.0               # quietest that still lights, below the recent loudest
-    GATE_DB = 24.0                # spectrum: a band this far below its side's loudest is dark
-    MODES = {"pulse": (8000, 2), "spectrum": (16000, 8)}
-
-    def __init__(self) -> None:
-        self.lock = threading.Lock()
-        self.proc: subprocess.Popen | None = None
-        self.bands: subprocess.Popen | None = None
-        self.running = threading.Event()
-        self.stopped = threading.Event()     # ends the waits between tries at once
-        self.thread: threading.Thread | None = None
-        self.mode = "pulse"
-        self._reset()
-
-    def _reset(self) -> None:
-        n = self.MODES[self.mode][1]
-        self.levels = [0.0] * n
-        self.peaks = [-60.0] * n
-        self.at = 0.0                 # when the levels were last measured
-
-    def start(self, mode: str = "pulse") -> None:
-        if self.running.is_set() and mode == self.mode:
-            return
-        self.stop()
-        self.mode = mode if mode in self.MODES else "pulse"
-        with self.lock:
-            self._reset()
-        self.stopped.clear()
-        self.running.set()
-        self.thread = threading.Thread(target=self._supervise, name="pbos-audio", daemon=True)
-        self.thread.start()
-
-    def stop(self) -> None:
-        self.running.clear()
-        self.stopped.set()
-        self._kill()
-        if self.thread:
-            self.thread.join(timeout=2)
-            self.thread = None
-        with self.lock:
-            self.levels = [0.0] * len(self.levels)
-
-    def current(self) -> list[float]:
-        """The levels now; they fall away when no sound has come (nothing playing)."""
-        with self.lock:
-            return self.current_unlocked(time.monotonic())
-
-    def current_unlocked(self, now: float) -> list[float]:
-        if not self.at:
-            return [0.0] * len(self.levels)
-        k = math.exp(-max(0.0, now - self.at - 0.05) / 0.3)
-        return [v * k for v in self.levels]
-
-    def _kill(self) -> None:
-        for name in ("proc", "bands"):
-            p = getattr(self, name)
-            setattr(self, name, None)
-            if p and p.poll() is None:
-                p.terminate()
-                try:
-                    p.wait(timeout=1)
-                except subprocess.TimeoutExpired:
-                    p.kill()
-
-    @staticmethod
-    def _session() -> tuple[str, str] | None:
-        """The user with the sound session (Game Mode's steamos) and its runtime dir."""
-        for user in ("steamos",):
-            try:
-                uid = pwd.getpwnam(user).pw_uid
-            except KeyError:
-                continue
-            rt = f"/run/user/{uid}"
-            if os.path.exists(f"{rt}/pipewire-0"):
-                return user, rt
-        return None
-
-    @staticmethod
-    def _default_sink(user: str, rt: str) -> str:
-        r = subprocess.run(["runuser", "-u", user, "--", "env", f"XDG_RUNTIME_DIR={rt}", "pactl", "get-default-sink"],
-                           capture_output=True, text=True, timeout=5)
-        return r.stdout.strip()
-
-    def _command(self, user: str, rt: str) -> list[str]:
-        rate, ch = self.MODES[self.mode]
-        argv = ["runuser", "-u", user, "--", "env", f"XDG_RUNTIME_DIR={rt}", "stdbuf", "-o0",
-                "pw-record", "--raw", "--rate", str(rate), "--channels", str(ch), "--format", "s16", "--latency", "32ms"]
-        if self.mode == "spectrum":
-            # The band filter's channels are AUX0-7: asked for by those names,
-            # or PipeWire matches only the two it can place (seen on the Nova).
-            return argv + ["--channel-map", ",".join(f"AUX{i}" for i in range(8)), "--target", BANDS_NODE,
-                           "-P", "{ node.passive=true node.dont-move=true node.name=pbos-utils-lighting }", "-"]
-        return argv + ["-P", "{ stream.capture.sink=true node.passive=true node.dont-move=true "
-                             "node.name=pbos-utils-lighting media.name=\"PB-OS Utils lighting\" }", "-"]
-
-    def _supervise(self) -> None:
-        while self.running.is_set():
-            sess = self._session()
-            if not sess:
-                self.stopped.wait(5)
-                continue
-            user, rt = sess
-            try:
-                sink = self._default_sink(user, rt)
-                if self.mode == "spectrum":
-                    os.makedirs(os.path.dirname(BANDS_CONF), exist_ok=True)
-                    with open(BANDS_CONF, "w", encoding="utf-8") as fh:
-                        fh.write(bands_conf())
-                    os.chmod(BANDS_CONF, 0o644)
-                    self.bands = subprocess.Popen(["runuser", "-u", user, "--", "env", f"XDG_RUNTIME_DIR={rt}",
-                                                   "pipewire", "-c", BANDS_CONF],
-                                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                    self.stopped.wait(0.5)      # its nodes appear
-                self.proc = subprocess.Popen(self._command(user, rt), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-            except (OSError, subprocess.SubprocessError) as e:
-                decky.logger.info(f"Audio effects: can't listen: {e}")
-                self._kill()
-                self.stopped.wait(5)
-                continue
-            self._read(self.proc, user, rt, sink)
-            self._kill()
-            self.stopped.wait(1)
-
-    def _read(self, proc: subprocess.Popen, user: str, rt: str, sink: str) -> None:
-        rate, ch = self.MODES[self.mode]
-        fd = proc.stdout.fileno()
-        buf = b""
-        checked = time.monotonic()
-        n = rate // 30 * ch * 2          # one frame's worth of samples, all channels
-        while self.running.is_set():
-            data = os.read(fd, 1 << 16)
-            if not data:
-                return                  # pw-record ended: start again
-            buf += data
-            while len(buf) >= n:
-                self._measure(buf[:n], ch)
-                buf = buf[n:]
-            if time.monotonic() - checked > 5:
-                checked = time.monotonic()
-                if self._default_sink(user, rt) != sink:
-                    return              # other output (headphones): listen to that one
-
-    def _measure(self, chunk: bytes, ch: int) -> None:
-        samples = array.array("h", chunk)
-        dbs = []
-        for c in range(ch):
-            part = samples[c::ch]
-            rms = math.sqrt(sum(x * x for x in part) / max(1, len(part))) / 32768
-            dbs.append(20 * math.log10(max(rms, 1e-6)))
-        now = time.monotonic()
-        with self.lock:
-            dt = now - self.at if self.at else 0.0
-            prev = self.current_unlocked(now)
-            side = ch // 2 if ch > 2 else 1
-            for c, db in enumerate(dbs):
-                # The loudest of the last few seconds, falling 3 dB a second.
-                self.peaks[c] = max(db, self.peaks[c] - 3 * dt, -60.0)
-                p = self.peaks[c]
-                target = 0.0 if p <= -55 else min(1.0, max(0.0, (db - (p - self.RANGE_DB)) / self.RANGE_DB))
-                if ch > 2 and db < max(dbs[c // side * side:(c // side + 1) * side]) - self.GATE_DB:
-                    target = 0.0
-                self.levels[c] = target if target >= prev[c] else prev[c] + (target - prev[c]) * min(1.0, dt / 0.3)
-            self.at = now
-
-
-class Animator:
-    """Drives the Retroid Pocket 6 / Nova stick LEDs. Static and off are
-    written once; effects run in a thread at FPS, writing only zones whose
-    colour changed (each write is an I2C transfer to the LED driver)."""
-
-    # Measured on the Nova (Spin, 20 s each): 20 and 30 fps both cost ~1.7 %
-    # of one core, 60 fps 3.7 %; a frame's writes take under 1 ms. Battery
-    # draw was below what the rest of the system varies by at all three.
-    FPS = 30
-
-    def __init__(self) -> None:
-        self.thread: threading.Thread | None = None
-        self.stop = threading.Event()
-        self.failed: set[str] = set()
-        self.order: dict[str, list[int]] = {}
-        self.tops: dict[str, int] = {}
-        self.level = 1.0
-        self.meter = AudioMeter()
-
-    def apply(self, st: dict[str, Any], fade: float = 0.0) -> None:
-        """Show st; with fade, brighten from off to it over that many seconds
-        (the effect already running underneath)."""
-        self.halt()
-        self.failed = set()
-        self.order, self.tops = {}, {}   # read again: the devices may be new
-        leds = zones()
-        on = st.get("on", True)
-        rgb = rgb_of(clean_color(st.get("color", DEFAULT_COLOR)))
-        # The zones' own brightness stays at full and the set brightness goes
-        # into the channels (power()): the kernel would otherwise scale each
-        # channel again and round it down, and a fading pink came out as red
-        # alone near the end (blue already 0, red still 1).
-        self.level = max(0, min(255, int(st.get("brightness", 160)))) / 255
-        if not on:
-            for led in leds:
-                self._write(led, "brightness", 0)
-            return
-        effect = st.get("effect", "static")
-        # The colour first, then the brightness: LEDs made again (after a
-        # sleep) start at full white, and brightness first flashed it.
-        for i, led in enumerate(leds):
-            first = [0, 0, 0] if fade else frame(effect, 0.0, rgb, int(st.get("speed", 5)), len(leds), [-100.0] * len(leds),
-                                                  0.0, (bool(st.get("reverse_left")), bool(st.get("reverse_right"))))[i]
-            self._write(led, "multi_intensity", self.power(led, first))
-            self._write(led, "brightness", rd(f"{led}/max_brightness", "255"))
-        if effect == "static" and not fade:
-            return
-        self.stop = threading.Event()
-        reverse = (bool(st.get("reverse_left")), bool(st.get("reverse_right")))
-        self.thread = threading.Thread(target=self._run, args=(leds, effect, rgb, int(st.get("speed", 5)), self.stop, fade, reverse),
-                                       name="pbos-lights", daemon=True)
-        self.thread.start()
-
-    def halt(self) -> None:
-        if self.thread:
-            self.stop.set()
-            self.thread.join(timeout=2)
-            self.thread = None
-        self.meter.stop()
-
-    def _run(self, leds: list[str], effect: str, rgb, speed: int, stop: threading.Event,
-             fade: float = 0.0, reverse: tuple[bool, bool] = (False, False)) -> None:
-        shown: list[Any] = [None] * len(leds)
-        stars: list[Any] = [None] * len(leds)
-        audio = AUDIO_MODES.get(effect)
-        floor = self.floor(leds[0], rgb) if leds and (effect == "breathing" or audio) else 0.0
-        fine = effect in ("breathing", "starlight") or bool(audio)    # fades: power_smooth
-        if audio:
-            self.meter.start(audio)
-        smooth: dict[str, Any] = {}     # Breathing: last pick per zone (power_smooth)
-        # Frame k is drawn for exactly k / FPS and written at that time, so
-        # the steps are even and the rate is FPS, not FPS minus the time the
-        # writes take. Behind by more than a frame (busy, or paused): skip
-        # to the current one rather than rush to catch up.
-        t0 = time.monotonic()
-        k = 0
-        while not stop.is_set():
-            # Fading in: the sleep hook's fade-out reversed (x ** 2.2).
-            r = min(1.0, k / self.FPS / fade) if fade else 1.0
-            ramp = r ** GAMMA
-            level = self.meter.current() if audio else 0.0
-            for i, c in enumerate(frame(effect, k / self.FPS, rgb, speed, len(leds), stars, floor, reverse, level)):
-                c = [x * ramp for x in c]
-                value = self.power_smooth(leds[i], c, smooth) if fine else self.power(leds[i], c)
-                if value != shown[i]:
-                    self._write(leds[i], "multi_intensity", value)
-                    shown[i] = value
-            if effect == "static" and r >= 1:
-                return          # faded in; static needs no more frames
-            if self.failed:
-                return          # LEDs gone (unbound for sleep): the fade-in starts it again
-            k += 1
-            late = time.monotonic() - (t0 + k / self.FPS)
-            if late > 1 / self.FPS:
-                k += int(late * self.FPS)
-            stop.wait(max(0.0, t0 + k / self.FPS - time.monotonic()))
-
-    def top(self, led: str) -> int:
-        """The zone's max_brightness, read once per apply (each power() runs
-        30 times a second per zone)."""
-        if led not in self.tops:
-            self.tops[led] = int(rd(f"{led}/max_brightness", "255") or 255)
-        return self.tops[led]
-
-    def channels(self, led: str) -> list[int]:
-        """Where red, green and blue go in multi_intensity: its multi_index,
-        which on the Retroid Pocket 6 / Nova is "blue green red"."""
-        if led not in self.order:
-            names = rd(f"{led}/multi_index").split()
-            self.order[led] = [("red", "green", "blue").index(n) for n in names] \
-                if sorted(names) == ["blue", "green", "red"] else [0, 1, 2]
-        return self.order[led]
-
-    def floor(self, led: str, rgb) -> float:
-        """The dimmest level (as it looks, 0-1) at which rgb at the set
-        brightness still has FLOOR_STEPS power steps in its weakest main
-        channel. Below that the few whole steps left can't hold the colour
-        (a pink at brightness 70 turned red: blue 1, red 3) and every step is
-        a visible jump."""
-        top = self.top(led)
-        main = [c * self.level * top / 255 for c in rgb if c and c >= MAIN * max(rgb)]
-        if not main or min(main) <= FLOOR_STEPS:
-            return 1.0 if main else 0.0
-        return (FLOOR_STEPS / min(main)) ** (1 / GAMMA)
-
-    def power_smooth(self, led: str, rgb, last: dict[str, Any]) -> str:
-        """power() for a slow fade: each channel rounded up or down, picking
-        the mix whose light (LUMA) is nearest the target, which gives about
-        twice as many brightness steps at the dim end as rounding each
-        channel alone (Nova, pink at 50: largest step 25 % -> 13 %). While
-        the target dims the light may only stay or dim, and the other way
-        round, so it never wobbles. No channel is more than one step off."""
-        top = self.top(led)
-        want = [c * self.level * top / 255 for c in rgb]
-        light = lambda ch: sum(w * x for w, x in zip(LUMA, ch))
-        main = [i for i, x in enumerate(want) if x and x >= MAIN * max(want)]
-        prev, prev_want = last.get(led, (None, None))
-        going = 0 if prev_want is None else (light(want) > light(prev_want)) - (light(want) < light(prev_want))
-        best = None
-        for ch in itertools.product(*[(math.floor(x), math.ceil(x)) for x in want]):
-            if any(ch) and not all(ch[i] for i in main):
-                continue                                # a main channel dark: tinted
-            if prev is not None and going * (light(ch) - light(prev)) < -1e-9:
-                continue                                # against the fade
-            cost = (light(ch) - light(want)) ** 2 + 0.02 * sum((a - b) ** 2 for a, b in zip(ch, want))
-            if best is None or cost < best[0]:
-                best = (cost, ch)
-        ch = best[1] if best else (prev or (0, 0, 0))
-        last[led] = (ch, want)
-        return " ".join(str(ch[i]) for i in self.channels(led))
-
-    def power(self, led: str, rgb) -> str:
-        """multi_intensity for rgb (0-255, may be fractional) at the set
-        brightness: each channel's final power, rounded once. Near the end of
-        a fade a main channel of the colour (MAIN of the strongest or more)
-        would round to 0 while another is still lit, tinting the zone, so the
-        zone is off from there."""
-        top = self.top(led)
-        ch = [c * self.level * top / 255 for c in rgb]
-        strongest = max(ch)
-        if any(x < 0.5 for x in ch if x >= MAIN * strongest):
-            ch = [0.0, 0.0, 0.0]
-        return " ".join(str(round(ch[i])) for i in self.channels(led))
-
-    def _write(self, led: str, attr: str, value: Any) -> None:
-        try:
-            with open(f"{led}/{attr}", "w") as fh:
-                fh.write(str(value))
-        except OSError as e:
-            # Gone while the controller is unbound for sleep: say so once.
-            if led not in self.failed:
-                self.failed.add(led)
-                decky.logger.info(f"{led}/{attr}: {e}")
+# The light engine (py_modules/pbos_lights.py) runs on the system's native
+# Python as its own unit: the plugin's Python is emulated (box64), where the
+# effects cost up to half a core. It reads LIGHTS_STATE; SIGHUP after a change.
+ENGINE_UNIT = "pbos-utils-lights"
+ENGINE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "py_modules", "pbos_lights.py")
+
+
+def start_engine() -> None:
+    """(Re)start the engine, so it runs this plugin's code."""
+    subprocess.run(["systemctl", "stop", f"{ENGINE_UNIT}.service"], capture_output=True)
+    subprocess.run(["systemctl", "reset-failed", f"{ENGINE_UNIT}.service"], capture_output=True)
+    r = subprocess.run(["systemd-run", f"--unit={ENGINE_UNIT}", "--collect", "-p", "Restart=on-failure",
+                        "-p", "RestartSec=2", "/usr/bin/python3", "-u", ENGINE],
+                       capture_output=True, text=True, env=CLEAN_ENV)
+    if r.returncode != 0:
+        decky.logger.info(f"light engine: {r.stderr.strip()}")
+
+
+def stop_engine() -> None:
+    subprocess.run(["systemctl", "stop", f"{ENGINE_UNIT}.service"], capture_output=True)
+
+
+def nudge_engine() -> None:
+    """Show the saved settings now."""
+    if not active(ENGINE_UNIT):
+        start_engine()
+        return
+    subprocess.run(["systemctl", "kill", "-s", "HUP", f"{ENGINE_UNIT}.service"], capture_output=True)
 
 
 class Plugin:
@@ -1013,17 +332,16 @@ class Plugin:
         self.movelog = MoveLog()
         self.move_was_running = await asyncio.to_thread(active, MOVE_UNIT)
         self.lights = await asyncio.to_thread(lights_kind)
-        self.animator = Animator()
         if self.lights == "multicolor":
-            await asyncio.to_thread(self.animator.apply, await asyncio.to_thread(multicolor_lights))
+            await asyncio.to_thread(start_engine)
         self.tasks = [asyncio.create_task(t) for t in
-                      (self._watch(), self._watch_drives(), self._cleanup(), self._watch_move(),
-                       self._watch_lights())]
+                      (self._watch(), self._watch_drives(), self._cleanup(), self._watch_move())]
 
     async def _unload(self) -> None:
         for t in self.tasks:
             t.cancel()
-        await asyncio.to_thread(self.animator.halt)
+        if self.lights == "multicolor":
+            await asyncio.to_thread(stop_engine)
 
     # -------------------------------------------------------------- update --
     async def _cleanup(self) -> None:
@@ -1223,27 +541,6 @@ class Plugin:
         return True
 
     # -------------------------------------------------------------- lights --
-    async def _watch_lights(self) -> None:
-        # pbosd puts the KONKR lights back itself; the multicolor ones are set
-        # again here when their devices come back after a sleep, fading in
-        # (the sleep hook's own fade-in found no LEDs).
-        if self.lights != "multicolor":
-            return
-        last = await asyncio.to_thread(lights_signature)
-        while True:
-            await asyncio.sleep(0.5)
-            now = await asyncio.to_thread(lights_signature)
-            if now == last:
-                continue
-            if 0 in now or len(now) != len(last):
-                continue        # still coming back
-            await asyncio.sleep(0.3)
-            if await asyncio.to_thread(lights_signature) != now:
-                continue
-            last = now
-            decky.logger.info("stick lights: set again after sleep")
-            await asyncio.to_thread(self.animator.apply, await asyncio.to_thread(multicolor_lights), FADE_IN)
-
     async def get_lights(self, **_: Any) -> dict[str, Any]:
         if self.lights == "pbosd":
             st = await asyncio.to_thread(pbosd_lights)
@@ -1275,7 +572,7 @@ class Plugin:
                        "reverse_left": bool(reverse_left), "reverse_right": bool(reverse_right)})
             st.pop("mode", None)
             await asyncio.to_thread(write_json, LIGHTS_STATE, st)
-            await asyncio.to_thread(self.animator.apply, st)
+            await asyncio.to_thread(nudge_engine)
         return await self.get_lights()
 
     async def set_audio_pulse(self, enabled: bool = False, **_: Any) -> dict[str, Any]:
@@ -1297,7 +594,7 @@ class Plugin:
             st["experimental_audio"] = False
         st.pop("mode", None)
         await asyncio.to_thread(write_json, LIGHTS_STATE, st)
-        await asyncio.to_thread(self.animator.apply, await asyncio.to_thread(multicolor_lights))
+        await asyncio.to_thread(nudge_engine)
         return await self.get_lights()
 
     async def set_power_led(self, on: bool = True, **_: Any) -> dict[str, Any]:
