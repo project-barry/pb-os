@@ -557,8 +557,10 @@ function LightsTab() {
                 disabled: !usable,
                 onChange: (h) => change({ color2: hueColor(h) }),
             })));
-            items.push(note("Hits on the beat turn a zone towards the Intensity Color and up to full Brightness; "
-                + "between hits the Color glows dimmer, with room above it."));
+            items.push(note(effect.id === "audio"
+                ? "The meter's top LED, and every lit LED on a beat, show the Intensity Color; Brightness is a full meter."
+                : "Hits on the beat turn a zone towards the Intensity Color and up to full Brightness; "
+                    + "between hits the Color glows dimmer, with room above it."));
         }
         items.push(row(jsx(DFL.SliderField, {
             label: "Brightness",
@@ -635,8 +637,8 @@ function LightsTab() {
                 items.push(row(jsx(DFL.ToggleField, {
                     label: "Audio Effects",
                     description: "Adds effects that follow what the device plays (never the microphone) and switches "
-                        + "to Audio Pulse: Audio Pulse lights each stick with its side's loudness, Audio Spectrum "
-                        + "shows four bands per stick (bass at the bottom, treble at the top). Other effects stay a pick away.",
+                        + "to Audio Meter: Audio Meter fills each stick's ring with its side's loudness, kicked by the beat; "
+                        + "Audio Spectrum shows four bands per stick (bass at the bottom, treble at the top). Other effects stay a pick away.",
                     checked: !!st.experimental_audio,
                     onChange: (v) => {
                         movedAt.current = Date.now();

@@ -156,7 +156,7 @@ def pbosd_lights_set(on: bool, effect: str, color: str, brightness: int) -> None
 # Experimental, switched on in the Lighting tab's Experimental section
 # (Audio Effects); they follow what the device plays.
 AUDIO_EFFECTS = [
-    {"id": "audio", "label": "Audio Pulse", "color": True, "speed": False, "experimental": True},
+    {"id": "audio", "label": "Audio Meter", "color": True, "speed": False, "experimental": True},
     {"id": "spectrum", "label": "Audio Spectrum", "color": True, "speed": False, "experimental": True},
 ]
 AUDIO_MODES = {"audio": "pulse", "spectrum": "spectrum"}
@@ -229,6 +229,9 @@ GAMMA = 2.2
 # only hits go all the way, so they stand out over loud sound.
 AUDIO_BACKGROUND = 0.2
 AUDIO_LEVEL_SHARE = 0.6
+# Audio Meter: the share of the level at which each place round a ring (0
+# top, clockwise) fills: the bottom first, then both sides, then the top.
+METER_FILL = ((2 / 3, 1.0), (1 / 3, 2 / 3), (0.0, 1 / 3), (1 / 3, 2 / 3))
 # Audio Spectrum: which band (0 bass, 1 low mids, 2 high mids, 3 treble)
 # each place round a ring shows (0 top, clockwise), per stick: bass at the
 # bottom, treble at the top, low mids on the outer side, high mids inner.
@@ -329,8 +332,21 @@ def frame(effect: str, t: float, rgb: tuple[int, int, int], speed: int, n: int,
         out = []
         for i in range(n):
             side = min(i // ring, 1)
-            if effect == "audio":                 # stereo: each stick its side
+            if effect == "audio":
+                # Audio Meter: each stick its side, filling its ring like a
+                # VU meter, bottom, then both sides, then the top (the peak,
+                # in the intensity colour); a beat kicks it up and turns the
+                # lit LEDs towards the intensity colour.
                 c = side if len(lv) > side else 0
+                lvl = max(lv[c], ac[c])
+                place = i % ring
+                lo, hi = METER_FILL[place] if ring == 4 else (0.0, 1.0)
+                f = min(1.0, max(0.0, (lvl - lo) / (hi - lo)))
+                bg = max(floor, AUDIO_BACKGROUND)
+                mix = 1.0 if (place == 0 and ring == 4) else ac[c]
+                col = tuple(x + (y - x) * mix for x, y in zip(rgb, hot))
+                out.append(scale(col if f else rgb, bg + (1 - bg) * f))
+                continue
             else:                                 # each stick its side's four bands
                 c = side * 4 + SPECTRUM_PLACES[side][i % ring] if len(lv) >= 8 else -1
             v_level, a = (lv[c], ac[c]) if c >= 0 else (0.0, 0.0)
@@ -401,7 +417,7 @@ class AudioMeter:
     """How the device's sound output moves, for the audio effects, as the
     user that owns the sound session; never a microphone.
 
-    "pulse" (Audio Pulse): the default output's monitor in stereo at 24 kHz
+    "pulse" (Audio Meter): the default output's monitor in stereo at 24 kHz
     (through the speakers less a listener at the lowest edge); channels
     [left, right]. "spectrum" (Audio Spectrum):
     listeners at listener_rates(EDGES_SPEAKER or EDGES_FULL, by
@@ -425,7 +441,16 @@ class AudioMeter:
     measured on the Nova the light came 0.9 s after the sound; unbuffered
     about 0.1 s."""
 
-    RANGE_DB = (30.0, 30.0, 22.0, 22.0)     # per band: quietest that lights, below its loudest
+    # Per band (spectrum) or for the meter (pulse): the quietest that lights,
+    # below its loudest; the rise over its recent average that is a hit; how
+    # long a hit fades; how long a level falls. The meter falls fast, so it
+    # drops between beats instead of trailing them.
+    RANGE_DB = (30.0, 30.0, 22.0, 22.0)
+    METER_RANGE_DB = 24.0
+    METER_HIT_DB = 6.0
+    METER_HIT_FADE = 0.15
+    METER_FALL = 0.12
+    SPECTRUM_FALL = 0.15
     GATE_DB = 15.0                # spectrum: a band this far below its side's loudest is dark
     HIT_DB = (9.0, 9.0, 5.0, 5.0)       # per band: rise over its recent average that is a hit
     HIT_FADE = (0.30, 0.30, 0.15, 0.12)  # per band: seconds a hit fades over
@@ -434,7 +459,7 @@ class AudioMeter:
     # within a few frames (over 0.5 s, a tone after silence held a zone at
     # full for a second on the Nova).
     HIT_AVG = 0.12
-    WINDOW = 1 / 15               # seconds of sound each energy is measured over
+    WINDOW = 1 / 30               # seconds of sound each energy is measured over
 
     def __init__(self) -> None:
         self.lock = threading.Lock()
@@ -485,12 +510,24 @@ class AudioMeter:
     def _band(self, c: int) -> int:
         return 0 if self.mode == "pulse" else c % 4
 
+    def _range(self, c: int) -> float:
+        return self.METER_RANGE_DB if self.mode == "pulse" else self.RANGE_DB[c % 4]
+
+    def _hit_db(self, c: int) -> float:
+        return self.METER_HIT_DB if self.mode == "pulse" else self.HIT_DB[c % 4]
+
+    def _hit_fade(self, c: int) -> float:
+        return self.METER_HIT_FADE if self.mode == "pulse" else self.HIT_FADE[c % 4]
+
+    def _fall(self) -> float:
+        return self.METER_FALL if self.mode == "pulse" else self.SPECTRUM_FALL
+
     def current_unlocked(self, now: float) -> tuple[list[float], list[float]]:
         if not self.at:
             return [0.0] * len(self.levels), [0.0] * len(self.accents)
         idle = max(0.0, now - self.at)
-        k = math.exp(-max(0.0, idle - 0.05) / 0.3)
-        acc = [a * math.exp(-idle / self.HIT_FADE[self._band(c)]) for c, a in enumerate(self.accents)]
+        k = math.exp(-max(0.0, idle - 0.05) / self._fall())
+        acc = [a * math.exp(-idle / self._hit_fade(c)) for c, a in enumerate(self.accents)]
         return [v * k for v in self.levels], acc
 
     def _kill(self) -> None:
@@ -526,7 +563,7 @@ class AudioMeter:
     @staticmethod
     def _command(user: str, rt: str, rate: int) -> list[str]:
         return ["runuser", "-u", user, "--", "env", f"XDG_RUNTIME_DIR={rt}", "stdbuf", "-o0",
-                "pw-record", "--raw", "--rate", str(rate), "--channels", "2", "--format", "s16", "--latency", "32ms",
+                "pw-record", "--raw", "--rate", str(rate), "--channels", "2", "--format", "s16", "--latency", "16ms",
                 "-P", "{ stream.capture.sink=true node.passive=true node.dont-move=true "
                       f"node.name=pbos-utils-lighting-{rate} media.name=\"PB-OS Utils lighting\" }}", "-"]
 
@@ -620,20 +657,19 @@ class AudioMeter:
             n = len(dbs)
             side = n // 2 if n > 2 else 1
             for c, db in enumerate(dbs):
-                band = self._band(c)
                 # The loudest of the last few seconds, falling 3 dB a second.
                 self.peaks[c] = max(db, self.peaks[c] - 3 * dt, -60.0)
-                p, rng = self.peaks[c], self.RANGE_DB[band]
+                p, rng = self.peaks[c], self._range(c)
                 target = 0.0 if p <= -55 else min(1.0, max(0.0, (db - (p - rng)) / rng))
                 gated = n > 2 and db < max(dbs[c // side * side:(c // side + 1) * side]) - self.GATE_DB
                 if gated:
                     target = 0.0
-                self.levels[c] = target if target >= prev[c] else prev[c] + (target - prev[c]) * min(1.0, dt / 0.3)
+                self.levels[c] = target if target >= prev[c] else prev[c] + (target - prev[c]) * min(1.0, dt / self._fall())
                 # A hit: a sudden rise over the band's own recent average.
                 rise = db - self.averages[c]
                 acc = prev_acc[c]
-                if not gated and p > -55 and rise > self.HIT_DB[band]:
-                    acc = max(acc, min(1.0, 0.5 + (rise - self.HIT_DB[band]) / 12))
+                if not gated and p > -55 and rise > self._hit_db(c):
+                    acc = max(acc, min(1.0, 0.5 + (rise - self._hit_db(c)) / 12))
                 self.accents[c] = acc
                 self.averages[c] = max(-60.0, self.averages[c] + (db - self.averages[c]) * min(1.0, dt / self.HIT_AVG))
             self.at = now

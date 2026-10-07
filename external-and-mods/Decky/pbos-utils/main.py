@@ -578,8 +578,8 @@ class Plugin:
         return await self.get_lights()
 
     async def set_audio_pulse(self, enabled: bool = False, **_: Any) -> dict[str, Any]:
-        """The Experimental switch (Audio Effects): on adds Audio Pulse and
-        Audio Spectrum to the effects and picks Audio Pulse (so it's plain
+        """The Experimental switch (Audio Effects): on adds Audio Meter and
+        Audio Spectrum to the effects and picks Audio Meter (so it's plain
         that it happened), keeping the effect it replaced; off takes them
         away and, if one was showing, brings that effect back."""
         if self.lights != "multicolor":
