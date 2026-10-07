@@ -29,6 +29,7 @@ from __future__ import annotations
 import asyncio
 import colorsys
 import glob
+import itertools
 import json
 import math
 import os
@@ -420,6 +421,8 @@ GAMMA = 2.2
 FADE_IN = 0.3
 # A colour's main channels: those at least this share of its strongest one.
 MAIN = 0.25
+# How much light each channel gives the eye (Rec. 709 luma: red, green, blue).
+LUMA = (0.2126, 0.7152, 0.0722)
 # Breathing goes no dimmer than where the weakest main channel has this many
 # power steps left.
 FLOOR_STEPS = 4
@@ -550,6 +553,7 @@ class Animator:
         shown: list[Any] = [None] * len(leds)
         stars = [-100.0] * len(leds)
         floor = self.floor(leds[0], rgb) if leds and effect == "breathing" else 0.0
+        smooth: dict[str, Any] = {}     # Breathing: last pick per zone (power_smooth)
         # Frame k is drawn for exactly k / FPS and written at that time, so
         # the steps are even and the rate is FPS, not FPS minus the time the
         # writes take. Behind by more than a frame (busy, or paused): skip
@@ -561,7 +565,8 @@ class Animator:
             r = min(1.0, k / self.FPS / fade) if fade else 1.0
             ramp = r ** GAMMA
             for i, c in enumerate(frame(effect, k / self.FPS, rgb, speed, len(leds), stars, floor)):
-                value = self.power(leds[i], [x * ramp for x in c])
+                c = [x * ramp for x in c]
+                value = self.power_smooth(leds[i], c, smooth) if effect == "breathing" else self.power(leds[i], c)
                 if value != shown[i]:
                     self._write(leds[i], "multi_intensity", value)
                     shown[i] = value
@@ -586,6 +591,33 @@ class Animator:
         if not main or min(main) <= FLOOR_STEPS:
             return 1.0 if main else 0.0
         return (FLOOR_STEPS / min(main)) ** (1 / GAMMA)
+
+    def power_smooth(self, led: str, rgb, last: dict[str, Any]) -> str:
+        """power() for a slow fade: each channel rounded up or down, picking
+        the mix whose light (LUMA) is nearest the target, which gives about
+        twice as many brightness steps at the dim end as rounding each
+        channel alone (Nova, pink at 50: largest step 25 % -> 13 %). While
+        the target dims the light may only stay or dim, and the other way
+        round, so it never wobbles. No channel is more than one step off."""
+        top = int(rd(f"{led}/max_brightness", "255") or 255)
+        self.power(led, (0, 0, 0))                      # learns the channel order
+        want = [c * self.level * top / 255 for c in rgb]
+        light = lambda ch: sum(w * x for w, x in zip(LUMA, ch))
+        main = [i for i, x in enumerate(want) if x and x >= MAIN * max(want)]
+        prev, prev_want = last.get(led, (None, None))
+        going = 0 if prev_want is None else (light(want) > light(prev_want)) - (light(want) < light(prev_want))
+        best = None
+        for ch in itertools.product(*[(math.floor(x), math.ceil(x)) for x in want]):
+            if any(ch) and not all(ch[i] for i in main):
+                continue                                # a main channel dark: tinted
+            if prev is not None and going * (light(ch) - light(prev)) < -1e-9:
+                continue                                # against the fade
+            cost = (light(ch) - light(want)) ** 2 + 0.02 * sum((a - b) ** 2 for a, b in zip(ch, want))
+            if best is None or cost < best[0]:
+                best = (cost, ch)
+        ch = best[1] if best else (prev or (0, 0, 0))
+        last[led] = (ch, want)
+        return " ".join(str(ch[i]) for i in self.order[led])
 
     def power(self, led: str, rgb) -> str:
         """multi_intensity for rgb (0-255, may be fractional) at the set
