@@ -291,7 +291,9 @@ def lights_kind() -> str:
     compat = rd("/sys/firmware/devicetree/base/compatible")
     if "ayn,thor" in compat:
         return ""   # Barry Launcher's Lights tab
-    if os.path.exists("/usr/lib/konkr/pbosd"):
+    # pbosd ships in the SM8550 image too, but only runs on these (its unit's
+    # ExecCondition).
+    if re.search(r"KONKR Pocket FIT|AYANEO Pocket S2", rd("/sys/firmware/devicetree/base/model")):
         return "pbosd"
     if glob.glob(MULTICOLOR):
         return "multicolor"
