@@ -447,8 +447,12 @@ def frame(effect: str, t: float, rgb: tuple[int, int, int], speed: int, n: int,
     if effect == "breathing":
         # Breathes between floor (Animator.floor(): the dimmest level that
         # still shows the colour) and full.
+        # Steady through the dim end and slowing only towards full: a sine
+        # lingered at the bottom, where one power step is a visible jump, so
+        # it held there and then jumped (Nova, brightness 70).
         period = 8 - 6.5 * fast
-        v = floor + (1 - floor) * (1 - math.cos(2 * math.pi * t / period)) / 2
+        w = 1 - abs(2 * ((t / period) % 1) - 1)          # 0 -> 1 -> 0, straight
+        v = floor + (1 - floor) * math.sin(math.pi / 2 * w)
         return [scale(rgb, v)] * n
     if effect == "cycle":
         return [hue(t / (24 - 21 * fast))] * n
