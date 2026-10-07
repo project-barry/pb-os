@@ -92,14 +92,19 @@ konkr-game compat %command%    # strict TSO / split locks for crashing games
 
 - Power LED (PM8550 LPG, RGB): profile colour flash on change (blue = Low Power, green = Balanced),
   then amber while charging, green when full, red pulse below 15%.
-- Stick RGB rings (MCU link): static / breath / rainbow / off from KONKR
-  Control, `pbosctl rgb`, or the K button (with Steam Remap off).
+- Stick RGB rings (MCU link): static / breath / rainbow / off from PB-OS
+  Utils → Lights, `pbosctl rgb`, or the K button (with Steam Remap off).
 
-### Quick Access panel: PB-OS Control (Decky)
+### Quick Access panels (Decky)
 
-Profile, live temperature, fan and GPU clock, stick lighting, MCU link toggle,
-Steam Remap and the Custom Function / K actions. It replaces the SM8550-Power and SM8550-LED plugins,
-which would fight `pbosd` over the fan and drive AYN-only LEDs.
+**PB-OS Control**: profile, live temperature, fan and GPU clock, MCU link
+toggle, Steam Remap and the Custom Function / K actions. It replaces the
+SM8550-Power and SM8550-LED plugins, which would fight `pbosd` over the fan
+and drive AYN-only LEDs.
+
+**PB-OS Utils** (every device): tabs for pb-os updates, moving SteamOS
+between the microSD card and internal storage, and the stick lights (here
+written to `pbosd`'s state like the K button).
 
 ## Compared with the SM8550 setup, in short
 

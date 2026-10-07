@@ -3,10 +3,10 @@
   "author": "hashtagbasit",
   "api_version": 1,
   "flags": ["root"],
-  "version": "1.0.0",
+  "version": "1.1.0",
   "publish": {
-    "tags": ["konkr", "pocket-fit", "sm8650", "fan", "rgb", "performance"],
-    "description": "Performance profiles, fan, stick RGB and extra-button setup for the KONKR Pocket FIT.",
+    "tags": ["konkr", "pocket-fit", "sm8650", "fan", "performance"],
+    "description": "Performance profiles, fan and extra-button setup for the KONKR Pocket FIT. Stick lighting is in PB-OS Utils.",
     "image": "https://opengraph.githubassets.com/1/SteamDeckHomebrew/decky-loader"
   }
 }

@@ -186,8 +186,9 @@ else
   # sync-decky-bundled-plugins.sh and the updater leave it out.
   decky_plugins=("${MOD}/Decky/sm8550/dual-screen")
 fi
-# PB-OS Update (updates from Game Mode) on every device.
-decky_plugins+=("${MOD}/Decky/pbos-update")
+# PB-OS Utils (updates, moving SteamOS between the card and internal
+# storage, stick lights) on every device.
+decky_plugins+=("${MOD}/Decky/pbos-utils")
 # The bundle is owned by this script: start clean so a rootfs reused from
 # another target keeps no stale plugins.
 rm -rf "$BUNDLE"
@@ -199,6 +200,8 @@ fi
 rm -rf "${BUNDLE}/thor-screens" "${HOME_DST}/homebrew/plugins/thor-screens"
 # Renamed to pbos-control.
 rm -rf "${BUNDLE}/konkr-control" "${HOME_DST}/homebrew/plugins/konkr-control"
+# PB-OS Update became PB-OS Utils' Update tab.
+rm -rf "${BUNDLE}/pbos-update" "${HOME_DST}/homebrew/plugins/pbos-update"
 if [[ "$SOC" == sm8650 ]]; then
   rm -rf "${HOME_DST}/homebrew/plugins/dual-screen"
 fi

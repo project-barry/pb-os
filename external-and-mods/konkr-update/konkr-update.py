@@ -29,8 +29,9 @@ UPPER = 'var/lib/overlays/etc/upper'
 PLUGINS = 'homebrew/plugins'
 # Plugin folders from older images: removed on apply, restored on rollback.
 # SM8650 packages still carry an empty konkr-control folder, which updaters
-# from before the PB-OS Control rename require.
-LEGACY_PLUGINS = ('konkr-control',)
+# from before the PB-OS Control rename require. PB-OS Update became PB-OS
+# Utils.
+LEGACY_PLUGINS = ('konkr-control', 'pbos-update')
 PRESERVE = ('passwd', 'shadow', 'group', 'gshadow', 'machine-id', 'hostname', 'hosts',
             'fstab', 'crypttab', 'localtime', 'adjtime', 'resolv.conf', 'ssh',
             'NetworkManager/system-connections', 'sudoers.d')
@@ -871,7 +872,7 @@ def plan_from_package(package, root, work, manifest):
 
 
 def counter(total):
-    """PROGRESS lines for PB-OS Update, from bytes done."""
+    """PROGRESS lines for PB-OS Utils, from bytes done."""
     done = [0, -1]
     def add(n):
         done[0] += n

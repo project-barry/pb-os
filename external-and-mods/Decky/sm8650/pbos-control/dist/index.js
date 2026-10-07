@@ -25,10 +25,8 @@ const jsxs = SP_JSX.jsxs;
 // Decky callable(): arguments are passed positionally to the Python method.
 const getState = callable("get_state");
 const setProfile = callable("set_profile");
-const setRgb = callable("set_rgb");
 const setMcu = callable("set_mcu");
 const setFan = callable("set_fan");
-const setPowerLed = callable("set_power_led");
 const setButton = callable("set_button");
 const setButtonsMode = callable("set_buttons_mode");
 
@@ -41,14 +39,6 @@ const ACTIONS = [
     { data: "sticks-toggle", label: "Stick lighting on/off" },
     { data: "profile-next", label: "Switch performance profile" },
     { data: "none", label: "Do nothing" },
-];
-const RGB_PRESETS = [
-    { label: "Ember", mode: "static", color: "ff3c00" },
-    { label: "Ice", mode: "static", color: "00b4ff" },
-    { label: "Violet", mode: "static", color: "a000ff" },
-    { label: "White", mode: "static", color: "ffffff" },
-    { label: "Breathe", mode: "breath", color: "ff0040" },
-    { label: "Off", mode: "off", color: "000000" },
 ];
 
 
@@ -107,31 +97,6 @@ function Content() {
                 onChange: (v) => setFan("fixed", v),
             })) : null,
         ] }),
-        jsxs(DFL.PanelSection, { title: "Lighting", children: [
-            row(jsx(DFL.DropdownItem, {
-                label: "Stick lighting",
-                disabled: !st.sticks_led,
-                description: st.sticks_led ? "" : "Needs the controller MCU link (below)",
-                rgOptions: RGB_PRESETS.map((p, i) => ({ data: i, label: p.label })),
-                selectedOption: Math.max(0, RGB_PRESETS.findIndex((p) => p.mode === st.rgb.mode && p.color === st.rgb.color)),
-                onChange: (o) => {
-                    const p = RGB_PRESETS[o.data];
-                    setRgb(p.mode, p.color, st.rgb.brightness || 160).then(refresh);
-                },
-            })),
-            row(jsx(DFL.SliderField, {
-                label: "Stick brightness",
-                value: st.rgb.brightness || 160, min: 10, max: 255, step: 5,
-                disabled: !st.sticks_led || st.rgb.mode !== "static",
-                onChange: (v) => setRgb(st.rgb.mode, st.rgb.color, v),
-            })),
-            row(jsx(DFL.ToggleField, {
-                label: "Power LED",
-                description: "Charging / full / low-battery colours and profile flashes",
-                checked: st.power_led !== false,
-                onChange: (v) => setPowerLed(v).then(refresh),
-            })),
-        ] }),
         jsxs(DFL.PanelSection, { title: "Buttons", children: [
             row(jsx(DFL.ToggleField, {
                 label: "Steam Remap",
@@ -163,7 +128,7 @@ function Content() {
         jsxs(DFL.PanelSection, { title: "Hardware", children: [
             row(jsx(DFL.ToggleField, {
                 label: "Controller MCU link",
-                description: "Needed for the KONKR, Performance and Quick Access buttons and stick lighting",
+                description: "Needed for the KONKR, Performance and Quick Access buttons and stick lighting (PB-OS Utils → Lights)",
                 checked: st.mcu_enabled,
                 onChange: (v) => setMcu(v).then(() => {
                     toaster.toast({ title: "PB-OS Control", body: v ? "MCU link enabled" : "MCU link disabled" });

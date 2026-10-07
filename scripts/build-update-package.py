@@ -2,7 +2,7 @@
 """Build a verified offline update bundle from a completed rootfs and boot image.
 
 The rootfs is the one make-steamos-sm8650.sh packed into the image, with the
-same SOC. Devices install it with PB-OS Update (Decky) or the
+same SOC. Devices install it with PB-OS Utils (Decky) or the
 SteamOS Update app, which find it in a GitHub release as
   pb-os-<version>-<image>.update.tar.gz.001, .002, ...              full system
   pb-os-<version>-<image>.from-<old version>.delta.tar.gz.001, ...  what changed
@@ -188,7 +188,7 @@ if not (root / 'usr/lib/liblsfg-vk-layer-arm64.so').is_file(): raise SystemExit(
 bundle = root / 'usr/share/steamos-odin/decky-plugins'
 bundled = [p.name for p in bundle.iterdir() if p.is_dir()] if bundle.is_dir() else []
 PLUGINS = sorted({'decky-lsfg-vk', *bundled})
-REMOVE = sorted({'pbos-control', 'dual-screen', 'thor-screens'} - set(PLUGINS))
+REMOVE = sorted({'pbos-control', 'dual-screen', 'thor-screens', 'pbos-update'} - set(PLUGINS))
 def load_state(f):
     b = json.load(gzip.open(f, 'rt'))
     if b.get('image') not in (image, *OLD_IMAGES): raise SystemExit(f'{f}: state of {b.get("image")}, building {image}')

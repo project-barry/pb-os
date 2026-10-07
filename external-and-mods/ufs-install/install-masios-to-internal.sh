@@ -118,48 +118,8 @@ part_of() {   # GPT name -> /dev node on $DISK, read from the table (not udev)
   "${PART[@]}" detect --disk "$DISK" --storage-gib "$STORAGE_GB" | sed -n "s/^NODE_$1=//p"
 }
 
-GAMES_EXCLUDES=(
-  --exclude='/steamos/.local/share/Steam/steamapps/common/'
-  --exclude='/steamos/.local/share/Steam/steamapps/shadercache/'
-  --exclude='/steamos/.local/share/Steam/steamapps/compatdata/'
-  --exclude='/steamos/.local/share/Steam/steamapps/downloading/'
-  --exclude='/steamos/.local/share/Steam/steamapps/appmanifest_*.acf'
-)
-# "Start fresh" still needs the Steam client and Decky from /home, or Steam
-# can't start at all (black screen). Leave out everything personal instead.
-FRESH_EXCLUDES=(
-  "${GAMES_EXCLUDES[@]}"
-  --exclude='/steamos/.local/share/Steam/config/loginusers.vdf'
-  --exclude='/steamos/.local/share/Steam/config/config.vdf'
-  --exclude='/steamos/.local/share/Steam/config/DialogConfig.vdf'
-  --exclude='/steamos/.local/share/Steam/config/libraryfolders.vdf'
-  --exclude='/steamos/.local/share/Steam/config/remoteclients.vdf'
-  --exclude='/steamos/.local/share/Steam/config/avatarcache/'
-  --exclude='/steamos/.local/share/Steam/config/htmlcache/'
-  --exclude='/steamos/.local/share/Steam/appcache/httpcache/'
-  --exclude='/steamos/.local/share/Steam/appcache/cefdata/'
-  --exclude='/steamos/.local/share/Steam/userdata/'
-  --exclude='/steamos/.local/share/Steam/ssfn*'
-  --exclude='/steamos/.local/share/Steam/logs/'
-  --exclude='/steamos/.steam/registry.vdf'
-  --exclude='/steamos/Android/'
-  --exclude='/steamos/.local/share/konkr-apk/'
-  --exclude='/steamos/.local/share/Trash/'
-  --exclude='/steamos/.var/'
-  --exclude='/steamos/.mozilla/'
-  --exclude='/steamos/Documents/*' --exclude='/steamos/Downloads/*'
-  --exclude='/steamos/Pictures/*' --exclude='/steamos/Music/*' --exclude='/steamos/Videos/*'
-)
-home_bytes() {
-  case "$HOME_MODE" in
-    all) du -sxb /home | awk '{print $1}' ;;
-    essentials|none)
-      local g=/home/steamos/.local/share/Steam/steamapps t s
-      t=$(du -sxb /home | awk '{print $1}')
-      s=$(du -scxb "$g/common" "$g/shadercache" "$g/compatdata" 2>/dev/null | tail -1 | awk '{print $1}')
-      echo $(( t - ${s:-0} )) ;;
-  esac
-}
+# shellcheck source=home-copy.sh
+source "$HERE/home-copy.sh"
 
 # ------------------------------------------------------------------ plan ---
 if (( ! RESUME )); then
@@ -182,7 +142,7 @@ else
   home_size=$(blockdev --getsize64 "$(part_of HOME)")
 fi
 
-need=$(home_bytes)
+need=$(home_bytes "$HOME_MODE")
 root_used=$(df -B1 --output=used / | tail -1)
 (( root_used < STORAGE_GB * (1 << 30) * 9 / 10 )) \
   || die "the SD system ($(( root_used >> 30 )) GiB) doesn't fit a ${STORAGE_GB} GiB STORAGE"
@@ -267,31 +227,11 @@ mkdir -p "$WORK/root/var/lib/steamos-sm8550"
 touch "$WORK/root/var/lib/steamos-sm8550/home-expanded"
 
 case "$HOME_MODE" in
-  all)
-    log "copying /home (games included)"
-    rsync -aAXH --numeric-ids --info=progress2 --exclude=/lost+found /home/ "$WORK/home/" ;;
-  essentials)
-    log "copying /home without installed games"
-    rsync -aAXH --numeric-ids --info=progress2 --exclude=/lost+found "${GAMES_EXCLUDES[@]}" \
-      /home/ "$WORK/home/" ;;
-  none)
-    log "copying a fresh /home (Steam client and Decky, no account or personal data)"
-    rsync -aAXH --numeric-ids --info=progress2 --exclude=/lost+found "${FRESH_EXCLUDES[@]}" \
-      /home/ "$WORK/home/"
-    # Same first-run state as a freshly flashed card: Steam's setup runs, and
-    # Wi-Fi stays on wpa_supplicant (see install-complete-steam-client.sh).
-    mkdir -p "$WORK/home/steamos/.steam" "$WORK/home/steamos/.local/share/Steam/config"
-    printf '%b\n' '"Registry"' '{' '\t"HKCU"' '\t{' '\t\t"Software"' '\t\t{' \
-      '\t\t\t"Valve"' '\t\t\t{' '\t\t\t\t"Steam"' '\t\t\t\t{' \
-      '\t\t\t\t\t"CompletedOOBEStage1"\t\t"0"' '\t\t\t\t\t"CompletedOOBE"\t\t"0"' \
-      '\t\t\t\t}' '\t\t\t}' '\t\t}' '\t}' '}' >"$WORK/home/steamos/.steam/registry.vdf"
-    printf '%b\n' '"InstallConfigStore"' '{' '\t"SteamOS"' '\t{' \
-      '\t\t"WifiForceWPASupplicant"\t\t"1"' '\t}' '}' \
-      >"$WORK/home/steamos/.local/share/Steam/config/config.vdf"
-    chown 1000:1000 "$WORK/home/steamos" "$WORK/home/steamos/.steam" \
-      "$WORK/home/steamos/.steam/registry.vdf" "$WORK/home/steamos/.local/share/Steam/config" \
-      "$WORK/home/steamos/.local/share/Steam/config/config.vdf" ;;
+  all) log "copying /home (games included)" ;;
+  essentials) log "copying /home without installed games" ;;
+  none) log "copying a fresh /home (Steam client and Decky, no account or personal data)" ;;
 esac
+copy_home "$HOME_MODE" "$WORK/home"
 
 log "installing KERNEL (root=PARTLABEL=STORAGE)"
 "${BOOTIMG[@]}" retarget /boot/KERNEL "$WORK/boot/KERNEL" --root PARTLABEL=STORAGE >/dev/null

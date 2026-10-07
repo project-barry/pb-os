@@ -13,14 +13,17 @@ several days.
 
 ## How to
 
-Boot SteamOS from the SD card, then either open **Easy UFS Installer** in
-Desktop Mode, or in a terminal:
+Boot SteamOS from the SD card, then either open Quick Access → Decky →
+**PB-OS Utils**, Install tab (Game Mode, no password needed), or **Easy UFS
+Installer** in Desktop Mode, or in a terminal:
 
 ```bash
 sudo install-masios-to-internal.sh --dry-run     # shows the plan, writes nothing
 sudo install-masios-to-internal.sh               # asks for the Android size
 ```
 
+PB-OS Utils runs the installer as a background service with sleep held off,
+so it carries on with Quick Access closed and shows a toast when it ends.
 The installer window shows each step with a progress bar and the live log,
 and won't close while it's installing. It ends with a pop-up: the next steps,
 or on failure the error and whether internal storage was already changed. The
@@ -39,6 +42,25 @@ You pick how much of the SD's `/home` comes along:
 | `all` (default) | everything, installed games included |
 | `essentials` | Steam login, settings, saves and plugins; games get downloaded again |
 | `none` | a clean start |
+
+## Back to a microSD card
+
+From the internal install, PB-OS Utils' Install tab (or
+`sudo copy-to-sd.sh`) copies the running SteamOS to a microSD card, laid out
+like a flashed image (`BOOT` FAT with the `KERNEL`, `root`, `home` filling the
+card). The card is erased; internal storage is only read. It brings the same
+`/home` choices as above, plus the partition-table backup in `/boot/ufs-backup`,
+so the card can later give the internal space back to Android (below).
+
+```bash
+sudo copy-to-sd.sh --probe       # the card it would use, as KEY=VALUE
+sudo copy-to-sd.sh --dry-run     # the plan, writes nothing
+sudo copy-to-sd.sh --home essentials
+```
+
+It unmounts the card the way SteamOS's own Format does, holding the
+auto-mounter's locks so nothing remounts mid-copy, and stops if a game still
+uses the card. Then set **Boot source** to **SD** in the ABL menu.
 
 ## Reinstall versus update
 
@@ -94,6 +116,8 @@ existing partitions.
 | File | What it does |
 |---|---|
 | `install-masios-to-internal.sh` | the installer |
+| `copy-to-sd.sh` | the other direction: internal install to a microSD card |
+| `home-copy.sh` | what of `/home` both bring (all, essentials, none) |
 | `ufs-partition.py` | reads, repartitions and restores the internal partition table |
 | `ufs-bootimg.py` | reads, checks and retargets the ABL `KERNEL` |
 | `easy-ufs-installer.py` | the Desktop Mode app |
