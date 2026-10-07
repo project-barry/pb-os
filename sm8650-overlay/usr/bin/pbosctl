@@ -11,8 +11,9 @@
                                        (system)
   pbosctl monitor                     print key/button events from the pads
                                        (find out what each extra button sends)
-  pbosctl sleep standby|s2idle|status standby (default: panel off, session
-                                       frozen, ~1 W) or experimental kernel s2idle
+  pbosctl sleep deep|standby|status   deep (Pocket FIT default: full SoC sleep,
+                                       ~0.36 W) or standby (Pocket S2 default:
+                                       panel off, session frozen, ~1 W)
   pbosctl speaker boost|flat|status   speaker loudness chain (default: boost)
 """
 from __future__ import annotations
@@ -27,7 +28,8 @@ import sys
 
 STATE = "/var/lib/pbosd/state.json"
 BLACKLIST = "/etc/modprobe.d/konkr-mcu.conf"
-S2IDLE = "/var/lib/pbosd/sleep-s2idle"
+S2IDLE = "/var/lib/pbosd/sleep-s2idle"    # kernel sleep forced on
+STANDBY = "/var/lib/pbosd/sleep-standby"  # konkr-standby forced on
 PROFILES = ("lowpower", "balanced")
 LEGACY_PROFILES = {"silent": "lowpower", "turbo": "balanced"}
 BUTTON_MODES = ("steam", "system")
@@ -90,7 +92,7 @@ def status() -> None:
     mode = st.get("buttons_mode", "steam")
     print(f"buttons : {mode} ({'Steam Remap' if mode == 'steam' else 'pbosd actions'})")
     mcu = "loaded" if os.path.isdir("/sys/module/konkr_sysbtn") else "not loaded"
-    print("sleep   :", "s2idle (experimental)" if os.path.exists(S2IDLE) else "standby")
+    print("sleep   :", sleep_status())
     print(f"mcu     : {mcu} ({'blacklisted' if os.path.exists(BLACKLIST) else 'enabled at boot'})")
 
 
@@ -115,15 +117,24 @@ def mcu(cmd: str) -> None:
         sys.exit(__doc__)
 
 
+def sleep_status() -> str:
+    r = subprocess.run(["/usr/lib/konkr/konkr-sleep-mode"], capture_output=True,
+                       text=True, check=False)
+    return "deep" if r.stdout.strip() == "kernel" else "standby"
+
+
 def sleep_mode(cmd: str) -> None:
     if cmd == "status":
-        print("sleep   :", "s2idle (experimental)" if os.path.exists(S2IDLE) else "standby")
+        print("sleep   :", sleep_status())
         return
     need_root()
-    if cmd == "s2idle":
-        os.makedirs(os.path.dirname(S2IDLE), exist_ok=True)
+    os.makedirs(os.path.dirname(S2IDLE), exist_ok=True)
+    if cmd in ("deep", "s2idle"):  # s2idle: the old name for kernel sleep
         open(S2IDLE, "w").close()
+        if os.path.exists(STANDBY):
+            os.remove(STANDBY)
     elif cmd == "standby":
+        open(STANDBY, "w").close()
         if os.path.exists(S2IDLE):
             os.remove(S2IDLE)
     else:

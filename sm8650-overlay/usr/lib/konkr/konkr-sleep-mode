@@ -1,0 +1,15 @@
+#!/bin/sh
+# Prints "kernel" (deep sleep, prepared by konkr-sleep.service) or "standby"
+# (konkr-standby: panel off, session frozen, no kernel suspend).
+#   /var/lib/pbosd/sleep-standby   standby  (pbosctl sleep standby)
+#   /var/lib/pbosd/sleep-s2idle    kernel   (pbosctl sleep deep)
+#   otherwise: kernel on the KONKR Pocket FIT (full SoC sleep since
+#   2026-10-07), standby on the AYANEO Pocket S2 (not tested yet)
+if [ -e /var/lib/pbosd/sleep-standby ]; then
+  echo standby
+elif [ -e /var/lib/pbosd/sleep-s2idle ] \
+     || grep -qa "KONKR Pocket FIT" /sys/firmware/devicetree/base/model 2>/dev/null; then
+  echo kernel
+else
+  echo standby
+fi

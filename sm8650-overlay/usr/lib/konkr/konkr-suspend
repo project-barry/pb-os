@@ -1,15 +1,13 @@
 #!/bin/sh
 # systemd-suspend.service ExecStart on the KONKR Pocket FIT.
-# Default: konkr-standby: panel powered off, user session frozen, big cores
-# offline, Wi-Fi/touch/audio off. Measured ~1.1 W (was ~3 W+ with the old
-# screen-off-only standby). Kernel s2idle is opt-in (`pbosctl sleep s2idle`)
-# until it stops hanging on the 7.1.2 kernel (2026-09-24: first entry bounced
-# straight back, the second never resumed).
-# konkr-standby drives the Pocket FIT / Pocket S2 hardware (same AYANEO
-# platform); every other device (Retroid Pocket 6, …) gets the stock kernel
-# suspend.
+# KONKR Pocket FIT: deep sleep (full SoC sleep, ~0.36 W, 2026-10-07) prepared
+# by konkr-sleep.service; konkr-standby (panel off, session frozen, big cores
+# offline, ~1.1 W) on the AYANEO Pocket S2 or after `pbosctl sleep standby`
+# (konkr-sleep-mode decides). konkr-standby drives the Pocket FIT / Pocket S2
+# hardware (same AYANEO platform); every other device (Retroid Pocket 6, …)
+# gets the stock kernel suspend.
 if ! grep -qaE "KONKR Pocket FIT|AYANEO Pocket S2" /sys/firmware/devicetree/base/model 2>/dev/null \
-   || [ -e /var/lib/pbosd/sleep-s2idle ]; then
+   || [ "$(/usr/lib/konkr/konkr-sleep-mode)" = kernel ]; then
   exec /usr/lib/systemd/systemd-sleep suspend
 fi
 exec /usr/lib/konkr/konkr-standby

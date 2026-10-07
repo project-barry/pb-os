@@ -158,12 +158,16 @@ Output: `/work/steamos-sm8650.img`.
 
 ## Other stuff fixed on the Pocket FIT
 
-- Standby: the Frame's ADB, USB gadget, power monitor and FPGA services are
-  masked since they just crash-loop and keep the SoC awake. Sleep runs
-  `konkr-standby`, which turns the panel off, freezes the session, takes the
-  big cores offline and unloads wifi; it still draws about 1 W, so the battery
-  slowly drains. Real s2idle is there behind `pbosctl sleep s2idle`. It didn't
-  wake reliably on kernel 7.1.2 and is untested on 7.2.8.
+- Sleep: the Frame's ADB, USB gadget, power monitor and FPGA services are
+  masked since they just crash-loop and keep the SoC awake. Sleep is kernel
+  deep sleep with the whole SoC asleep (CX collapse, DDR self-refresh), about
+  0.36 W, so a full charge lasts about 3.5 days asleep. Getting there took
+  kernel patches 0009-0016 (UFS, audio, display, both PCIe links down with a
+  memory floor, battery notifications off while asleep, the Renesas USB
+  firmware reloaded on wake) and `konkr-sleep`, which unloads Wi-Fi, releases
+  the Bluetooth and MCU UARTs and closes audio first.
+  `pbosctl sleep standby` switches back to `konkr-standby` (panel off,
+  session frozen, about 1 W), which the Pocket S2 still uses.
 - Some ARM64 Proton games hung on their splash screen because wined3d's GL
   path goes through zink. `WINE_D3D_CONFIG=renderer=vulkan` fixes it.
 - `konkr-focusfix` gives the game focus back after Quick Access closes,

@@ -557,7 +557,8 @@ chown -R root:root "$R/usr/share/alsa/ucm2/Qualcomm/sm8650" "$R/usr/share/alsa/u
 chmod 0755 "$R/usr/lib/steamos/sm8550-audio-setup" "$R/usr/lib/konkr/pbosd" \
   "$R/usr/bin/pbosctl" "$R/usr/bin/konkr-game" "$R/usr/lib/konkr/konkr-standby" \
   "$R/usr/lib/konkr/konkr-volume" "$R/usr/lib/konkr/konkr-sleep" \
-  "$R/usr/lib/konkr/konkr-suspend" "$R/usr/lib/konkr/konkr-focusfix" \
+  "$R/usr/lib/konkr/konkr-suspend" "$R/usr/lib/konkr/konkr-sleep-mode" \
+  "$R/usr/lib/konkr/konkr-focusfix" \
   "$R/usr/bin/konkr-apk" "$R/usr/lib/konkr/apk-info" "$R/usr/lib/konkr/pbos-hostname" \
   "$R/usr/lib/NetworkManager/dispatcher.d/60-konkr-timesync"
 # Game mode: re-activate the game after Quick Access / Steam menu closes.
@@ -590,8 +591,8 @@ else
 fi
 chroot "$R" update-mime-database /usr/share/mime
 chroot "$R" update-desktop-database -q /usr/share/applications
-# Opt-in s2idle (pbosctl sleep s2idle): konkr-sleep.service prepares
-# Wi-Fi/touch/audio/wake sources. Default sleep is konkr-standby.
+# Kernel deep sleep (Pocket FIT default; konkr-sleep-mode decides):
+# konkr-sleep.service prepares Wi-Fi/touch/audio/UARTs/wake sources.
 mkdir -p "$R/usr/lib/systemd/system/sleep.target.wants"
 ln -sfn ../konkr-sleep.service "$R/usr/lib/systemd/system/sleep.target.wants/konkr-sleep.service"
 # SSH stays off, like on the Steam Deck: a public image should not listen on

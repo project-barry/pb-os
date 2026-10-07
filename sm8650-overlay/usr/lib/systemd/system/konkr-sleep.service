@@ -7,7 +7,7 @@ ConditionPathExists=/usr/lib/konkr/konkr-sleep
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecCondition=/bin/sh -c '[ -e /var/lib/pbosd/sleep-s2idle ]'
+ExecCondition=/bin/sh -c '[ "$(/usr/lib/konkr/konkr-sleep-mode)" = kernel ]'
 ExecStart=/usr/lib/konkr/konkr-sleep pre
 ExecStop=/usr/lib/konkr/konkr-sleep post
 TimeoutSec=30

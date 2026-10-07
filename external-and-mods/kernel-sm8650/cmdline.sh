@@ -22,15 +22,12 @@ build_cmdline() {
     usbcore.interrupt_interval_override=045e:028e:2
     # (The HID mode, 4001:0428, already polls at 1 ms by its own descriptor.)
   )
-  # SM8650 (Pocket FIT) stays on s2idle until its deep sleep is validated.
-  if [[ "${SOC:-sm8650}" == sm8550 ]]; then
-    # Deep sleep reaches full SoC sleep on SM8550 (kernel patches 0531-0536
-    # + sm8550-sleep). console=tty0 keeps the kernel console off the debug
-    # UART (stdout-path), whose GENI clock would otherwise keep the XO on.
-    parts+=(mem_sleep_default=deep console=tty0)
-  else
-    parts+=(mem_sleep_default=s2idle)
-  fi
+  # Deep sleep reaches full SoC sleep on SM8550 (kernel patches 0531-0536 +
+  # sm8550-sleep) and on the Pocket FIT (patches 0009-0016 + konkr-sleep).
+  # console=tty0 keeps the kernel console off the debug UART (stdout-path),
+  # whose GENI clock would otherwise keep the XO on. (The Pocket S2 shares
+  # this kernel but keeps konkr-standby, which never suspends the kernel.)
+  parts+=(mem_sleep_default=deep console=tty0)
   if [[ "${CMDLINE_QUIET:-1}" == 1 ]]; then
     parts+=(quiet loglevel=0 systemd.show_status=0 rd.udev.log_level=0
             logo.nologo vt.global_cursor_default=0)

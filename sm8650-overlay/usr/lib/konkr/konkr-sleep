@@ -13,9 +13,18 @@
 #     stream still open)                               -> suspend all sinks/sources
 #   - battery / USB-C / Wi-Fi / DSP / USB-host events are wake sources
 #                                                      -> only the power key wakes
+#
+# Full SoC sleep (deep, 2026-10-07; CX collapse + DDR self-refresh): the UARTs
+# of Bluetooth and of the MCU (konkr_sysbtn) keep the XO clock on, so both are
+# released for the sleep, and an audio stream that is still open (Steam's
+# sleep sound) keeps the audio DSP up, so the hook waits until every PCM is
+# closed. The temperature sensors' wake is off (75-konkr-tsens-nowake.rules).
 set -u
 
 TOUCH_DRV=/sys/bus/i2c/drivers/chipone-tddi
+MCU_DRV=/sys/bus/serial/drivers/konkr_sysbtn
+MCU_MARK=/run/konkr-sleep-mcu
+BT_MARK=/run/konkr-sleep-bt-was-on
 WIFI_MODS=(ath12k_wifi7 ath12k)
 UID_STEAM=1000
 
@@ -59,6 +68,39 @@ wake_sources() {
   done
 }
 
+streams_open() {
+  local f
+  for f in /proc/asound/card*/pcm*/sub*/status; do
+    [[ -e $f ]] || continue
+    [[ $(head -n1 "$f") == closed ]] || return 0
+  done
+  return 1
+}
+
+uarts_off() {  # Bluetooth and MCU UARTs hold the XO clock
+  local d
+  if rfkill list bluetooth 2>/dev/null | grep -q "Soft blocked: no"; then
+    rfkill block bluetooth && touch "$BT_MARK"
+  fi
+  : >"$MCU_MARK"
+  for d in "$MCU_DRV"/serial*; do
+    [[ -e $d ]] || continue
+    echo "${d##*/}" >"$MCU_DRV/unbind" 2>/dev/null && echo "${d##*/}" >>"$MCU_MARK"
+  done
+}
+
+uarts_on() {
+  local d
+  if [[ -s $MCU_MARK ]]; then
+    while read -r d; do echo "$d" >"$MCU_DRV/bind" 2>/dev/null; done <"$MCU_MARK"
+  fi
+  rm -f "$MCU_MARK"
+  if [[ -e $BT_MARK ]]; then
+    rfkill unblock bluetooth
+    rm -f "$BT_MARK"
+  fi
+}
+
 touch_off() {
   local d n=0
   if [[ -d $TOUCH_DRV ]]; then
@@ -71,15 +113,18 @@ touch_off() {
 }
 
 pre() {
-  local n
+  local n i=0
   audio 1
   wake_sources
   n=$(touch_off)
+  uarts_off
   if [[ -d /sys/module/${WIFI_MODS[0]} ]]; then
     timeout 15 modprobe -r "${WIFI_MODS[@]}" || log "ath12k unload failed"
   fi
+  # Steam's sleep sound keeps its stream open for several seconds
+  while streams_open && ((i < 30)); do sleep 0.5; i=$((i + 1)); done
   sync
-  log "pre: audio suspended, touch unbound=$n, wifi=$([[ -d /sys/module/${WIFI_MODS[0]} ]] && echo loaded || echo unloaded)"
+  log "pre: audio suspended (waited $((i / 2)) s), touch unbound=$n, wifi=$([[ -d /sys/module/${WIFI_MODS[0]} ]] && echo loaded || echo unloaded)"
 }
 
 touch_devices() {  # chipone panels on any I2C bus, bound or not
@@ -101,6 +146,7 @@ touch_on() {
 
 post() {
   touch_on
+  uarts_on
   if [[ ! -d /sys/module/${WIFI_MODS[0]} ]]; then
     modprobe "${WIFI_MODS[0]}" || log "ath12k reload failed"
   fi
