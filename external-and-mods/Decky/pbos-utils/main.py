@@ -414,6 +414,9 @@ def lights_signature() -> tuple[Any, ...]:
     return rd("/sys/power/suspend_stats/success"), tuple(inodes)
 
 
+GAMMA = 2.2
+
+
 def frame(effect: str, t: float, rgb: tuple[int, int, int], speed: int, n: int,
           stars: list[float]) -> list[tuple[int, int, int]]:
     """Each zone's colour at time t (seconds). Zones go round each ring of
@@ -422,7 +425,10 @@ def frame(effect: str, t: float, rgb: tuple[int, int, int], speed: int, n: int,
     fast = (speed - 1) / 9                     # 0 slowest .. 1 fastest
 
     def scale(c, v):
-        return tuple(int(x * v) for x in c)
+        # v is how bright it should look; LEDs look bright at low power, so
+        # the power is v ** 2.2 (as the sleep hook's fade), or fades would
+        # seem to snap on and hang before going off.
+        return tuple(round(x * v ** GAMMA) for x in c)
 
     def hue(h):
         return tuple(int(x * 255) for x in colorsys.hsv_to_rgb(h % 1.0, 1.0, 1.0))
