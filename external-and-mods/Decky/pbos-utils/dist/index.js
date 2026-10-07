@@ -180,6 +180,8 @@ function UpdateTab() {
                 children: "Pause download",
             })));
             items.push(note("A paused or interrupted download continues where it stopped."));
+        } else if (copying && (job.step || "").endsWith("Downloads folder")) {
+            items.push(note("You can close this menu. The files leave the Downloads folder once the update is ready."));
         } else if (copying) {
             items.push(note("Leave the drive in until the copy is done. You can close this menu."));
         } else {
@@ -190,14 +192,14 @@ function UpdateTab() {
         if (job.error) items.push(failure(job.error));
         if (localUp) {
             items.push(
-                row(jsx(DFL.Field, { label: `pb-os ${localUp.version} on the ${localUp.where}`, children: null,
+                row(jsx(DFL.Field, { label: `pb-os ${localUp.version} ${localUp.place || "on the " + localUp.where}`, children: null,
                     description: localUp.kind === "delta"
                         ? `${gb(localUp.size)} (only what changed)`
                         : `${gb(localUp.size)}, about 25 GB free space needed` })),
                 row(jsx(DFL.ButtonItem, {
                     layout: "below",
                     onClick: () => startLocal().then(refresh),
-                    children: "Install from the drive",
+                    children: localUp.drive === "downloads" ? "Install from Downloads" : "Install from the drive",
                 })),
             );
         }
@@ -231,8 +233,9 @@ function UpdateTab() {
             onClick: () => { checkLocal().then(refresh).catch(() => {}); doCheck(); },
             children: "Check for updates",
         })));
-        items.push(note("No internet? Put the update's files, SHA256SUMS and SHA256SUMS.sig from the release "
-            + "in the top folder of a microSD card or USB drive and put it in."));
+        items.push(note("No internet here? Put the update's files, SHA256SUMS and SHA256SUMS.sig from the release "
+            + "in the top folder of a microSD card or USB drive and put it in. Or download them in Desktop Mode "
+            + "to the Downloads folder; they are deleted from there once the update is ready."));
     }
     return jsx(DFL.PanelSection, { title: "pb-os update", children: items });
 }
@@ -692,8 +695,8 @@ function onAvailable(title) {
     toaster.toast({ title: "pb-os update", body: `${title} is available. Open PB-OS Utils in Quick Access.`, duration: 6000 });
 }
 
-function onLocal(version, where) {
-    toaster.toast({ title: "pb-os update", body: `pb-os ${version} is on the ${where}. Open PB-OS Utils in Quick Access to install it.`, duration: 6000 });
+function onLocal(version, place) {
+    toaster.toast({ title: "pb-os update", body: `pb-os ${version} is ${place}. Open PB-OS Utils in Quick Access to install it.`, duration: 6000 });
 }
 
 function onMoveDone(direction, ok) {

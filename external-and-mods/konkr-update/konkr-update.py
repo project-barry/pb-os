@@ -572,8 +572,16 @@ def check_space(kind, size, have=0):
 # signature is from the pb-os release key. SteamOS mounts only ext4 microSD
 # cards, so the updater mounts the others itself, read-only, while it looks and
 # copies. Drives on the disk the system runs from are never looked at.
+# The same files downloaded to the steamos user's Downloads folder (a browser
+# in Desktop Mode) work too; they are removed from there once the update is
+# staged.
 MEDIA = Path('/run/konkr-update/media')
 MEDIA_FS = {'vfat': 'vfat', 'exfat': 'exfat', 'ext4': 'ext4', 'ntfs': 'ntfs3'}
+DOWNLOADS = Path('/home/steamos/Downloads')
+# build-update-package.py --release: every part but the last is this size.
+PART_SIZE = 1900 << 20
+# What browsers write while a download runs (Firefox, Chromium, Epiphany/WebKit).
+UNFINISHED = ('.part', '.crdownload', '.download')
 
 
 def quiet(*args):
@@ -631,30 +639,37 @@ class Mounted:
 
 
 def packages_in(folder, image, current, base):
-    """Complete pb-os packages for this image in the drive's top folder that
-    update current (a delta: from its feature release, base):
-    {joined name: {version, kind, files}}. Parts must run .001, .002, ... unbroken."""
+    """pb-os packages for this image in the folder that update current (a
+    delta: from its feature release, base): complete ones as {joined name:
+    {version, kind, files, size}}, and the versions of incomplete ones. Parts
+    must run .001, .002, ... unbroken, all but the last PART_SIZE, and none
+    may still be downloading."""
     names = '|'.join(map(re.escape, channel_names(image)))
     pattern = re.compile(rf'pb-os-(.+?)-(?:{names})\.(?:from-(.+)\.delta|update)\.tar\.gz(?:\.(\d{{3}}))?')
-    groups = {}
+    groups = {}; busy = set()
     for p in folder.iterdir():
-        m = pattern.fullmatch(p.name)
-        if not m or not p.is_file(): continue
+        unfinished = p.name.endswith(UNFINISHED)
+        m = pattern.fullmatch(p.name.rsplit('.', 1)[0] if unfinished else p.name)
+        # Symlinks are not followed: the Downloads folder belongs to the user.
+        if not m or p.is_symlink() or not p.is_file(): continue
         tag, frm, part = m.group(1), m.group(2), m.group(3)
         if not newer(tag, current) or (frm is not None and frm != base): continue
-        name = p.name[:-4] if part else p.name
+        name = m.group(0)[:-4] if part else m.group(0)
         g = groups.setdefault(name, {'version': tag, 'kind': 'delta' if frm else 'full', 'joined': None, 'parts': {}})
+        if unfinished: busy.add(name); continue
         if part: g['parts'][int(part)] = p
         else: g['joined'] = p
-    found = {}
+    found, incomplete = {}, set()
     for name, g in groups.items():
         parts = [g['parts'][i] for i in sorted(g['parts'])]
-        if g['joined']: files = [g['joined']]
-        elif parts and sorted(g['parts']) == list(range(1, len(parts) + 1)): files = parts
-        else: continue
+        sizes = [f.stat().st_size for f in parts]
+        if g['joined'] and name not in busy and g['joined'].stat().st_size: files = [g['joined']]
+        elif (parts and name not in busy and sorted(g['parts']) == list(range(1, len(parts) + 1))
+              and all(s == PART_SIZE for s in sizes[:-1]) and 0 < sizes[-1] < PART_SIZE): files = parts
+        else: incomplete.add(g['version']); continue
         found[name] = {'version': g['version'], 'kind': g['kind'], 'files': files,
                        'size': sum(f.stat().st_size for f in files)}
-    return found
+    return found, incomplete
 
 
 def version_key(tag):
@@ -662,33 +677,67 @@ def version_key(tag):
     return [(0, int(t), '') if t.isdigit() else (1, 0, t) for t in re.findall(r'\d+|\D+', tag)]
 
 
+class Downloads:
+    """The steamos user's Downloads folder, when it is a real folder on HOME."""
+    def __enter__(self):
+        if DOWNLOADS.is_symlink() or not DOWNLOADS.is_dir(): raise FileNotFoundError(DOWNLOADS)
+        return DOWNLOADS
+
+    def __exit__(self, *exc):
+        pass
+
+
+def sources():
+    """Where an update can be: (id, where, place, folder context) for each
+    drive, then the Downloads folder."""
+    for drive in drives():
+        where = drive_title(drive)
+        yield drive['path'], where, f'on the {where}', Mounted(drive)
+    if DOWNLOADS.is_dir() and not DOWNLOADS.is_symlink():
+        yield 'downloads', 'Downloads folder', 'in the Downloads folder', Downloads()
+
+
+def regular(path):
+    """Read a file only if it is not a symlink."""
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode): raise ValueError(f'{path.name} is not a file')
+        os.set_blocking(fd, True)
+        return os.fdopen(fd, 'rb')
+    except BaseException:
+        os.close(fd); raise
+
+
 def find_local():
-    """The newest update on any drive, or None, and what is wrong with the
-    packages that cannot be used."""
+    """The newest update on any drive or in the Downloads folder, or None,
+    and what is wrong with the packages that cannot be used."""
     image = IMAGES.get(device_model())
     if not image: raise ValueError(f'no update channel for {device_model()}')
     current = installed_version(); problems = []; best = None
-    for drive in drives():
+    for source, where, place, opened in sources():
         try:
-            with Mounted(drive) as top:
-                found = packages_in(top, image, current, installed_base())
+            with opened as top:
+                found, incomplete = packages_in(top, image, current, installed_base())
+                for version in sorted(incomplete - {p['version'] for p in found.values()}, key=version_key):
+                    problems.append(f'pb-os {version} {place} is missing parts or is still being copied or '
+                                    'downloaded. It shows here once every part is there.')
                 if not found: continue
-                where = drive_title(drive)
                 sums, sig = top / 'SHA256SUMS', top / 'SHA256SUMS.sig'
-                if not (sums.is_file() and sig.is_file()):
-                    problems.append(f'The update on the {where} needs SHA256SUMS and SHA256SUMS.sig '
+                if not (sums.is_file() and sig.is_file()) or sums.is_symlink() or sig.is_symlink():
+                    problems.append(f'The update {place} needs SHA256SUMS and SHA256SUMS.sig '
                                     'from the same release next to it.')
                     continue
-                data = sums.read_bytes()
-                try: verify_signature(data, sig.read_bytes())
+                with regular(sums) as f: data = f.read(1 << 20)
+                with regular(sig) as f: signature = f.read(1 << 20)
+                try: verify_signature(data, signature)
                 except ValueError:
-                    problems.append(f'SHA256SUMS on the {where} is not signed with the pb-os release key.')
+                    problems.append(f'SHA256SUMS {place} is not signed with the pb-os release key.')
                     continue
                 listed = {f[1].lstrip('*'): f[0].lower() for f in (l.split() for l in data.decode().splitlines())
                           if len(f) == 2 and re.fullmatch('[0-9a-fA-F]{64}', f[0])}
                 usable = [n for n in found if n in listed]
                 if not usable:
-                    problems.append(f'SHA256SUMS on the {where} is from another release than the update next to it.')
+                    problems.append(f'SHA256SUMS {place} is from another release than the update next to it.')
                     continue
                 # Newest version first; a delta before the full package of the same
                 # version; the image's own name before an earlier name of it.
@@ -698,10 +747,10 @@ def find_local():
                 if best and best[0] >= rank(name): continue
                 p = found[name]
                 best = (rank(name), {'version': p['version'], 'kind': p['kind'], 'name': name, 'sha256': listed[name],
-                                     'size': p['size'], 'drive': drive['path'], 'where': where,
+                                     'size': p['size'], 'drive': source, 'where': where, 'place': place,
                                      'files': [f.name for f in p['files']]})
-        except (OSError, subprocess.CalledProcessError) as e:
-            print(f'{drive["path"]}: not readable: {e}', file=sys.stderr)
+        except (OSError, ValueError, subprocess.CalledProcessError) as e:
+            print(f'{source}: not readable: {e}', file=sys.stderr)
     return (best[1] if best else None), problems
 
 
@@ -714,27 +763,52 @@ def local_update(args):
     if os.geteuid() != 0: raise ValueError('updating needs administrator access')
     if (Path('/') / PENDING).exists(): raise ValueError('an update is already pending; restart to install it')
     cleanup()
-    step('Looking for an update on a drive')
+    step('Looking for an update on a drive or in the Downloads folder')
     found, problems = find_local()
-    if not found: raise ValueError(problems[0] if problems else 'no pb-os update for this device on a microSD card or USB drive')
-    drive = next((d for d in drives() if d['path'] == found['drive']), None)
-    if not drive: raise ValueError('the drive was removed')
+    if not found: raise ValueError(problems[0] if problems else 'no pb-os update for this device on a microSD card '
+                                   'or USB drive or in the Downloads folder')
+    opened = next((o for s, _, _, o in sources() if s == found['drive']), None)
+    if not opened: raise ValueError('the drive was removed')
     downloads = storage() / 'downloads'; downloads.mkdir(mode=0o700, exist_ok=True)
     for old in downloads.iterdir(): old.unlink()  # a download of another release
     check_space(found['kind'], found['size'])
     package = downloads / found['name']
     step(f'Copying pb-os {found["version"]} from the {found["where"]}')
-    with Mounted(drive) as top:
+    with opened as top:
         add = counter(found['size'])
         with package.open('wb') as out:
             for name in found['files']:
-                with (top / name).open('rb') as src:
+                with regular(top / name) as src:
                     while chunk := src.read(4 << 20):
                         out.write(chunk); add(len(chunk))
             out.flush(); os.fsync(out.fileno())
-    if package.stat().st_size != found['size']: raise ValueError('copying from the drive failed; try again')
-    print('DRIVE_DONE', flush=True)
+    if package.stat().st_size != found['size']: raise ValueError(f'copying from the {found["where"]} failed; try again')
+    if found['drive'] != 'downloads': print('DRIVE_DONE', flush=True)
     stage(package, found['sha256'], move=True, version=found['version'])
+    if found['drive'] == 'downloads': remove_downloaded(found['files'])
+
+
+def remove_downloaded(files):
+    """After staging: the update's files go from the Downloads folder, and
+    SHA256SUMS and SHA256SUMS.sig too once no other pb-os package is left
+    there. Never fails the staged update."""
+    try:
+        fd = os.open(DOWNLOADS, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    except OSError as e:
+        print('Could not clean the Downloads folder:', e, flush=True); return
+    try:
+        for name in files:
+            try: os.unlink(name, dir_fd=fd)
+            except FileNotFoundError: pass
+        if not any(n.startswith('pb-os-') and '.tar.gz' in n for n in os.listdir(fd)):
+            for name in ('SHA256SUMS', 'SHA256SUMS.sig'):
+                try: os.unlink(name, dir_fd=fd)
+                except FileNotFoundError: pass
+        print('Removed the update files from the Downloads folder', flush=True)
+    except OSError as e:
+        print('Could not clean the Downloads folder:', e, flush=True)
+    finally:
+        os.close(fd)
 
 
 def install_kernel(src, boot):
@@ -1351,8 +1425,8 @@ def main():
     sub.add_parser('check', help='newest release for this device, as JSON')
     p = sub.add_parser('update', help='download the newest release and stage it')
     p.add_argument('--reinstall', action='store_true', help='also when that version is installed')
-    sub.add_parser('local-check', help='update on a microSD card or USB drive, as JSON')
-    sub.add_parser('local-update', help='copy the update from a microSD card or USB drive and stage it')
+    sub.add_parser('local-check', help='update on a microSD card or USB drive or in ~/Downloads, as JSON')
+    sub.add_parser('local-update', help='copy the update from a microSD card, USB drive or ~/Downloads and stage it')
     p = sub.add_parser('recover')
     for name in ('root', 'boot', 'home', 'work'): p.add_argument('--' + name, required=True)
     p = sub.add_parser('inspect'); p.add_argument('package')

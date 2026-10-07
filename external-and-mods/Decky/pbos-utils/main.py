@@ -6,9 +6,11 @@ Update   pb-os updates (was the PB-OS Update plugin). Front for
          helper). The download and staging run as the transient unit
          pbos-update, so they carry on when Quick Access closes or Steam
          restarts; this reads their log. The update installs on the next
-         restart. Without internet, an update on a microSD card or USB drive
-         works the same way: this looks at drives when one is put in or taken
-         out (local-check) and installs from it with local-update. Each start
+         restart. Without internet, an update on a microSD card or USB drive,
+         or downloaded to ~/Downloads in Desktop Mode, works the same way:
+         this looks when a drive is put in or taken out or the Downloads
+         folder changes (local-check) and installs from there with
+         local-update, which then deletes it from ~/Downloads. Each start
          frees what finished updates left on HOME (cleanup).
 
 Install  moves SteamOS between the microSD card and internal storage, with
@@ -54,6 +56,7 @@ VERSION = "/usr/share/pb-os/version"
 CHECK_EVERY = 6 * 3600
 # Drives come and go: compare the block devices this often.
 DRIVES_EVERY = 3
+DOWNLOADS = "/home/steamos/Downloads"
 
 UFS = "/usr/share/easy-ufs-install"
 TO_INTERNAL = f"{UFS}/install-masios-to-internal.sh"
@@ -184,6 +187,25 @@ def block_devices() -> list[str]:
         return sorted(os.listdir("/sys/class/block"))
     except OSError:
         return []
+
+
+def downloaded() -> list[tuple[str, int]]:
+    """Update files in the Downloads folder, with their sizes. A browser's
+    file in progress (.part, .crdownload) counts by name only, so a running
+    download does not set off a check every few seconds."""
+    out: list[tuple[str, int]] = []
+    try:
+        with os.scandir(DOWNLOADS) as it:
+            for e in it:
+                if e.name.startswith(("pb-os-", "SHA256SUMS")):
+                    try:
+                        busy = e.name.endswith((".part", ".crdownload", ".download"))
+                        out.append((e.name, 0 if busy else e.stat(follow_symlinks=False).st_size))
+                    except OSError:
+                        pass
+    except OSError:
+        pass
+    return sorted(out)
 
 
 # ----------------------------------------------------------------- install --
@@ -354,13 +376,17 @@ class Plugin:
 
     async def _watch_drives(self) -> None:
         # A drive put in or taken out changes the block devices; looking at
-        # the drives (which mounts them) does not.
+        # the drives (which mounts them) does not. Update files coming into
+        # or leaving the Downloads folder count too.
         seen: list[str] = []
+        seen_dl: list[tuple[str, int]] = []
         while True:
             now = await asyncio.to_thread(block_devices)
-            if now != seen:
-                seen = now
-                self.card = None  # the Install tab looks again
+            now_dl = await asyncio.to_thread(downloaded)
+            if now != seen or now_dl != seen_dl:
+                if now != seen:
+                    self.card = None  # the Install tab looks again
+                seen, seen_dl = now, now_dl
                 await asyncio.sleep(2)  # let the drive settle (partitions, SteamOS's own mount)
                 try:
                     if not await asyncio.to_thread(active, MOVE_UNIT):
@@ -394,7 +420,7 @@ class Plugin:
         up = self.local.get("update")
         key = f"{up['version']} {up['drive']}" if up else ""
         if up and key != self.announced_local and not os.path.exists(PENDING):
-            await decky.emit("pbos_local_available", up["version"], up["where"])
+            await decky.emit("pbos_local_available", up["version"], up.get("place") or f"on the {up['where']}")
         self.announced_local = key
         return self.local
 
