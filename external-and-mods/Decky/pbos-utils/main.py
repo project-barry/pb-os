@@ -415,6 +415,9 @@ def lights_signature() -> tuple[Any, ...]:
 
 
 GAMMA = 2.2
+# How far (in zones) a zone's light reaches during Spin: 1 = only two zones
+# share the light, each handing over as the other takes it.
+SPIN_WIDTH = 1.5
 
 
 def frame(effect: str, t: float, rgb: tuple[int, int, int], speed: int, n: int,
@@ -443,13 +446,17 @@ def frame(effect: str, t: float, rgb: tuple[int, int, int], speed: int, n: int,
         period = 6 - 5 * fast
         return [hue(t / period + (i % ring) / ring) for i in range(n)]
     if effect == "spin":
-        # One light going round: between two zones, one fades down exactly as
-        # the next fades up (cos² + sin² = 1, so the ring stays as bright).
+        # One light going round. Each zone fades up as the light comes within
+        # SPIN_WIDTH zones of it and down as it leaves, so the next zone is
+        # already rising while this one peaks and the last is still fading:
+        # through the Nova's clear shell, no gap between zones. The raised
+        # cosines add up to the same total wherever the light is.
         head = (t / (3 - 2.5 * fast)) * ring
         out = []
         for i in range(n):
             d = abs((head - i % ring + ring / 2) % ring - ring / 2)   # distance round the ring
-            out.append(scale(rgb, math.cos(math.pi * d / 2) ** 2 if d < 1 else 0.0))
+            v = math.cos(math.pi * d / (2 * SPIN_WIDTH)) ** 2 if d < SPIN_WIDTH else 0.0
+            out.append(scale(rgb, v))
         return out
     if effect == "starlight":
         # Each zone lights up at random, fades in and out over `life`.
