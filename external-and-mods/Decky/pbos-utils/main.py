@@ -512,14 +512,18 @@ class Animator:
         # channel again and round it down, and a fading pink came out as red
         # alone near the end (blue already 0, red still 1).
         self.level = max(0, min(255, int(st.get("brightness", 160)))) / 255
-        for led in leds:
-            self._write(led, "brightness", rd(f"{led}/max_brightness", "255") if on else 0)
         if not on:
+            for led in leds:
+                self._write(led, "brightness", 0)
             return
         effect = st.get("effect", "static")
+        # The colour first, then the brightness: LEDs made again (after a
+        # sleep) start at full white, and brightness first flashed it.
+        for i, led in enumerate(leds):
+            first = [0, 0, 0] if fade else frame(effect, 0.0, rgb, int(st.get("speed", 5)), len(leds), [-100.0] * len(leds))[i]
+            self._write(led, "multi_intensity", self.power(led, first))
+            self._write(led, "brightness", rd(f"{led}/max_brightness", "255"))
         if effect == "static" and not fade:
-            for led in leds:
-                self._write(led, "multi_intensity", self.power(led, rgb))
             return
         self.stop = threading.Event()
         self.thread = threading.Thread(target=self._run, args=(leds, effect, rgb, int(st.get("speed", 5)), self.stop, fade),
