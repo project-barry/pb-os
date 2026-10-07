@@ -386,18 +386,30 @@ def multicolor_lights() -> dict[str, Any]:
             "speed": max(1, min(10, int(st.get("speed", 5)))), "available": bool(glob.glob(MULTICOLOR))}
 
 
-# Each ring clockwise from the top, left stick then right. The device tree
-# numbers the zones differently on each stick (seen on the Retroid Pocket
-# Nova, 2026-10-07; the RP6 has the same tree).
-RING_ORDER = ("l3", "l2", "l1", "l4", "r4", "r1", "r2", "r3")
+# Each ring clockwise from the top, left stick then right, by device model.
+# The zones' numbers don't follow the rings the same way on every stick or
+# device, though both share a device tree (mapped by eye 2026-10-07: on the
+# RP6 the left ring sits a quarter turn on from the Nova's and the right is
+# numbered the other way round).
+RING_ORDERS = {
+    "Retroid Pocket Nova": ("l3", "l2", "l1", "l4", "r4", "r1", "r2", "r3"),
+    "Retroid Pocket 6": ("l2", "l1", "l4", "l3", "r3", "r2", "r1", "r4"),
+}
+RING_ORDER = RING_ORDERS["Retroid Pocket Nova"]
+
+
+def ring_order() -> tuple[str, ...]:
+    model = rd("/sys/firmware/devicetree/base/model").rstrip("\0")
+    return next((o for name, o in RING_ORDERS.items() if model.startswith(name)), RING_ORDER)
 
 
 def zones() -> list[str]:
-    """The stick LEDs in ring order (RING_ORDER), so Spin and Rainbow Wave
-    go round each stick."""
+    """The stick LEDs in ring order (ring_order()), so Spin and Rainbow Wave
+    go round each stick, both sticks in step."""
     found = {p.rsplit(":", 1)[-1]: p for p in glob.glob(MULTICOLOR)}
-    if set(found) == set(RING_ORDER):
-        return [found[z] for z in RING_ORDER]
+    order = ring_order()
+    if set(found) == set(order):
+        return [found[z] for z in order]
     return sorted(found.values(), key=lambda p: (p[-2], p[-1]))
 
 
