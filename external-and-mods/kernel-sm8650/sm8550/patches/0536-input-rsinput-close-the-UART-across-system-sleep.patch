@@ -1,0 +1,61 @@
+From: lavachemist <48248311+lavachemist@users.noreply.github.com>
+Subject: [PATCH] input: rsinput: close the UART across system sleep
+
+rsinput keeps its serdev port open through system sleep. The open GENI
+serial engine keeps its clock (QUP wrap2 s7 on the Retroid Pocket Nova)
+prepared, which holds the SoC's XO vote. Close the port after the MCU is
+stopped in suspend and reopen it with the probe settings before the
+re-init commands in resume. Tested on the Nova by unbinding the driver
+across sleep (same release); the pad came back each time.
+---
+--- a/drivers/input/joystick/rsinput.c
++++ b/drivers/input/joystick/rsinput.c
+@@ -664,6 +664,19 @@
+         regulator_disable(drv->vdd);
+ }
+ 
++static int rsinput_open_uart(struct rsinput_driver *drv)
++{
++    int error = serdev_device_open(drv->serdev);
++
++    if (error) {
++        dev_err(&drv->serdev->dev, "Unable to reopen UART: %d\n", error);
++        return error;
++    }
++    serdev_device_set_baudrate(drv->serdev, 115200);
++    serdev_device_set_flow_control(drv->serdev, false);
++    return 0;
++}
++
+ static int rsinput_suspend(struct device *dev)
+ {
+     struct rsinput_driver *drv = dev_get_drvdata(dev);
+@@ -680,10 +693,17 @@
+     if (drv->reset_gpio)
+         gpiod_set_value_cansleep(drv->reset_gpio, 0);
+ 
++    /*
++     * Close the UART as well: an open serdev port keeps its GENI serial
++     * engine clock prepared, which keeps the SoC's XO on in system sleep.
++     */
++    serdev_device_close(drv->serdev);
++
+     if (!drv->vdd_off) {
+         error = regulator_disable(drv->vdd);
+         if (error) {
+             dev_err(dev, "Failed to disable MCU supply: %d\n", error);
++            rsinput_open_uart(drv);
+             rsinput_init_commands(drv);
+             return error;
+         }
+@@ -707,6 +727,10 @@
+         drv->vdd_off = false;
+     }
+ 
++    error = rsinput_open_uart(drv);
++    if (error)
++        return error;
++
+     return rsinput_init_commands(drv);
+ }
+ 

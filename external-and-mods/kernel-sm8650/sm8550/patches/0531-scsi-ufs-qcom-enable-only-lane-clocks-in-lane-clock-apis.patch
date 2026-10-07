@@ -1,0 +1,70 @@
+From: lavachemist <48248311+lavachemist@users.noreply.github.com>
+Subject: [PATCH] scsi: ufs: qcom: enable only the lane clocks in the lane clock helpers
+
+Backport of the upstream fix queued for 7.4 (scsi-queue), adapted
+without the struct change: the lane clock helpers bulk-enabled every clock
+of the UFS node, including ref_clk and the clocks the UFS core already
+manages. Clock gating re-enabled them on every ungate without a matching
+disable, so the enable counts only grew and the UFS reference clock kept
+the SoC's XO on in system sleep.
+
+Handle only the lane symbol clocks here, and skip the enable when they are
+already on. Tested on the Retroid Pocket Nova (UFS root, deep sleep) and
+the KONKR Pocket FIT.
+---
+--- a/drivers/ufs/host/ufs-qcom.c
++++ b/drivers/ufs/host/ufs-qcom.c
+@@ -356,6 +356,9 @@
+ {
+ 	int err;
+ 
++	if (host->is_lane_clks_enabled)
++		return 0;
++
+ 	err = clk_bulk_prepare_enable(host->num_clks, host->clks);
+ 	if (err)
+ 		return err;
+@@ -365,19 +368,38 @@
+ 	return 0;
+ }
+ 
++/*
++ * Backport of "scsi: ufs: ufs-qcom: Enable only lane clocks in lane clock
++ * APIs" (7.4/scsi-queue): the lane clock helpers used to bulk-enable every
++ * clock of the UFS node, duplicating the references the UFS core already
++ * takes on the non-lane clocks; those were never balanced and kept CXO
++ * from shutting down. Only the lane symbol clocks are handled here now.
++ */
++static const char * const ufs_qcom_lane_clk_names[] = {
++	"tx_lane0_sync_clk", "rx_lane0_sync_clk", "rx_lane1_sync_clk",
++};
++
+ static int ufs_qcom_init_lane_clks(struct ufs_qcom_host *host)
+ {
+-	int err;
+ 	struct device *dev = host->hba->dev;
++	int i, n, err;
+ 
+ 	if (has_acpi_companion(dev))
+ 		return 0;
+ 
+-	err = devm_clk_bulk_get_all(dev, &host->clks);
+-	if (err <= 0)
+-		return err;
++	/* In case of single lane per direction, don't read lane1 clocks */
++	n = host->hba->lanes_per_direction > 1 ? 3 : 2;
++	host->clks = devm_kcalloc(dev, n, sizeof(*host->clks), GFP_KERNEL);
++	if (!host->clks)
++		return -ENOMEM;
++	for (i = 0; i < n; i++)
++		host->clks[i].id = ufs_qcom_lane_clk_names[i];
++
++	err = devm_clk_bulk_get(dev, n, host->clks);
++	if (err)
++		return dev_err_probe(dev, err, "failed to get lane clocks\n");
+ 
+-	host->num_clks = err;
++	host->num_clks = n;
+ 
+ 	return 0;
+ }

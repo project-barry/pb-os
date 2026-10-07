@@ -1,0 +1,34 @@
+From: lavachemist <48248311+lavachemist@users.noreply.github.com>
+Subject: [PATCH] PCI: qcom: allow D3 on the SM8550 root port
+
+The SM8550 root port (17cb:0113) sets HotPlug+ in SltCap. With
+CONFIG_HOTPLUG_PCI_PCIE off, pci_bridge_d3_possible() then refuses D3, so
+the port stays in D0 across system sleep, dw_pcie_suspend_noirq() never
+powers the link down, and the Wi-Fi link keeps its interconnect and power
+votes. Allow D3 on that root port. Tested on the Retroid Pocket Nova (the
+link goes down in deep sleep and Wi-Fi comes back on resume). On SM8650 a
+Renesas xHCI behind the second port did not survive this, so it stays in
+the SM8550 patch set.
+---
+--- a/drivers/pci/controller/dwc/pcie-qcom.c
++++ b/drivers/pci/controller/dwc/pcie-qcom.c
+@@ -2427,6 +2427,19 @@
+ 	{ }
+ };
+ 
++/*
++ * The Qualcomm root ports advertise HotPlug+ in SltCap, so the PCI core treats
++ * them as hotplug bridges and, without native pciehp, refuses D3 for them.
++ * Their links then stay up in system sleep and keep CX and DDR votes. Nothing
++ * is ever hotplugged on these boards, so allow D3.
++ */
++static void qcom_fixup_bridge_d3(struct pci_dev *dev)
++{
++	if (pci_pcie_type(dev) == PCI_EXP_TYPE_ROOT_PORT)
++		dev->bridge_d3 = 1;
++}
++DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_QCOM, 0x0113, qcom_fixup_bridge_d3);
++
+ static void qcom_fixup_class(struct pci_dev *dev)
+ {
+ 	dev->class = PCI_CLASS_BRIDGE_PCI_NORMAL;

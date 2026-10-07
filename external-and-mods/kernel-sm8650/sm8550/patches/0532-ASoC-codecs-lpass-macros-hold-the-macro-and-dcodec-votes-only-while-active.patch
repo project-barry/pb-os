@@ -1,0 +1,291 @@
+From: lavachemist <48248311+lavachemist@users.noreply.github.com>
+Subject: [PATCH] ASoC: codecs: lpass-*-macro: hold the macro and dcodec votes only while active
+
+The rx, tx, wsa and va macros enable their "macro" and "dcodec" clocks in
+probe and only disable them in remove. On SM8550 those are q6prm votes
+(LPASS_HW_MACRO / LPASS_HW_DCODEC) that keep the LPASS core powered, so the
+ADSP never let the SoC collapse CX or put DDR in self-refresh in system
+sleep, even with every codec runtime-suspended and no stream open.
+
+Drop both votes at the end of runtime suspend and take them again first in
+runtime resume, as Qualcomm's downstream audio driver does. The register
+cache is already cache-only while suspended and resynced on resume. Tested
+on the Retroid Pocket Nova: speakers still work, and the SoC now reaches
+full sleep (aosd/cxsd/ddr).
+---
+--- a/sound/soc/codecs/lpass-rx-macro.c
++++ b/sound/soc/codecs/lpass-rx-macro.c
+@@ -3966,7 +3966,7 @@
+ };
+ MODULE_DEVICE_TABLE(of, rx_macro_dt_match);
+ 
+-static int rx_macro_runtime_suspend(struct device *dev)
++static int rx_macro_runtime_suspend_clks(struct device *dev)
+ {
+ 	struct rx_macro *rx = dev_get_drvdata(dev);
+ 
+@@ -3980,7 +3980,7 @@
+ 	return 0;
+ }
+ 
+-static int rx_macro_runtime_resume(struct device *dev)
++static int rx_macro_runtime_resume_clks(struct device *dev)
+ {
+ 	struct rx_macro *rx = dev_get_drvdata(dev);
+ 	int ret;
+@@ -4014,6 +4014,48 @@
+ 	return ret;
+ }
+ 
++
++/*
++ * The "macro" and "dcodec" clocks are q6prm votes that keep the LPASS core
++ * powered. Probe takes them and only remove dropped them, so the ADSP kept
++ * LPASS (and its CX/XO votes) up while the codec was idle and the SoC could
++ * never reach full sleep. Hold them only while the macro is runtime-active.
++ * Registers are already cache-only while suspended and resynced on resume.
++ */
++static int rx_macro_runtime_suspend(struct device *dev)
++{
++	struct rx_macro *rx = dev_get_drvdata(dev);
++	int ret = rx_macro_runtime_suspend_clks(dev);
++
++	if (ret)
++		return ret;
++	clk_disable_unprepare(rx->dcodec);
++	clk_disable_unprepare(rx->macro);
++	return 0;
++}
++
++static int rx_macro_runtime_resume(struct device *dev)
++{
++	struct rx_macro *rx = dev_get_drvdata(dev);
++	int ret;
++
++	ret = clk_prepare_enable(rx->macro);
++	if (ret)
++		return ret;
++	ret = clk_prepare_enable(rx->dcodec);
++	if (ret)
++		goto err_dcodec;
++	ret = rx_macro_runtime_resume_clks(dev);
++	if (ret)
++		goto err_clks;
++	return 0;
++err_clks:
++	clk_disable_unprepare(rx->dcodec);
++err_dcodec:
++	clk_disable_unprepare(rx->macro);
++	return ret;
++}
++
+ static const struct dev_pm_ops rx_macro_pm_ops = {
+ 	RUNTIME_PM_OPS(rx_macro_runtime_suspend, rx_macro_runtime_resume, NULL)
+ };
+--- a/sound/soc/codecs/lpass-tx-macro.c
++++ b/sound/soc/codecs/lpass-tx-macro.c
+@@ -2399,7 +2399,7 @@
+ 	lpass_macro_pds_exit(tx->pds);
+ }
+ 
+-static int tx_macro_runtime_suspend(struct device *dev)
++static int tx_macro_runtime_suspend_clks(struct device *dev)
+ {
+ 	struct tx_macro *tx = dev_get_drvdata(dev);
+ 
+@@ -2413,7 +2413,7 @@
+ 	return 0;
+ }
+ 
+-static int tx_macro_runtime_resume(struct device *dev)
++static int tx_macro_runtime_resume_clks(struct device *dev)
+ {
+ 	struct tx_macro *tx = dev_get_drvdata(dev);
+ 	int ret;
+@@ -2448,6 +2448,48 @@
+ 	return ret;
+ }
+ 
++
++/*
++ * The "macro" and "dcodec" clocks are q6prm votes that keep the LPASS core
++ * powered. Probe takes them and only remove dropped them, so the ADSP kept
++ * LPASS (and its CX/XO votes) up while the codec was idle and the SoC could
++ * never reach full sleep. Hold them only while the macro is runtime-active.
++ * Registers are already cache-only while suspended and resynced on resume.
++ */
++static int tx_macro_runtime_suspend(struct device *dev)
++{
++	struct tx_macro *tx = dev_get_drvdata(dev);
++	int ret = tx_macro_runtime_suspend_clks(dev);
++
++	if (ret)
++		return ret;
++	clk_disable_unprepare(tx->dcodec);
++	clk_disable_unprepare(tx->macro);
++	return 0;
++}
++
++static int tx_macro_runtime_resume(struct device *dev)
++{
++	struct tx_macro *tx = dev_get_drvdata(dev);
++	int ret;
++
++	ret = clk_prepare_enable(tx->macro);
++	if (ret)
++		return ret;
++	ret = clk_prepare_enable(tx->dcodec);
++	if (ret)
++		goto err_dcodec;
++	ret = tx_macro_runtime_resume_clks(dev);
++	if (ret)
++		goto err_clks;
++	return 0;
++err_clks:
++	clk_disable_unprepare(tx->dcodec);
++err_dcodec:
++	clk_disable_unprepare(tx->macro);
++	return ret;
++}
++
+ static const struct dev_pm_ops tx_macro_pm_ops = {
+ 	RUNTIME_PM_OPS(tx_macro_runtime_suspend, tx_macro_runtime_resume, NULL)
+ };
+--- a/sound/soc/codecs/lpass-wsa-macro.c
++++ b/sound/soc/codecs/lpass-wsa-macro.c
+@@ -2849,7 +2849,7 @@
+ 	clk_disable_unprepare(wsa->fsgen);
+ }
+ 
+-static int wsa_macro_runtime_suspend(struct device *dev)
++static int wsa_macro_runtime_suspend_clks(struct device *dev)
+ {
+ 	struct wsa_macro *wsa = dev_get_drvdata(dev);
+ 
+@@ -2863,7 +2863,7 @@
+ 	return 0;
+ }
+ 
+-static int wsa_macro_runtime_resume(struct device *dev)
++static int wsa_macro_runtime_resume_clks(struct device *dev)
+ {
+ 	struct wsa_macro *wsa = dev_get_drvdata(dev);
+ 	int ret;
+@@ -2898,6 +2898,48 @@
+ 	return ret;
+ }
+ 
++
++/*
++ * The "macro" and "dcodec" clocks are q6prm votes that keep the LPASS core
++ * powered. Probe takes them and only remove dropped them, so the ADSP kept
++ * LPASS (and its CX/XO votes) up while the codec was idle and the SoC could
++ * never reach full sleep. Hold them only while the macro is runtime-active.
++ * Registers are already cache-only while suspended and resynced on resume.
++ */
++static int wsa_macro_runtime_suspend(struct device *dev)
++{
++	struct wsa_macro *wsa = dev_get_drvdata(dev);
++	int ret = wsa_macro_runtime_suspend_clks(dev);
++
++	if (ret)
++		return ret;
++	clk_disable_unprepare(wsa->dcodec);
++	clk_disable_unprepare(wsa->macro);
++	return 0;
++}
++
++static int wsa_macro_runtime_resume(struct device *dev)
++{
++	struct wsa_macro *wsa = dev_get_drvdata(dev);
++	int ret;
++
++	ret = clk_prepare_enable(wsa->macro);
++	if (ret)
++		return ret;
++	ret = clk_prepare_enable(wsa->dcodec);
++	if (ret)
++		goto err_dcodec;
++	ret = wsa_macro_runtime_resume_clks(dev);
++	if (ret)
++		goto err_clks;
++	return 0;
++err_clks:
++	clk_disable_unprepare(wsa->dcodec);
++err_dcodec:
++	clk_disable_unprepare(wsa->macro);
++	return ret;
++}
++
+ static const struct dev_pm_ops wsa_macro_pm_ops = {
+ 	RUNTIME_PM_OPS(wsa_macro_runtime_suspend, wsa_macro_runtime_resume, NULL)
+ };
+--- a/sound/soc/codecs/lpass-va-macro.c
++++ b/sound/soc/codecs/lpass-va-macro.c
+@@ -1713,7 +1713,7 @@
+ 	lpass_macro_pds_exit(va->pds);
+ }
+ 
+-static int va_macro_runtime_suspend(struct device *dev)
++static int va_macro_runtime_suspend_clks(struct device *dev)
+ {
+ 	struct va_macro *va = dev_get_drvdata(dev);
+ 
+@@ -1728,7 +1728,7 @@
+ 	return 0;
+ }
+ 
+-static int va_macro_runtime_resume(struct device *dev)
++static int va_macro_runtime_resume_clks(struct device *dev)
+ {
+ 	struct va_macro *va = dev_get_drvdata(dev);
+ 	int ret;
+@@ -1755,6 +1755,48 @@
+ }
+ 
+ 
++
++/*
++ * The "macro" and "dcodec" clocks are q6prm votes that keep the LPASS core
++ * powered. Probe takes them and only remove dropped them, so the ADSP kept
++ * LPASS (and its CX/XO votes) up while the codec was idle and the SoC could
++ * never reach full sleep. Hold them only while the macro is runtime-active.
++ * Registers are already cache-only while suspended and resynced on resume.
++ */
++static int va_macro_runtime_suspend(struct device *dev)
++{
++	struct va_macro *va = dev_get_drvdata(dev);
++	int ret = va_macro_runtime_suspend_clks(dev);
++
++	if (ret)
++		return ret;
++	clk_disable_unprepare(va->dcodec);
++	clk_disable_unprepare(va->macro);
++	return 0;
++}
++
++static int va_macro_runtime_resume(struct device *dev)
++{
++	struct va_macro *va = dev_get_drvdata(dev);
++	int ret;
++
++	ret = clk_prepare_enable(va->macro);
++	if (ret)
++		return ret;
++	ret = clk_prepare_enable(va->dcodec);
++	if (ret)
++		goto err_dcodec;
++	ret = va_macro_runtime_resume_clks(dev);
++	if (ret)
++		goto err_clks;
++	return 0;
++err_clks:
++	clk_disable_unprepare(va->dcodec);
++err_dcodec:
++	clk_disable_unprepare(va->macro);
++	return ret;
++}
++
+ static const struct dev_pm_ops va_macro_pm_ops = {
+ 	RUNTIME_PM_OPS(va_macro_runtime_suspend, va_macro_runtime_resume, NULL)
+ };
