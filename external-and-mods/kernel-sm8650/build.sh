@@ -336,7 +336,7 @@ pack_kernel_img() {
   done
   # Placeholder root; make-steamos-sm8650.sh patches the real PARTUUID in.
   local cmdline
-  cmdline="$(bash -c "source '${HERE}/cmdline.sh'; build_cmdline 00000000-02")"
+  cmdline="$(SOC="$SOC" bash -c "source '${HERE}/cmdline.sh'; build_cmdline 00000000-02")"
   python3 "${HERE}/mkbootimg-v0.py" --kernel "$payload" --ramdisk "$INITRD" \
     --cmdline "$cmdline" --out "$out"
   rm -f "$payload"

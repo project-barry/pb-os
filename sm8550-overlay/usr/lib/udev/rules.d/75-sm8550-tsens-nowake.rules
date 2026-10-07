@@ -1,0 +1,4 @@
+# SM8550: the temperature sensors arm their threshold interrupts as wake
+# sources in system sleep. A device that was just in use cools down while
+# asleep, crosses a lower threshold and wakes itself up again.
+ACTION=="add|bind", SUBSYSTEM=="platform", DRIVER=="qcom-tsens", ATTR{power/wakeup}="disabled"

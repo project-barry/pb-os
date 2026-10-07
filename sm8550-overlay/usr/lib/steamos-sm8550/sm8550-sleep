@@ -1,0 +1,50 @@
+#!/bin/sh
+# sm8550-sleep pre|post: run by systemd-suspend.service (drop-in) around
+# every system sleep on SM8550.
+#
+# pre:  Bluetooth off (its UART clock keeps the SoC's XO on), and every
+#       PipeWire output/input suspended until all audio streams are closed.
+#       An open stream (Steam plays a sound when it goes to sleep) keeps
+#       the audio DSP graph and its clocks up, and the SoC never reaches
+#       full sleep.
+# post: undo both.
+BT_MARK=/run/sm8550-sleep-bt-was-on
+
+pactl_all() {
+    # $1 = 1 (suspend) or 0 (resume), for every user with a PipeWire socket.
+    for sock in /run/user/*/pulse/native; do
+        [ -S "$sock" ] || continue
+        rt=${sock%/pulse/native}; uid=${rt##*/}
+        user=$(id -nu "$uid" 2>/dev/null) || continue
+        p="runuser -u $user -- env XDG_RUNTIME_DIR=$rt pactl"
+        for s in $($p list sinks short 2>/dev/null | cut -f2); do $p suspend-sink "$s" "$1"; done
+        for s in $($p list sources short 2>/dev/null | cut -f2); do $p suspend-source "$s" "$1"; done
+    done
+}
+
+streams_open() {
+    for f in /proc/asound/card*/pcm*/sub*/status; do
+        [ -e "$f" ] || continue
+        [ "$(head -n1 "$f")" = closed ] || return 0
+    done
+    return 1
+}
+
+case "$1" in
+pre)
+    if rfkill list bluetooth 2>/dev/null | grep -q "Soft blocked: no"; then
+        rfkill block bluetooth && touch "$BT_MARK"
+    fi
+    pactl_all 1
+    i=0
+    while streams_open && [ $i -lt 30 ]; do sleep 0.5; i=$((i + 1)); done
+    ;;
+post)
+    pactl_all 0
+    if [ -e "$BT_MARK" ]; then
+        rm -f "$BT_MARK"
+        rfkill unblock bluetooth
+    fi
+    ;;
+esac
+exit 0

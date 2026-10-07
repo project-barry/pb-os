@@ -1,11 +1,14 @@
-# SM8550: keep the UFS link in hibernate across system sleep (spm_lvl 3, the
-# same state runtime PM already uses), instead of powering the device down
-# with the link off (spm_lvl 5, the kernel default).
+# SM8550: power the UFS device down with the link off across system sleep
+# (spm_lvl 5, the kernel default), instead of parking the link in hibernate
+# (spm_lvl 3).
 #
-# After a long s2idle sleep the UFS PHY can fail to re-calibrate when the
-# link is brought back from off ("phy initialization timed-out"). The device
-# then stays in error and every later suspend aborts with -EBUSY (AYN Thor:
-# 104 failed attempts in one boot; one aborted resume hung the display).
-# Unbinding the controller instead hung the whole system, so don't. "bind":
-# spm_lvl exists only once the driver is attached.
-ACTION=="add|bind", SUBSYSTEM=="platform", DRIVER=="ufshcd-qcom", ATTR{spm_lvl}="3"
+# SM8550's UFS PHY has no retention, so it loses its calibration in deep
+# sleep either way. With the link parked (3) the first deep wake on the
+# Retroid Pocket Nova failed its hibernate exit ("pwr ctrl cmd 0x18 failed")
+# and needed link recovery. With the link off (5) the PHY is re-initialised
+# on resume; that woke cleanly after 1 h and overnight on the Nova (UFS root).
+# Level 3 was set earlier for an AYN Thor that failed to re-calibrate after
+# long s2idle sleeps with the link off, before the UFS lane-clock fix
+# (kernel patch 0531); re-test long sleeps on the Thor.
+# "bind": spm_lvl exists only once the driver is attached.
+ACTION=="add|bind", SUBSYSTEM=="platform", DRIVER=="ufshcd-qcom", ATTR{spm_lvl}="5"
