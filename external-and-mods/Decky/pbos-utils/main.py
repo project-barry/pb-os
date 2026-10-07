@@ -451,7 +451,9 @@ def frame(effect: str, t: float, rgb: tuple[int, int, int], speed: int, n: int,
         # already rising while this one peaks and the last is still fading:
         # through the Nova's clear shell, no gap between zones. The raised
         # cosines add up to the same total wherever the light is.
-        head = (t / (3 - 2.5 * fast)) * ring
+        # One turn takes 6 s at speed 1 down to 0.5 s at 10, each notch the
+        # same factor faster.
+        head = (t / (6 * (0.5 / 6) ** fast)) * ring
         out = []
         for i in range(n):
             d = abs((head - i % ring + ring / 2) % ring - ring / 2)   # distance round the ring
