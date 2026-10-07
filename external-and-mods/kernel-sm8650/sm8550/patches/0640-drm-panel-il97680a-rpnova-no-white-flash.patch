@@ -1,0 +1,68 @@
+From: lavachemist <48248311+lavachemist@users.noreply.github.com>
+Subject: [PATCH] drm/panel: il97680a: no white flash on the Retroid Pocket Nova
+
+The Nova's LCD flashed bright white or grey on every mode set: booting,
+shutting down and switching between Game and Desktop Mode. prepare() ran
+the whole init, including display on and a brightness of 0x0d75 (the
+maximum, 3445), before the DSI host sends video, so the panel lit up at
+full brightness with no picture until the first frame and until
+drm_panel_enable() put the user's brightness back.
+
+Start the panel at brightness 0 and turn the display on in a new
+enable(), which runs once video is flowing; drm_panel_enable() then
+raises the backlight to the user's level. The power-down path already
+goes backlight off, display off, sleep in.
+
+--- a/drivers/gpu/drm/panel/panel-ilitek-il97680a.c
++++ b/drivers/gpu/drm/panel/panel-ilitek-il97680a.c
+@@ -110,17 +110,18 @@
+ 
+ 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, MIPI_DCS_WRITE_CONTROL_DISPLAY,
+ 				     0x20);
++	/*
++	 * Start dark. This runs before the video stream does, so a lit panel
++	 * shows white until the first frame. drm_panel_enable() turns the
++	 * backlight up to the user's level once frames are flowing.
++	 */
+ 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, MIPI_DCS_SET_DISPLAY_BRIGHTNESS,
+-				     0x0d, 0x75, 0x00, 0x00);
++				     0x00, 0x00, 0x00, 0x00);
+ 
+ 	mipi_dsi_dcs_exit_sleep_mode_multi(&dsi_ctx);
+ 
+ 	mipi_dsi_msleep(&dsi_ctx, 120);
+ 
+-	mipi_dsi_dcs_set_display_on_multi(&dsi_ctx);
+-
+-	mipi_dsi_msleep(&dsi_ctx, 20);
+-
+ 	return dsi_ctx.accum_err;
+ }
+ 
+@@ -200,6 +201,18 @@
+ 	return 0;
+ }
+ 
++/* Display on only once the DSI host sends video, so no blank frame shows. */
++static int il97680a_enable(struct drm_panel *panel)
++{
++	struct panel_info *pinfo = to_panel_info(panel);
++	struct mipi_dsi_multi_context dsi_ctx = { .dsi = pinfo->dsi };
++
++	mipi_dsi_dcs_set_display_on_multi(&dsi_ctx);
++	mipi_dsi_msleep(&dsi_ctx, 20);
++
++	return dsi_ctx.accum_err;
++}
++
+ static int il97680a_disable(struct drm_panel *panel)
+ {
+ 	struct panel_info *pinfo = to_panel_info(panel);
+@@ -278,6 +291,7 @@
+ }
+ 
+ static const struct drm_panel_funcs il97680a_panel_funcs = {
++	.enable = il97680a_enable,
+ 	.disable = il97680a_disable,
+ 	.prepare = il97680a_prepare,
+ 	.unprepare = il97680a_unprepare,
