@@ -535,7 +535,7 @@ if [[ "$SOC" != sm8650 ]]; then
     "$R/etc/wireplumber/wireplumber.conf.d/55-konkr-speaker.conf"
 fi
 chmod 0755 "$R/usr/lib/konkr/pocket-s2-controller"
-chmod 0644 "$R/usr/lib/liblsfg-vk-layer-arm64.so" "$R/usr/lib/liblsfg-vk-layer-arm64.so.README"
+chmod 0644 "$R/usr/lib/liblsfg-vk-arm64.so" "$R/usr/lib/liblsfg-vk-arm64.so.README"
 # Audio: the Frame (also SM8650) hides the raw speaker node from every client
 # so its VR speaker filter chain owns it; that chain is disabled here, which
 # left the speakers unreachable. Drop the speaker from Valve's access rules.
@@ -913,14 +913,18 @@ done
 # ---------------------------------------------------------------------------
 # lsfg-vk
 # ---------------------------------------------------------------------------
-log "== lsfg-vk 2.0 (unmodified ARM layer + Decky x86 runtime)"
-# Reused roots must not register the old 1.x layer alongside version 2.
+log "== lsfg-vk 1.x (unmodified aarch64 layer, see liblsfg-vk-arm64.so.README)"
+# 2.x garbles frames on Turnip. Reused roots must not register the 2.0 layer
+# (or an old x86 1.x copy) alongside the 1.x one.
+rm -f "$R/usr/lib/liblsfg-vk-layer-arm64.so" "$R/usr/lib/liblsfg-vk-layer-arm64.so.README" \
+  "$R/usr/share/vulkan/implicit_layer.d/VkLayer_LSFGVK_frame_generation_arm64.json"
 for prefix in "$R/usr" "$R/usr/local"; do
-  rm -f "$prefix/lib/liblsfg-vk.so" "$prefix/lib/liblsfg-vk-arm64.so" \
-    "$prefix/share/vulkan/implicit_layer.d/VkLayer_LS_frame_generation.json" \
-    "$prefix/share/vulkan/implicit_layer.d/VkLayer_LS_frame_generation_arm64.json"
+  rm -f "$prefix/lib/liblsfg-vk.so" \
+    "$prefix/share/vulkan/implicit_layer.d/VkLayer_LS_frame_generation.json"
 done
-[[ -r "$R/usr/lib/liblsfg-vk-layer-arm64.so" ]] || die "missing LSFG v2 ARM layer"
+[[ -r "$R/usr/lib/liblsfg-vk-arm64.so" ]] || die "missing lsfg-vk 1.x ARM layer"
+[[ -r "$R/usr/share/vulkan/implicit_layer.d/VkLayer_LS_frame_generation_arm64.json" ]] \
+  || die "missing lsfg-vk 1.x ARM layer manifest"
 
 # ---------------------------------------------------------------------------
 # Mesa Turnip
@@ -1203,7 +1207,7 @@ log "== summary"
   echo "modules:   $R/usr/lib/modules/$KREL"
   echo "mesa:      $(ls -l "$R/usr/lib/libvulkan_freedreno.so")"
   echo "display-info.so.3: $(ls -l "$R/usr/lib/libdisplay-info.so.3" 2>/dev/null || echo missing)"
-  echo "lsfg:      $(ls -l "$R/usr/local/lib/liblsfg-vk.so" 2>/dev/null || echo missing)"
+  echo "lsfg:      $(ls -l "$R/usr/lib/liblsfg-vk-arm64.so" 2>/dev/null || echo missing)"
   echo "fixpad:    $(ls -l "$R/usr/lib/steamos/sm8550-fixpad" 2>/dev/null || echo missing)"
   echo "inputplumber: $(ls -l "$R/usr/bin/inputplumber" 2>/dev/null || echo missing)"
   echo "deck-uhid: $(grep -A2 target_devices "$R/etc/inputplumber/devices.d/02-ayn-odin.yaml" 2>/dev/null || echo missing)"

@@ -172,10 +172,17 @@ Output: `/work/steamos-sm8650.img`.
   path goes through zink. `WINE_D3D_CONFIG=renderer=vulkan` fixes it.
 - `konkr-focusfix` gives the game focus back after Quick Access closes,
   otherwise some games ignore the controller until you tap the screen.
-- decky-lsfg-vk 0.14.4 is bundled. It installs lsfg-vk 2.0 with x86 layers
-  only, so the image adds an unmodified aarch64 build of lsfg-vk 2.0 as its own
-  layer (`VK_LAYER_LSFGVK_frame_generation_arm64`) for ARM64 games. The plugin's
-  install step and config check work on ARM because its x86 CLI runs through Box64.
+- Frame generation is lsfg-vk 1.x, not 2.0: on Adreno (Turnip) lsfg-vk 2.0.0
+  and its newer master draw garbage blocks in frame-generated games, and 1.x
+  does not. The image ships an unmodified aarch64 build of the last 1.x commit
+  (`/usr/lib/liblsfg-vk-arm64.so`, layer `VK_LAYER_LS_frame_generation_arm64`,
+  rebuilt by `scripts/build-lsfg-vk-arm64.sh`). The bundled decky-lsfg-vk is
+  0.12.2 (the 1.x-era plugin) with small PB-OS changes: it sets itself up when
+  it loads (config and `~/lsfg`, used as `~/lsfg %command%`), clears what
+  lsfg-vk 2.0 left in the home folder, keeps `~/.lsfg %command%` working, and
+  keeps FP16 off, which is slower and stutters on Adreno. It reads the shaders
+  from `Lossless.dll` in Lossless Scaling, which must be on its `lsfg-vk` Steam
+  branch (Properties > Game Versions & Betas).
 - SSH is off by default, like on the Steam Deck. After `passwd` and
   `sudo systemctl enable --now sshd` it allows password login for `steamos`
   (root off).

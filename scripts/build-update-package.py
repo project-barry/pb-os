@@ -181,7 +181,7 @@ if a.state_only:
     raise SystemExit(0)
 
 output = (Path(a.output) if a.output else out_dir / f'pb-os-{version}-{image}.update.tar.gz').resolve()
-if not (root / 'usr/lib/liblsfg-vk-layer-arm64.so').is_file(): raise SystemExit('missing LSFG v2 ARM layer')
+if not (root / 'usr/lib/liblsfg-vk-arm64.so').is_file(): raise SystemExit('missing lsfg-vk 1.x ARM layer')
 # Decky plugins: the image's bundle (install-system-fixes.sh) plus decky-lsfg-vk,
 # which updaters from before 2026-10 require. Device plugins a package does not
 # carry are removed, so a plugin left from another image goes too.

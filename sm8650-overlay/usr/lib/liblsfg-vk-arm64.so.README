@@ -1,0 +1,19 @@
+aarch64 build of lsfg-vk 1.x: upstream https://github.com/PancakeTAS/lsfg-vk,
+commit 62f8149 ("enhancement(flatpak): add support for 25.08", 2025-10-06),
+the last commit before the 2.0 rewrite. Unmodified. Build it again with
+scripts/build-lsfg-vk-arm64.sh (clang 18, Vulkan-Headers v1.4.321):
+  cmake -B build -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+  make -C build lsfg-vk
+sha256 ec6e3a103b64c48e87af84cdb91b0cba46bd230dfed9b92c17caa8a5fb5db94a
+
+Why 1.x and not 2.0: on Adreno (Turnip) lsfg-vk 2.0.0 and its master
+(40d1e4e, 2026-10-06) draw garbage blocks in frame-generated games; 1.x does
+not. FP16 is off (no_fp16 = true): with it, 1.x ran slower and stuttered.
+
+decky-lsfg-vk 0.12.2 (PB-OS edition) writes ~/.config/lsfg-vk/conf.toml and
+~/lsfg; games use the launch option `~/lsfg %command%`. The layer only acts in
+a process whose name matches a [[game]] exe in that file (~/lsfg sets
+LSFG_PROCESS=decky-lsfg-vk), so everything else runs untouched.
+
+Licence: MIT (lsfg-vk, toml++, volk), see /usr/share/licenses/lsfg-vk/LICENSE.txt.
