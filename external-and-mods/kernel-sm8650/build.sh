@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
-# Kernel for SteamOS ARM on Snapdragon handhelds, one SoC per build:
+# Kernel for SteamOS ARM on Snapdragon handhelds:
 #   SOC=sm8650 (default)  Snapdragon 8 Gen 3 / G3 Gen 3: KONKR Pocket FIT,
 #                         AYANEO Pocket S2 (same ROCKNIX dtsi)
 #   SOC=sm8550            Snapdragon 8 Gen 2: Retroid Pocket 6 and Nova, AYN Thor
+#   SOC=all               one kernel for all of them (the single pb-os image):
+#                         both SoCs' ROCKNIX patches, DTS and config, both
+#                         port patch sets, every DTB
 #
 # Sources (pinned):
 #   linux-${KVER}             kernel.org
@@ -34,7 +37,8 @@ _kver=7.2.8 _rocknix_ref=20260901
 KVER="${KVER:-$_kver}"
 # ROCKNIX's version patch dir is named after the series (patches/7.2).
 KSERIES="${KVER%.*}"
-LOCALVERSION="${LOCALVERSION:--${SOC}-steamos}"
+if [[ "$SOC" == all ]]; then _localversion=-steamos; else _localversion="-${SOC}-steamos"; fi
+LOCALVERSION="${LOCALVERSION:-$_localversion}"
 ROCKNIX_REF="${ROCKNIX_REF:-$_rocknix_ref}"
 ROCKNIX_DIR="${ROCKNIX_DIR:-${PORT_ROOT}/../rocknix-${ROCKNIX_REF}}"
 EXTRA_FW_REF="${EXTRA_FW_REF:-88b363e67d4f730feb2c3124724d26dfaa88ce76}"
@@ -44,21 +48,24 @@ TDDI_REF="${TDDI_REF:-af27029fa2b27c4a77d16809298ed5d03c9da5a6}"
 # model back into this list.
 # Port patches, DTS appends and the extra config fragment are per SoC: the
 # SM8650 ones are Pocket FIT drivers (KONKR MCU, AR14 panel modes).
+DTBS_SM8650="sm8650-ayaneo-ps2 sm8650-konkr-pf"
+# ABL boots the DTB whose model matches "Set device model": "AYN Thor",
+# "Retroid Pocket 6", "Retroid Pocket 6 TOP-DPAD" and "Retroid Pocket Nova"
+# (ROCKNIX's Nova DTS is the RP6 one with its own panel, touch and sticks).
+DTBS_SM8550="qcs8550-ayn-thor qcs8550-retroidpocket-rp6 qcs8550-retroidpocket-rp6-top-dpad qcs8550-retroidpocket-rpnova"
 case "$SOC" in
-  sm8650)
-    DTBS="${DTBS:-sm8650-ayaneo-ps2 sm8650-konkr-pf}"
-    PORT_DIR="${HERE}"
-    ;;
-  sm8550)
-    # ABL boots the DTB whose model matches "Set device model": "AYN Thor",
-    # "Retroid Pocket 6", "Retroid Pocket 6 TOP-DPAD" and "Retroid Pocket Nova"
-    # (ROCKNIX's Nova DTS is the RP6 one with its own panel, touch and sticks).
-    DTBS="${DTBS:-qcs8550-ayn-thor qcs8550-retroidpocket-rp6 qcs8550-retroidpocket-rp6-top-dpad qcs8550-retroidpocket-rpnova}"
-    PORT_DIR="${HERE}/sm8550"
-    ;;
-  *) echo "unsupported SOC=${SOC} (sm8650, sm8550)" >&2; exit 1 ;;
+  sm8650) SOCS=(SM8650); PORT_DIRS=("${HERE}"); DTBS="${DTBS:-$DTBS_SM8650}" ;;
+  sm8550) SOCS=(SM8550); PORT_DIRS=("${HERE}/sm8550"); DTBS="${DTBS:-$DTBS_SM8550}" ;;
+  # The model names differ, so each SoC's ABL still finds its own DTB in the
+  # one list (alphabetical: qcs8550-* before sm8650-*).
+  all) SOCS=(SM8550 SM8650); PORT_DIRS=("${HERE}/sm8550" "${HERE}"); DTBS="${DTBS:-$DTBS_SM8550 $DTBS_SM8650}" ;;
+  *) echo "unsupported SOC=${SOC} (sm8650, sm8550, all)" >&2; exit 1 ;;
 esac
-SOC_UC="${SOC^^}"
+# ROCKNIX patches with the same name in both SoCs' dirs are identical except
+# these, where SOC=all takes the SM8650 copy. 0060 (SY7758 backlight): two
+# different drivers for one file; the SM8550 one only serves AYANEO Pockets,
+# which pb-os does not ship, the SM8650 one the Pocket FIT and Pocket S2.
+PREFER_SM8650=(0060-Add-Silergy-SY7758-backlight-driver.patch)
 # 7.2 only boots when built with GCC 15 (see build-gcc15.sh, which runs this
 # script in a Fedora 43 container). GCC 13's kernel dies before the initramfs
 # on the Retroid Pocket 6.
@@ -114,6 +121,42 @@ fetch() {
 }
 
 rocknix_path() { echo "${ROCKNIX_DIR}/$1"; }
+has_soc() { [[ " ${SOCS[*]} " == *" $1 "* ]]; }
+
+# The code a patch changes (hunks only, no message or file header), so port
+# patches written once per SoC count as one.
+patch_code() { grep -E '^[-+@]' "$1" | grep -vE '^(---|\+\+\+) ' | sha256sum | cut -d' ' -f1; }
+
+# SOC=all: merge one step's patches from both SoCs ($1 = step, then paths) into
+# one name-ordered queue. ROCKNIX patches of the same name must be identical
+# (PREFER_SM8650 lists the exceptions); port patches whose code is already
+# queued are dropped (our SM8650 copies of SM8550 fixes).
+merge_patches() {
+  local step="$1" p n prev; shift
+  local -A by_name=() by_code=()
+  local -a names=()
+  for p in "$@"; do
+    [[ -e "$p" ]] || continue
+    n="$(basename "$p")"
+    if [[ "$step" == @port ]]; then
+      local c; c="$(patch_code "$p")"
+      if [[ -n "${by_code[$c]:-}" ]]; then
+        log "same code as ${by_code[$c]}: drop ${p#"${HERE}/"}"; continue
+      fi
+      by_code[$c]="$n"
+      [[ -z "${by_name[$n]:-}" ]] || die "two port patches named $n"
+    elif [[ -n "${by_name[$n]:-}" ]]; then
+      prev="${by_name[$n]}"
+      if cmp -s "$prev" "$p"; then continue; fi
+      if [[ " ${PREFER_SM8650[*]} " == *" $n "* && "$p" == */SM8650/* ]]; then
+        log "SM8650's $n replaces SM8550's"; by_name[$n]="$p"; continue
+      fi
+      die "ROCKNIX $n differs between SoCs ($prev, $p): add it to PREFER_SM8650 or skip it"
+    fi
+    by_name[$n]="$p"; names+=("$n")
+  done
+  printf '%s\n' "${names[@]}" | LC_ALL=C sort | while read -r n; do echo "${by_name[$n]}"; done
+}
 
 prepare_source() {
   if [[ -d "$ROCKNIX_DIR/.git" ]]; then
@@ -123,10 +166,12 @@ prepare_source() {
   fi
   local tarball="${CACHE}/linux-${KVER}.tar.xz"
   fetch "https://cdn.kernel.org/pub/linux/kernel/v${KVER%%.*}.x/linux-${KVER}.tar.xz" "$tarball"
-  local patch_digest
+  local patch_digest pd
   local -a digest_src=() x
-  for x in "${PORT_DIR}/patches" "${PORT_DIR}/dts" "${PORT_DIR}/rocknix-skip"; do
-    [[ -e "$x" ]] && digest_src+=("$x")
+  for pd in "${PORT_DIRS[@]}"; do
+    for x in "${pd}/patches" "${pd}/dts" "${pd}/rocknix-skip"; do
+      [[ -e "$x" ]] && digest_src+=("$x")
+    done
   done
   # The DTB list is part of it: DTBs are registered in the Makefile only while
   # the source is (re)patched below.
@@ -145,25 +190,37 @@ prepare_source() {
   # ROCKNIX patches this port leaves out (rocknix-skip: one basename per line).
   local -A skip=()
   local line
-  if [[ -f "${PORT_DIR}/rocknix-skip" ]]; then
+  for pd in "${PORT_DIRS[@]}"; do
+    [[ -f "${pd}/rocknix-skip" ]] || continue
     while IFS= read -r line; do
       line="${line%%#*}"; line="${line//[[:space:]]/}"
       [[ -n "$line" ]] && skip["$line"]=1
-    done <"${PORT_DIR}/rocknix-skip"
-  fi
-  local d p
+    done <"${pd}/rocknix-skip"
+  done
+  local d p s
   local -a dirs=(
     "projects/ROCKNIX/packages/linux/patches/${KSERIES}"
     "projects/ROCKNIX/packages/linux/patches/mainline"
-    "projects/ROCKNIX/devices/${SOC_UC}/patches/linux"
+    "@devices"
     "packages/linux/patches/default"
     "@port"
   )
   for d in "${dirs[@]}"; do
-    local pdir
-    if [[ "$d" == "@port" ]]; then pdir="${PORT_DIR}/patches"; else pdir="$(rocknix_path "$d")"; fi
-    [[ -d "$pdir" ]] || { log "skip missing patch dir $d"; continue; }
-    for p in "$pdir"/*.patch; do
+    local -a list=()
+    case "$d" in
+      @devices) for s in "${SOCS[@]}"; do list+=("$(rocknix_path "projects/ROCKNIX/devices/${s}/patches/linux")"/*.patch); done ;;
+      @port) for pd in "${PORT_DIRS[@]}"; do list+=("${pd}/patches"/*.patch); done ;;
+      *)
+        [[ -d "$(rocknix_path "$d")" ]] || { log "skip missing patch dir $d"; continue; }
+        list=("$(rocknix_path "$d")"/*.patch) ;;
+    esac
+    # SOC=all: one queue per step in name order, each patch once.
+    if ((${#SOCS[@]} > 1)); then
+      local merged
+      merged="$(merge_patches "$d" "${list[@]}")" || die "could not merge the $d patches"
+      mapfile -t list <<<"$merged"
+    fi
+    for p in "${list[@]}"; do
       [[ -e "$p" ]] || continue
       case "$(basename "$p")" in
         9900-i915-10bit-hack.patch) continue ;;  # x86 only
@@ -171,31 +228,35 @@ prepare_source() {
         9999-fix-rust-build-error.patch) continue ;;
       esac
       if [[ "$d" != "@port" && -n "${skip[$(basename "$p")]:-}" ]]; then
-        log "skip $(basename "$d")/$(basename "$p") (rocknix-skip)"
+        log "skip $(basename "$(dirname "$p")")/$(basename "$p") (rocknix-skip)"
         continue
       fi
-      log "patch $(basename "$d")/$(basename "$p")"
+      log "patch ${p#"${ROCKNIX_DIR}/"}"
       patch -d "$SRC" -p1 -N --no-backup-if-mismatch -s <"$p" \
         || die "patch failed: $p"
     done
   done
 
-  log "install ROCKNIX ${SOC_UC} DTS"
-  cp -v "$(rocknix_path "projects/ROCKNIX/devices/${SOC_UC}/linux/dts/qcom")"/*.dts* \
-    "${SRC}/arch/arm64/boot/dts/qcom/" >&2
+  for s in "${SOCS[@]}"; do
+    log "install ROCKNIX ${s} DTS"
+    cp -v "$(rocknix_path "projects/ROCKNIX/devices/${s}/linux/dts/qcom")"/*.dts* \
+      "${SRC}/arch/arm64/boot/dts/qcom/" >&2
+  done
   # DT patches go after the copy: the ROCKNIX .dts/.dtsi files are not in the
   # kernel tree while the code patches above are applied.
-  for p in "${PORT_DIR}"/dts/*.patch; do
-    [[ -e "$p" ]] || continue
-    log "patch dts/$(basename "$p")"
-    patch -d "$SRC" -p1 -N --no-backup-if-mismatch -s <"$p" \
-      || die "patch failed: $p"
-  done
   local app
-  for app in "${PORT_DIR}"/dts/*.append; do
-    [[ -e "$app" ]] || continue
-    log "append $(basename "$app")"
-    cat "$app" >>"${SRC}/arch/arm64/boot/dts/qcom/$(basename "$app" .append).dts"
+  for pd in "${PORT_DIRS[@]}"; do
+    for p in "${pd}"/dts/*.patch; do
+      [[ -e "$p" ]] || continue
+      log "patch dts/$(basename "$p")"
+      patch -d "$SRC" -p1 -N --no-backup-if-mismatch -s <"$p" \
+        || die "patch failed: $p"
+    done
+    for app in "${pd}"/dts/*.append; do
+      [[ -e "$app" ]] || continue
+      log "append $(basename "$app")"
+      cat "$app" >>"${SRC}/arch/arm64/boot/dts/qcom/$(basename "$app" .append).dts"
+    done
   done
   local mk="${SRC}/arch/arm64/boot/dts/qcom/Makefile" dtb
   for dtb in $DTBS; do
@@ -210,7 +271,7 @@ stage_builtin_firmware() {
   local fwtar="${CACHE}/extra-firmware-${EXTRA_FW_REF}.tar.gz"
   fetch "https://github.com/ROCKNIX/extra-firmware/archive/${EXTRA_FW_REF}.tar.gz" "$fwtar"
   EXTRA_FW_SRC="${WORK}/extra-firmware"
-  if [[ ! -d "${EXTRA_FW_SRC}/${SOC_UC}" ]]; then
+  if [[ ! -d "${EXTRA_FW_SRC}/${SOCS[0]}" ]]; then
     rm -rf "$EXTRA_FW_SRC"; mkdir -p "$EXTRA_FW_SRC"
     tar -C "$EXTRA_FW_SRC" --strip-components=1 -xzf "$fwtar"
   fi
@@ -219,39 +280,62 @@ stage_builtin_firmware() {
     fetch "https://git.kernel.org/pub/scm/linux/kernel/git/wens/wireless-regdb.git/plain/regulatory.db" "${regdb}/regulatory.db"
     fetch "https://git.kernel.org/pub/scm/linux/kernel/git/wens/wireless-regdb.git/plain/regulatory.db.p7s" "${regdb}/regulatory.db.p7s"
   fi
-  local ext="${SRC}/external-firmware"
+  local ext="${SRC}/external-firmware" s
   rm -rf "$ext"
-  case "$SOC" in
-    sm8650)
-      mkdir -p "${ext}/qcom/sm8650/ayaneo/ps2"
-      cp -L "${EXTRA_FW_SRC}/SM8650/qcom/"{gen70900_aqe.fw,gen70900_sqe.fw,gmu_gen70900.bin} "${ext}/qcom/"
-      cp -L "${EXTRA_FW_SRC}/SM8650/qcom/sm8650/ayaneo/ps2/gen70900_zap.mbn" "${ext}/qcom/sm8650/ayaneo/ps2/"
-      ;;
-    sm8550)
-      local lfw="${CACHE}/linux-firmware-${LINUX_FW_REF}" f sum
-      local -A want=(
-        [qcom/a740_sqe.fw]=96fee336424b139100fc60b5b45a907360e4b3936d7e1d00406b9bd80ca48473
-        [qcom/gmu_gen70200.bin]=1a2a419c39046d3141fc5fed5aa7f971de2db40cc7a1d89693c3e26fad64dd98
-        [qcom/sm8550/a740_zap.mbn]=386bbdc25ae94a9398e33e7580eecfdcef6c472682a1e3123e1374bcffe7cde3
-      )
-      for f in "${!want[@]}"; do
-        fetch "https://gitlab.com/kernel-firmware/linux-firmware/-/raw/${LINUX_FW_REF}/${f}" "${lfw}/${f}"
-        sum="$(sha256sum "${lfw}/${f}" | cut -d" " -f1)"
-        [[ "$sum" == "${want[$f]}" ]] || die "${f}: sha256 ${sum} != pinned ${want[$f]}"
-        install -D -m0644 "${lfw}/${f}" "${ext}/${f}"
-      done
-      ;;
-  esac
+  for s in "${SOCS[@]}"; do
+    case "$s" in
+      SM8650)
+        mkdir -p "${ext}/qcom/sm8650/ayaneo/ps2"
+        cp -L "${EXTRA_FW_SRC}/SM8650/qcom/"{gen70900_aqe.fw,gen70900_sqe.fw,gmu_gen70900.bin} "${ext}/qcom/"
+        cp -L "${EXTRA_FW_SRC}/SM8650/qcom/sm8650/ayaneo/ps2/gen70900_zap.mbn" "${ext}/qcom/sm8650/ayaneo/ps2/"
+        ;;
+      SM8550)
+        local lfw="${CACHE}/linux-firmware-${LINUX_FW_REF}" f sum
+        local -A want=(
+          [qcom/a740_sqe.fw]=96fee336424b139100fc60b5b45a907360e4b3936d7e1d00406b9bd80ca48473
+          [qcom/gmu_gen70200.bin]=1a2a419c39046d3141fc5fed5aa7f971de2db40cc7a1d89693c3e26fad64dd98
+          [qcom/sm8550/a740_zap.mbn]=386bbdc25ae94a9398e33e7580eecfdcef6c472682a1e3123e1374bcffe7cde3
+        )
+        for f in "${!want[@]}"; do
+          fetch "https://gitlab.com/kernel-firmware/linux-firmware/-/raw/${LINUX_FW_REF}/${f}" "${lfw}/${f}"
+          sum="$(sha256sum "${lfw}/${f}" | cut -d" " -f1)"
+          [[ "$sum" == "${want[$f]}" ]] || die "${f}: sha256 ${sum} != pinned ${want[$f]}"
+          install -D -m0644 "${lfw}/${f}" "${ext}/${f}"
+        done
+        ;;
+    esac
+  done
   cp -L "${regdb}/regulatory.db" "${regdb}/regulatory.db.p7s" "$ext/"
   (cd "$ext" && find . -type f | sed 's|^\./||' | sort | xargs) >"${WORK}/extra-firmware.list"
 }
 
 configure() {
-  local cfg
-  cfg="$(rocknix_path "projects/ROCKNIX/devices/${SOC_UC}/linux/linux.aarch64.conf")"
-  [[ -f "$cfg" ]] || die "missing ROCKNIX config $cfg"
-  cp "$cfg" "${SRC}/.config"
+  local cfg s
+  for s in "${SOCS[@]}"; do
+    cfg="$(rocknix_path "projects/ROCKNIX/devices/${s}/linux/linux.aarch64.conf")"
+    [[ -f "$cfg" ]] || die "missing ROCKNIX config $cfg"
+  done
+  cp "$(rocknix_path "projects/ROCKNIX/devices/${SOCS[0]}/linux/linux.aarch64.conf")" "${SRC}/.config"
   local sc="${SRC}/scripts/config --file ${SRC}/.config"
+  # SOC=all: the union of both ROCKNIX configs. Every option the other SoC
+  # turns on is turned on too (built in wins over a module); the two only
+  # differ in per-SoC drivers (clock, pinctrl, interconnect, panels, input).
+  if ((${#SOCS[@]} > 1)); then
+    local opt val have
+    while IFS='=' read -r opt val; do
+      opt="${opt#CONFIG_}"
+      have="$(grep -m1 -E "^CONFIG_${opt}=" "${SRC}/.config" | cut -d= -f2- || true)"
+      [[ "$have" == "$val" || "$have" == y ]] && continue
+      [[ "$val" == m && -n "$have" ]] && continue
+      log "config ${opt}=${val} (from ${SOCS[1]}; ${SOCS[0]}: ${have:-unset})"
+      case "$val" in
+        y) $sc --enable "$opt" ;;
+        m) $sc --module "$opt" ;;
+        \"*) $sc --set-str "$opt" "$(eval echo "$val")" ;;
+        *) $sc --set-val "$opt" "$val" ;;
+      esac
+    done < <(grep -E '^CONFIG_[A-Za-z0-9_]+=' "$cfg")
+  fi
   # ROCKNIX embeds its own initramfs through this placeholder; we boot without one.
   $sc --set-str INITRAMFS_SOURCE ""
   $sc --set-str LOCALVERSION "$LOCALVERSION"
@@ -263,7 +347,9 @@ configure() {
   local frag
   frag="$(mktemp)"
   cat "${HERE}/steamos.config" >"$frag"
-  [[ -f "${HERE}/steamos-${SOC}.config" ]] && cat "${HERE}/steamos-${SOC}.config" >>"$frag"
+  for s in "${SOCS[@]}"; do
+    [[ -f "${HERE}/steamos-${s,,}.config" ]] && cat "${HERE}/steamos-${s,,}.config" >>"$frag"
+  done
   local line opt val
   while IFS= read -r line; do
     [[ -z "$line" || "$line" == \#* ]] && continue
@@ -302,7 +388,7 @@ build_kernel() {
 
 build_tddi() {
   # ChipOne TDDI touch is the Pocket FIT's; the RP6 uses in-tree edt-ft5x06.
-  [[ "$SOC" == sm8650 ]] || return 0
+  has_soc SM8650 || return 0
   local tar="${CACHE}/chipone_tddi-${TDDI_REF}.tar.gz" d="${WORK}/chipone_tddi"
   fetch "https://github.com/ROCKNIX/chipone_tddi/archive/${TDDI_REF}.tar.gz" "$tar"
   rm -rf "$d"; mkdir -p "$d"
@@ -355,7 +441,7 @@ install_output() {
   mkdir -p "$o/boot" "$o/modules" "$o/firmware" "$o/dtbs"
   log "modules_install"
   make -C "$SRC" INSTALL_MOD_PATH="$o/staging" INSTALL_MOD_STRIP=1 modules_install >/dev/null
-  if [[ "$SOC" == sm8650 ]]; then
+  if has_soc SM8650; then
     make -C "$SRC" M="${WORK}/chipone_tddi" INSTALL_MOD_PATH="$o/staging" INSTALL_MOD_STRIP=1 \
       INSTALL_MOD_DIR=extra modules_install >/dev/null
   fi
@@ -365,7 +451,8 @@ install_output() {
   rm -f "$o/modules/${KREL}/build" "$o/modules/${KREL}/source"
 
   log "firmware (rootfs part: remoteprocs, audio topology, Wi-Fi/BT)"
-  cp -a "${EXTRA_FW_SRC}/${SOC_UC}/." "$o/firmware/"
+  local s
+  for s in "${SOCS[@]}"; do cp -a "${EXTRA_FW_SRC}/${s}/." "$o/firmware/"; done
   # Built-in copies are enough for the GPU; keep rootfs copies too for tooling.
   cp -a "${SRC}/external-firmware/." "$o/firmware/"
   # Device firmware kept in this repo (the Retroid Pocket Nova's own ADSP and
@@ -395,8 +482,11 @@ main() {
     return
   fi
   check_deps
-  [[ -d "$ROCKNIX_DIR/projects/ROCKNIX/devices/${SOC_UC}" ]] \
-    || die "ROCKNIX tree not found at ${ROCKNIX_DIR} (sparse clone of ROCKNIX/distribution@${ROCKNIX_REF})"
+  local s
+  for s in "${SOCS[@]}"; do
+    [[ -d "$ROCKNIX_DIR/projects/ROCKNIX/devices/${s}" ]] \
+      || die "ROCKNIX tree not found at ${ROCKNIX_DIR} (sparse clone of ROCKNIX/distribution@${ROCKNIX_REF})"
+  done
   mkdir -p "$CACHE"
   prepare_source
   stage_builtin_firmware
