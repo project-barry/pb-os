@@ -66,6 +66,9 @@ esac
 # different drivers for one file; the SM8550 one only serves AYANEO Pockets,
 # which pb-os does not ship, the SM8650 one the Pocket FIT and Pocket S2.
 PREFER_SM8650=(0060-Add-Silergy-SY7758-backlight-driver.patch)
+# SOC=all: ROCKNIX patches rebased onto the other SoC's (same name, replaces
+# ROCKNIX's copy). See all/README.
+ALL_ROCKNIX="${HERE}/all/rocknix"
 # 7.2 only boots when built with GCC 15 (see build-gcc15.sh, which runs this
 # script in a Fedora 43 container). GCC 13's kernel dies before the initramfs
 # on the Retroid Pocket 6.
@@ -155,7 +158,13 @@ merge_patches() {
     fi
     by_name[$n]="$p"; names+=("$n")
   done
-  printf '%s\n' "${names[@]}" | LC_ALL=C sort | while read -r n; do echo "${by_name[$n]}"; done
+  printf '%s\n' "${names[@]}" | LC_ALL=C sort | while read -r n; do
+    if [[ "$step" == @devices && -f "${ALL_ROCKNIX}/$n" ]]; then
+      log "rebased copy: all/rocknix/$n"; echo "${ALL_ROCKNIX}/$n"
+    else
+      echo "${by_name[$n]}"
+    fi
+  done
 }
 
 prepare_source() {
@@ -173,6 +182,7 @@ prepare_source() {
       [[ -e "$x" ]] && digest_src+=("$x")
     done
   done
+  ((${#SOCS[@]} > 1)) && digest_src+=("${HERE}/all")
   # The DTB list is part of it: DTBs are registered in the Makefile only while
   # the source is (re)patched below.
   patch_digest="$({ find "${digest_src[@]}" -type f -print0 | sort -z | xargs -0 -r sha256sum; echo "DTBS=$DTBS"; } | sha256sum | cut -d" " -f1)"

@@ -1,0 +1,8 @@
+SOC=all (one kernel for SM8550 and SM8650, see build.sh)
+
+rocknix/  ROCKNIX device patches rebased for the combined tree. A file here
+          replaces ROCKNIX's patch of the same name. Each one is ROCKNIX's
+          patch with only the context changed where the other SoC's patches
+          touched the same lines:
+  0063-gpu-drm-panel-add-pocket-fit-panel.patch (SM8650): Makefile hunk
+          after the SM8550 AR06/AR02 panel lines.
