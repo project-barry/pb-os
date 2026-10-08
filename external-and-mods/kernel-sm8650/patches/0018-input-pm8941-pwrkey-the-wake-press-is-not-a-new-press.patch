@@ -1,0 +1,73 @@
+From: lavachemist <48248311+lavachemist@users.noreply.github.com>
+Subject: [PATCH] Input: pm8941-pwrkey: the wake press is not a new press
+
+The power key press that wakes the system is delivered to userspace once
+the system is back, so Steam (via logind) sees a fresh "power pressed"
+and puts the device straight back to sleep: on the KONKR Pocket FIT the
+screen came on and went dark again about a second after waking. Dropping
+only the press does not help, because a release without a press is turned
+into a synthetic press + release.
+
+Ignore pon key events (press and release) from system suspend until one
+second after resume, while still tracking the key state, so a release
+after that window is not turned into a press either. One window for all
+pon keys (power and resin) of the system.
+---
+--- a/drivers/input/misc/pm8941-pwrkey.c
++++ b/drivers/input/misc/pm8941-pwrkey.c
+@@ -146,6 +146,15 @@
+ 	return NOTIFY_DONE;
+ }
+ 
++/*
++ * From system suspend until a second after resume, key events belong to
++ * the press that woke the system and are not reported (the key state is
++ * still tracked).
++ */
++#define PM8941_PWRKEY_WAKE_IGNORE_MS	1000
++static bool pm8941_pwrkey_sleeping;
++static ktime_t pm8941_pwrkey_ignore_end;
++
+ static irqreturn_t pm8941_pwrkey_irq(int irq, void *_data)
+ {
+ 	struct pm8941_pwrkey *pwrkey = _data;
+@@ -171,6 +180,16 @@
+ 		pwrkey->sw_debounce_end_time = ktime_add_us(ktime_get(),
+ 						pwrkey->sw_debounce_time_us);
+ 
++	if (pm8941_pwrkey_sleeping ||
++	    ktime_before(ktime_get(), pm8941_pwrkey_ignore_end)) {
++		if (pm8941_pwrkey_sleeping)
++			pm8941_pwrkey_ignore_end = ktime_add_ms(ktime_get(),
++						PM8941_PWRKEY_WAKE_IGNORE_MS);
++		dev_dbg(pwrkey->dev, "ignoring the wake key event (%u)\n", sts);
++		pwrkey->last_status = sts;
++		return IRQ_HANDLED;
++	}
++
+ 	/*
+ 	 * Simulate a press event in case a release event occurred without a
+ 	 * corresponding press event.
+@@ -224,6 +243,8 @@
+ {
+ 	struct pm8941_pwrkey *pwrkey = dev_get_drvdata(dev);
+ 
++	pm8941_pwrkey_sleeping = true;
++
+ 	if (device_may_wakeup(dev))
+ 		enable_irq_wake(pwrkey->irq);
+ 
+@@ -234,6 +255,13 @@
+ {
+ 	struct pm8941_pwrkey *pwrkey = dev_get_drvdata(dev);
+ 
++	if (pm8941_pwrkey_sleeping) {
++		pm8941_pwrkey_sleeping = false;
++		if (!ktime_after(pm8941_pwrkey_ignore_end, ktime_get()))
++			pm8941_pwrkey_ignore_end = ktime_add_ms(ktime_get(),
++						PM8941_PWRKEY_WAKE_IGNORE_MS);
++	}
++
+ 	if (device_may_wakeup(dev))
+ 		disable_irq_wake(pwrkey->irq);
+ 

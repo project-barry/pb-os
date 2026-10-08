@@ -23,6 +23,8 @@ set -u
 
 TOUCH_DRV=/sys/bus/i2c/drivers/chipone-tddi
 MCU_DRV=/sys/bus/serial/drivers/konkr_sysbtn
+XHCI_DRV=/sys/bus/pci/drivers/xhci-pci-renesas
+XHCI_MARK=/run/konkr-sleep-xhci
 MCU_MARK=/run/konkr-sleep-mcu
 BT_MARK=/run/konkr-sleep-bt-was-on
 WIFI_MODS=(ath12k_wifi7 ath12k)
@@ -77,6 +79,25 @@ streams_open() {
   return 1
 }
 
+usb_off() {  # the Renesas xHCI (built-in gamepad) loses its power and firmware
+  local d       # in deep sleep; a clean probe after wake is the reliable way back
+  : >"$XHCI_MARK"
+  for d in "$XHCI_DRV"/0*:*; do
+    [[ -e $d ]] || continue
+    echo "${d##*/}" >"$XHCI_DRV/unbind" 2>/dev/null && echo "${d##*/}" >>"$XHCI_MARK"
+  done
+}
+
+usb_on() {  # prints 1 if the controller was re-attached
+  local d
+  if [[ -s $XHCI_MARK ]]; then
+    while read -r d; do echo "$d" >"$XHCI_DRV/bind" 2>/dev/null; done <"$XHCI_MARK"
+    sleep 1  # let the gamepad enumerate before the MCU buttons come back
+    echo 1
+  fi
+  rm -f "$XHCI_MARK"
+}
+
 uarts_off() {  # Bluetooth and MCU UARTs hold the XO clock
   local d
   if rfkill list bluetooth 2>/dev/null | grep -q "Soft blocked: no"; then
@@ -118,6 +139,7 @@ pre() {
   wake_sources
   n=$(touch_off)
   uarts_off
+  usb_off
   if [[ -d /sys/module/${WIFI_MODS[0]} ]]; then
     timeout 15 modprobe -r "${WIFI_MODS[@]}" || log "ath12k unload failed"
   fi
@@ -145,8 +167,14 @@ touch_on() {
 }
 
 post() {
+  local usb
   touch_on
+  usb=$(usb_on)
   uarts_on
+  # InputPlumber rebuilds the controller when the gamepad comes back, but
+  # Steam ignores that rebuilt Deck pad (2026-10-08): a restart makes a fresh
+  # one that works, with the MCU buttons already there.
+  [[ -n $usb ]] && systemctl restart --no-block inputplumber.service
   if [[ ! -d /sys/module/${WIFI_MODS[0]} ]]; then
     modprobe "${WIFI_MODS[0]}" || log "ath12k reload failed"
   fi

@@ -1,0 +1,20 @@
+From: lavachemist <48248311+lavachemist@users.noreply.github.com>
+Subject: [PATCH] chipone_tddi: start the touch chip without a 15 s delay
+
+Probe queues the firmware upgrade work 15 s later, and the work is what
+starts the device (cts_start_device), so touch only responds 15 s after
+every probe. pb-os ships no chipone_firmware.bin, and konkr-sleep detaches
+and re-attaches the driver around every sleep, so each wake waited 15 s
+for touch on the KONKR Pocket FIT. Run the work right away.
+---
+--- a/cts_driver.c
++++ b/cts_driver.c
+@@ -826,7 +826,7 @@
+     /* Init firmware upgrade work and schedule */
+     INIT_DELAYED_WORK(&cts_data->fw_upgrade_work, cts_firmware_upgrade_work);
+     queue_delayed_work(cts_data->workqueue, &cts_data->fw_upgrade_work,
+-        msecs_to_jiffies(15 * 1000));
++        0);
+ 
+     INIT_WORK(&cts_data->ts_resume_work, cts_resume_work_func);
+ 
