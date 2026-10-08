@@ -15,6 +15,9 @@
                                        ~0.36 W) or standby (Pocket S2 default:
                                        panel off, session frozen, ~1 W)
   pbosctl speaker boost|flat|status   speaker loudness chain (default: boost)
+  pbosctl update-channel dev|prod|status
+                                       dev: updates also offer test builds
+                                       (pb-os-dev); prod (default): releases only
 """
 from __future__ import annotations
 
@@ -242,6 +245,15 @@ def main() -> None:
         speaker(a[1])
     elif a[0] == "monitor":
         monitor()
+    elif a[0] == "update-channel" and len(a) == 2 and a[1] in ("dev", "prod", "status"):
+        # The updater keeps the setting (/etc/pb-os/update-channel).
+        cmd = ["/usr/bin/python3", "/usr/share/konkr-update/konkr-update.py", "channel"]
+        if a[1] != "status":
+            need_root()
+            cmd.append(a[1])
+        r = subprocess.run(cmd, capture_output=True, text=True)
+        print("update channel:", (r.stdout or r.stderr).strip())
+        sys.exit(r.returncode)
     else:
         sys.exit(__doc__)
 

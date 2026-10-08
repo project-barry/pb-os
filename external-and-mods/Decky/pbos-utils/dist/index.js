@@ -37,6 +37,7 @@ const getLights = callable("get_lights");
 const setLights = callable("set_lights");
 const setPowerLed = callable("set_power_led");
 const setAudioPulse = callable("set_audio_pulse");
+const setChannel = callable("set_channel");
 
 const row = (child) => jsx(DFL.PanelSectionRow, { children: child });
 const note = (text) => row(jsx("div", { style: { fontSize: "12px", opacity: 0.75 }, children: text }));
@@ -148,7 +149,8 @@ function UpdateTab() {
     const localUp = local.update;
     const up = rel.update;
     const job = st.job || {};
-    const items = [note(`Installed: ${st.installed}`)];
+    const dev = rel.channel === "dev";
+    const items = [note(`Installed: ${st.installed}${dev ? " · Dev updates on" : ""}`)];
 
     if (st.pending) {
         items.push(
@@ -213,9 +215,10 @@ function UpdateTab() {
         } else if (rel.available && up) {
             const resume = job.dl_total && job.dl_have && job.dl_have < job.dl_total;
             items.push(
-                row(jsx(DFL.Field, { label: up.title, children: null, description: up.kind === "delta"
+                row(jsx(DFL.Field, { label: up.title, children: null, description: (up.kind === "delta"
                     ? `${gb(up.size)} download (only what changed)`
-                    : `${gb(up.size)} download, about 25 GB free space needed` })),
+                    : `${gb(up.size)} download, about 25 GB free space needed`)
+                    + (up.repo === "project-barry/pb-os-dev" ? ". Test build (dev updates)." : "") })),
                 row(jsx(DFL.ButtonItem, {
                     layout: "below",
                     onClick: () => start().then(refresh),
@@ -236,6 +239,18 @@ function UpdateTab() {
         items.push(note("No internet here? Put the update's files, SHA256SUMS and SHA256SUMS.sig from the release "
             + "in the top folder of a microSD card or USB drive and put it in. Or download them in Desktop Mode "
             + "to the Downloads folder; they are deleted from there once the update is ready."));
+        // For testers: also offer test builds (pb-os-dev). Off on every device
+        // until turned on here; a fresh image starts with it off.
+        items.push(row(jsx(DFL.ToggleField, {
+            label: "Dev updates",
+            description: "Also offer test builds before they are released. For testers.",
+            checked: dev,
+            disabled: checking || rel.ok === undefined,
+            onChange: (on) => {
+                setChecking(true);
+                setChannel(on ? "dev" : "prod").catch(() => {}).finally(() => { setChecking(false); refresh(); });
+            },
+        })));
     }
     return jsx(DFL.PanelSection, { title: "pb-os update", children: items });
 }

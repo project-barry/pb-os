@@ -413,6 +413,16 @@ class Plugin:
             await decky.emit("pbos_update_available", up["title"])
         return self.last
 
+    async def set_channel(self, channel: str = "prod", **_: Any) -> dict[str, Any]:
+        """Dev updates on (dev) or off (prod), then look again: dev also offers
+        test builds from pb-os-dev."""
+        if channel not in ("dev", "prod"):
+            return {"ok": False, "error": f"unknown channel {channel}"}
+        await asyncio.to_thread(subprocess.run, ["/usr/bin/python3", UPDATER, "channel", channel],
+                                capture_output=True, timeout=30, env=CLEAN_ENV)
+        self.announced = ""
+        return await self.check()
+
     async def check_local(self, **_: Any) -> dict[str, Any]:
         if await asyncio.to_thread(active, UNIT):
             return self.local  # it may be copying from the drive right now

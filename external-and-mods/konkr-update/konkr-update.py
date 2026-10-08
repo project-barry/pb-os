@@ -34,7 +34,8 @@ PLUGINS = 'homebrew/plugins'
 LEGACY_PLUGINS = ('konkr-control', 'pbos-update')
 PRESERVE = ('passwd', 'shadow', 'group', 'gshadow', 'machine-id', 'hostname', 'hosts',
             'fstab', 'crypttab', 'localtime', 'adjtime', 'resolv.conf', 'ssh',
-            'NetworkManager/system-connections', 'sudoers.d')
+            'NetworkManager/system-connections', 'sudoers.d',
+            'pb-os/update-channel')  # a dev device stays one (full packages replace /etc)
 PENDING = 'var/lib/konkr-update/pending'
 # One folder per update, named by its id. A finished one keeps only these.
 STORAGE = Path('/home/.konkr-updates')
@@ -51,6 +52,13 @@ BASE_FILE = 'usr/share/pb-os/base'
 # to the images people flash; earlier releases stay on pb-os.
 RELEASES = ('https://api.github.com/repos/project-barry/pb-os-updates/releases',
             'https://api.github.com/repos/project-barry/pb-os/releases')
+# Dev devices also take test builds from pb-os-dev: /etc/pb-os/update-channel
+# says "dev" (`konkr-update.py channel dev`, `pbosctl update-channel dev`, or
+# PB-OS Utils' Dev updates switch). Images ship without the file (prod), and
+# updates never touch it. A build that passes is promoted to pb-os-updates as
+# it is (same files, same signature).
+DEV_RELEASES = 'https://api.github.com/repos/project-barry/pb-os-dev/releases'
+CHANNEL_FILE = Path('/etc/pb-os/update-channel')
 # Release assets of each device's packages, split into .001, .002, ... parts
 # under GitHub's 2 GiB limit: pb-os-<tag>-<image>.update.tar.gz (full) and
 # pb-os-<tag>-<image>.from-<installed tag>.delta.tar.gz (delta).
@@ -67,6 +75,18 @@ IMAGE = 'pb-os'
 OLD_NAMES = {'KONKR Pocket FIT': ('pocketfit',), 'AYANEO Pocket S2': ('pocketfit',),
              'Retroid Pocket 6': ('sm8550', 'rp6'), 'Retroid Pocket 6 TOP-DPAD': ('sm8550', 'rp6'),
              'Retroid Pocket Nova': ('sm8550', 'rp6'), 'AYN Thor': ('sm8550', 'rp6')}
+
+
+def update_channel():
+    """'dev' on a device that opted in, else 'prod'."""
+    try: return 'dev' if CHANNEL_FILE.read_text().strip() == 'dev' else 'prod'
+    except OSError: return 'prod'
+
+
+def release_lists():
+    """The release lists this device reads. Prod first, so a promoted build
+    (the same tag in both) is taken from prod."""
+    return RELEASES + ((DEV_RELEASES,) if update_channel() == 'dev' else ())
 
 
 def channel_names(model):
@@ -454,15 +474,17 @@ def find_update(reinstall=False):
     names = channel_names(device_model())
     current, base = installed_version(), installed_base()
     releases, seen, errors = [], set(), []
-    for url in RELEASES:
+    urls = release_lists()
+    for url in urls:
         try:
             with fetch(url + '?per_page=30', Accept='application/vnd.github+json') as r:
                 listed = json.load(r)
         except OSError as e:
             errors.append(e); continue
-        releases += [rel for rel in listed if rel['tag_name'] not in seen]
+        repo = url.split('/repos/', 1)[1].rsplit('/releases', 1)[0]
+        releases += [{**rel, 'repo': repo} for rel in listed if rel['tag_name'] not in seen]
         seen.update(rel['tag_name'] for rel in listed)
-    if len(errors) == len(RELEASES): raise errors[0]
+    if len(errors) == len(urls): raise errors[0]
     releases.sort(key=lambda rel: version_key(rel['tag_name']), reverse=True)
     def parts_of(release, name):
         return sorted((a for a in release['assets'] if re.fullmatch(re.escape(name) + r'\.\d{3}', a['name'])),
@@ -485,7 +507,7 @@ def find_update(reinstall=False):
         sig = next((a for a in release['assets'] if a['name'] == 'SHA256SUMS.sig'), None)
         if parts and sums and sig:
             return {'version': tag, 'title': release.get('name') or tag, 'kind': kind,
-                    'page': release['html_url'], 'name': name, 'sums': sums['browser_download_url'],
+                    'page': release['html_url'], 'repo': release['repo'], 'name': name, 'sums': sums['browser_download_url'],
                     'sig': sig['browser_download_url'],
                     'parts': [{'url': a['browser_download_url'], 'size': a['size']} for a in parts],
                     'size': sum(a['size'] for a in parts)}
@@ -495,8 +517,20 @@ def find_update(reinstall=False):
 def check(args):
     current = installed_version()
     found = find_update()
-    print(json.dumps({'current': current, 'base': installed_base(), 'update': found,
+    print(json.dumps({'current': current, 'base': installed_base(), 'channel': update_channel(), 'update': found,
                       'available': bool(found) and found['version'] != current}, indent=2))
+
+
+def set_channel(args):
+    """Print the update channel, or set it (dev or prod)."""
+    if args.channel:
+        if os.geteuid() != 0: raise ValueError('needs administrator access')
+        if args.channel == 'dev':
+            CHANNEL_FILE.parent.mkdir(parents=True, exist_ok=True)
+            CHANNEL_FILE.write_text('dev\n'); os.chmod(CHANNEL_FILE, 0o644)
+        else:
+            CHANNEL_FILE.unlink(missing_ok=True)
+    print(update_channel())
 
 
 def download(update, dest):
@@ -1445,6 +1479,8 @@ def main():
     for name in ('root', 'boot', 'home', 'work'): p.add_argument('--' + name, required=True)
     p = sub.add_parser('inspect'); p.add_argument('package')
     sub.add_parser('cleanup', help='free what finished updates left on HOME')
+    p = sub.add_parser('channel', help='show the update channel, or set it: dev also takes test builds')
+    p.add_argument('channel', nargs='?', choices=('dev', 'prod'))
     a = ap.parse_args()
     try:
         if a.command in ('stage', 'update', 'local-update', 'cleanup'):
@@ -1459,6 +1495,7 @@ def main():
                 elif a.command == 'local-update': local_update(a)
                 else: cleanup()
         elif a.command == 'check': check(a)
+        elif a.command == 'channel': set_channel(a)
         elif a.command == 'local-check': local_check(a)
         elif a.command == 'recover': return recover(a)
         else:
