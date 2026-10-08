@@ -1338,9 +1338,13 @@ def apply(root, boot, home, work, manifest, plan, progress):
     # Plugins of other devices or older images (the snapshot restores them on rollback).
     for rel in remove:
         if (home / 'steamos' / rel).exists(): shutil.rmtree(home / 'steamos' / rel)
+    # Old frame-gen layer manifests, but never one this package installs:
+    # lsfg-vk 1.x ships /usr/share/vulkan/implicit_layer.d/VkLayer_LS_frame_generation_arm64.json.
     for prefix in (root / 'usr', root / 'usr/local', home / 'steamos/.local'):
         for name in ('VkLayer_LS_frame_generation.json', 'VkLayer_LS_frame_generation_arm64.json'):
-            (prefix / 'share/vulkan/implicit_layer.d' / name).unlink(missing_ok=True)
+            layer = prefix / 'share/vulkan/implicit_layer.d' / name
+            if layer.is_relative_to(root) and f'root/{layer.relative_to(root)}' in manifest['files']: continue
+            layer.unlink(missing_ok=True)
     progress.phase('check')
     verify_written(root, home, manifest, plan, install, progress.add)
     os.sync()
