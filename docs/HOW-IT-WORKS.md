@@ -161,10 +161,10 @@ Output: `/work/steamos-sm8650.img`.
 - Sleep: the Frame's ADB, USB gadget, power monitor and FPGA services are
   masked since they just crash-loop and keep the SoC awake. Sleep is kernel
   deep sleep with the whole SoC asleep (CX collapse, DDR self-refresh), about
-  0.36 W, so a full charge lasts about 3.5 days asleep. Getting there took
-  kernel patches 0009-0016 (UFS, audio, display, both PCIe links down with a
-  memory floor, battery notifications off while asleep, the Renesas USB
-  firmware reloaded on wake) and `konkr-sleep`, which unloads Wi-Fi, releases
+  0.1 W in a test with the fan supply cut. Getting there took kernel patches
+  0009-0017 (UFS, audio, display, both PCIe links down with a memory floor,
+  battery notifications off while asleep, the Renesas USB firmware reloaded on
+  wake, the fan supply off in sleep) and `konkr-sleep`, which unloads Wi-Fi, releases
   the Bluetooth and MCU UARTs and closes audio first.
   `pbosctl sleep standby` switches back to `konkr-standby` (panel off,
   session frozen, about 1 W), which the Pocket S2 still uses.

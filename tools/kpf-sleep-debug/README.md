@@ -39,8 +39,9 @@ SoC sleep, and the measurements behind kernel patches 0009-0016 and the
 
 ## Findings still to turn into patches
 
-- Fan: `fan_vdd` (GPIO 124) and `fan_pwr` (GPIO 125) stay on in deep sleep
-  and cost about 0.27 W; pwm-fan's suspend should cut them.
+- Fan: `fan_vdd` (GPIO 124) and `fan_pwr` (GPIO 125) stayed on in deep
+  sleep and cost about 0.27 W: pwm-fan's suspend kept the supply on in its
+  default enable mode. Fixed by kernel patch 0017.
 - Still high at suspend: GPIO 28 (gamepad power, pinctrl output-high, no
   clear saving), 163/164 (panel power, pinctrl output-high; untested),
   77 (speaker SD_N), 107 (audio codec reset), 161 (touch reset).

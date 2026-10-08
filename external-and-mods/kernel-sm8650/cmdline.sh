@@ -23,7 +23,7 @@ build_cmdline() {
     # (The HID mode, 4001:0428, already polls at 1 ms by its own descriptor.)
   )
   # Deep sleep reaches full SoC sleep on SM8550 (kernel patches 0531-0536 +
-  # sm8550-sleep) and on the Pocket FIT (patches 0009-0016 + konkr-sleep).
+  # sm8550-sleep) and on the Pocket FIT (patches 0009-0017 + konkr-sleep).
   # console=tty0 keeps the kernel console off the debug UART (stdout-path),
   # whose GENI clock would otherwise keep the XO on. (The Pocket S2 shares
   # this kernel but keeps konkr-standby, which never suspends the kernel.)
