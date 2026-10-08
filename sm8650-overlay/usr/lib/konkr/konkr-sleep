@@ -82,18 +82,20 @@ streams_open() {
 usb_off() {  # the Renesas xHCI (built-in gamepad) loses its power and firmware
   local d       # in deep sleep; a clean probe after wake is the reliable way back
   : >"$XHCI_MARK"
+  # Steam ignores the Deck pad InputPlumber rebuilds when the gamepad comes
+  # back (2026-10-08), so InputPlumber sleeps too and starts fresh on wake.
+  systemctl stop inputplumber.service
   for d in "$XHCI_DRV"/0*:*; do
     [[ -e $d ]] || continue
     echo "${d##*/}" >"$XHCI_DRV/unbind" 2>/dev/null && echo "${d##*/}" >>"$XHCI_MARK"
   done
 }
 
-usb_on() {  # prints 1 if the controller was re-attached
+usb_on() {
   local d
-  if [[ -s $XHCI_MARK ]]; then
+  if [[ -e $XHCI_MARK ]]; then
     while read -r d; do echo "$d" >"$XHCI_DRV/bind" 2>/dev/null; done <"$XHCI_MARK"
-    sleep 1  # let the gamepad enumerate before the MCU buttons come back
-    echo 1
+    systemctl start --no-block inputplumber.service
   fi
   rm -f "$XHCI_MARK"
 }
@@ -167,14 +169,9 @@ touch_on() {
 }
 
 post() {
-  local usb
-  touch_on
-  usb=$(usb_on)
+  usb_on
   uarts_on
-  # InputPlumber rebuilds the controller when the gamepad comes back, but
-  # Steam ignores that rebuilt Deck pad (2026-10-08): a restart makes a fresh
-  # one that works, with the MCU buttons already there.
-  [[ -n $usb ]] && systemctl restart --no-block inputplumber.service
+  touch_on
   if [[ ! -d /sys/module/${WIFI_MODS[0]} ]]; then
     modprobe "${WIFI_MODS[0]}" || log "ath12k reload failed"
   fi
