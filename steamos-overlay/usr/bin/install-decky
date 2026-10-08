@@ -244,7 +244,7 @@ apply_dropins() {
   local drop src dest ovl
   install -d -m 0755 /etc/systemd/system/plugin_loader.service.d \
     /usr/lib/systemd/system/plugin_loader.service.d
-  for drop in fast-stop.conf fex-steam-rootfs.conf sm8550.conf; do
+  for drop in fast-stop.conf fex-steam-rootfs.conf sm8550.conf box64-lzma.conf; do
     src=""
     [[ -f "${SYSTEM_DROPINS}/${drop}" ]] && src="${SYSTEM_DROPINS}/${drop}"
     [[ -n "$src" ]] || continue

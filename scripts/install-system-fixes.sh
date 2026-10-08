@@ -96,7 +96,7 @@ open(dest, "w", encoding="utf-8").write(text)
 PY
   chmod 0644 "$dest"
 }
-for drop in fast-stop.conf fex-steam-rootfs.conf; do
+for drop in fast-stop.conf fex-steam-rootfs.conf box64-lzma.conf; do
   if [[ -f "${LSFG}/${drop}" ]]; then
     src="${LSFG}/${drop}"
   else
