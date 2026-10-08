@@ -46,7 +46,11 @@ UPDATER = 'usr/share/konkr-update/konkr-update.py'
 # and the feature release it belongs to (patch releases' deltas are from it).
 VERSION_FILE = 'usr/share/pb-os/version'
 BASE_FILE = 'usr/share/pb-os/base'
-RELEASES = 'https://api.github.com/repos/project-barry/pb-os/releases'
+# Where releases are looked for, all of them read and merged newest first:
+# update packages move to pb-os-updates, which keeps the pb-os release page
+# to the images people flash; earlier releases stay on pb-os.
+RELEASES = ('https://api.github.com/repos/project-barry/pb-os-updates/releases',
+            'https://api.github.com/repos/project-barry/pb-os/releases')
 # Release assets of each device's packages, split into .001, .002, ... parts
 # under GitHub's 2 GiB limit: pb-os-<tag>-<image>.update.tar.gz (full) and
 # pb-os-<tag>-<image>.from-<installed tag>.delta.tar.gz (delta).
@@ -54,21 +58,21 @@ RELEASES = 'https://api.github.com/repos/project-barry/pb-os/releases'
 # (SHA256SUMS.sig, scripts/sign-release.sh) from a key in this file.
 SIGNERS = Path('/usr/share/konkr-update/allowed_signers')
 SIGNER, NAMESPACE = 'pb-os-release', 'pb-os-update'
-# One image per SoC: Retroid Pocket 6, Nova and AYN Thor share 'sm8550'.
-# Releases before the rename named that image's packages 'rp6', and updaters
-# from then still look for that name only: build-update-package.py
-# --rp6-bridge also names a release's packages 'rp6' for them. Thors on the
-# separate Thor image of earlier releases look for 'thor' (--thor-bridge).
-IMAGES = {'KONKR Pocket FIT': 'pocketfit', 'AYANEO Pocket S2': 'pocketfit',
-          'Retroid Pocket 6': 'sm8550', 'Retroid Pocket 6 TOP-DPAD': 'sm8550', 'Retroid Pocket Nova': 'sm8550',
-          'AYN Thor': 'sm8550'}
-# Earlier names of an image's packages, still accepted.
-OLD_NAMES = {'sm8550': ('rp6',)}
+# One image for every device: its packages are named 'pb-os'. Earlier
+# releases had one image per SoC, and each device still takes its own SoC's
+# earlier names (never another SoC's): 'sm8550' (named 'rp6' before alpha
+# v0.5.2) for the Retroid Pocket 6, Nova and AYN Thor, 'pocketfit' for the
+# SM8650 handhelds.
+IMAGE = 'pb-os'
+OLD_NAMES = {'KONKR Pocket FIT': ('pocketfit',), 'AYANEO Pocket S2': ('pocketfit',),
+             'Retroid Pocket 6': ('sm8550', 'rp6'), 'Retroid Pocket 6 TOP-DPAD': ('sm8550', 'rp6'),
+             'Retroid Pocket Nova': ('sm8550', 'rp6'), 'AYN Thor': ('sm8550', 'rp6')}
 
 
-def channel_names(image):
-    """The package names this image takes, its own first."""
-    return (image, *OLD_NAMES.get(image, ()))
+def channel_names(model):
+    """The package names a device takes, the current one first."""
+    if model not in OLD_NAMES: raise ValueError(f'no update channel for {model}')
+    return (IMAGE, *OLD_NAMES[model])
 
 
 def run(*args, **kwargs):
@@ -447,12 +451,19 @@ def fetch(url, **headers):
 def find_update(reinstall=False):
     """Newest release with a package for this device, or None: the delta from
     the installed version when the release has one, else the full package."""
-    model = device_model()
-    image = IMAGES.get(model)
-    if not image: raise ValueError(f'no update channel for {model}')
+    names = channel_names(device_model())
     current, base = installed_version(), installed_base()
-    with fetch(RELEASES + '?per_page=30', Accept='application/vnd.github+json') as r:
-        releases = json.load(r)
+    releases, seen, errors = [], set(), []
+    for url in RELEASES:
+        try:
+            with fetch(url + '?per_page=30', Accept='application/vnd.github+json') as r:
+                listed = json.load(r)
+        except OSError as e:
+            errors.append(e); continue
+        releases += [rel for rel in listed if rel['tag_name'] not in seen]
+        seen.update(rel['tag_name'] for rel in listed)
+    if len(errors) == len(RELEASES): raise errors[0]
+    releases.sort(key=lambda rel: version_key(rel['tag_name']), reverse=True)
     def parts_of(release, name):
         return sorted((a for a in release['assets'] if re.fullmatch(re.escape(name) + r'\.\d{3}', a['name'])),
                       key=lambda a: a['name'])
@@ -464,8 +475,8 @@ def find_update(reinstall=False):
         # A patch release's delta is from the feature release (and covers its patches).
         # The image's own package name first, then its earlier names.
         candidates = [('delta', f"pb-os-{tag}-{n}.from-{base}.delta.tar.gz")
-                      for n in channel_names(image) if base and base != tag]
-        candidates += [('full', f"pb-os-{tag}-{n}.update.tar.gz") for n in channel_names(image)]
+                      for n in names if base and base != tag]
+        candidates += [('full', f"pb-os-{tag}-{n}.update.tar.gz") for n in names]
         kind, name, parts = None, None, []
         for kind, name in candidates:
             parts = parts_of(release, name)
@@ -638,14 +649,14 @@ class Mounted:
             except OSError: pass
 
 
-def packages_in(folder, image, current, base):
-    """pb-os packages for this image in the folder that update current (a
+def packages_in(folder, names, current, base):
+    """pb-os packages with one of names in the folder that update current (a
     delta: from its feature release, base): complete ones as {joined name:
     {version, kind, files, size}}, and the versions of incomplete ones. Parts
     must run .001, .002, ... unbroken, all but the last PART_SIZE, and none
     may still be downloading."""
-    names = '|'.join(map(re.escape, channel_names(image)))
-    pattern = re.compile(rf'pb-os-(.+?)-(?:{names})\.(?:from-(.+)\.delta|update)\.tar\.gz(?:\.(\d{{3}}))?')
+    alts = '|'.join(map(re.escape, names))
+    pattern = re.compile(rf'pb-os-(.+?)-(?:{alts})\.(?:from-(.+)\.delta|update)\.tar\.gz(?:\.(\d{{3}}))?')
     groups = {}; busy = set()
     for p in folder.iterdir():
         unfinished = p.name.endswith(UNFINISHED)
@@ -711,13 +722,12 @@ def regular(path):
 def find_local():
     """The newest update on any drive or in the Downloads folder, or None,
     and what is wrong with the packages that cannot be used."""
-    image = IMAGES.get(device_model())
-    if not image: raise ValueError(f'no update channel for {device_model()}')
+    names = channel_names(device_model())
     current = installed_version(); problems = []; best = None
     for source, where, place, opened in sources():
         try:
             with opened as top:
-                found, incomplete = packages_in(top, image, current, installed_base())
+                found, incomplete = packages_in(top, names, current, installed_base())
                 for version in sorted(incomplete - {p['version'] for p in found.values()}, key=version_key):
                     problems.append(f'pb-os {version} {place} is missing parts or is still being copied or '
                                     'downloaded. It shows here once every part is there.')
@@ -742,7 +752,7 @@ def find_local():
                 # Newest version first; a delta before the full package of the same
                 # version; the image's own name before an earlier name of it.
                 rank = lambda n: (version_key(found[n]['version']), found[n]['kind'] == 'delta',
-                                  f'-{image}.' in n)
+                                  f'-{names[0]}.' in n)
                 name = max(usable, key=rank)
                 if best and best[0] >= rank(name): continue
                 p = found[name]

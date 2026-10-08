@@ -8,6 +8,8 @@ Releases come in two kinds as well. A **feature release** (e.g. `alpha-v0.4`) sh
 
 The updater only offers versions newer than the installed one, so a release without a package for the device never leads to a downgrade.
 
+It reads the releases of [pb-os-updates](https://github.com/project-barry/pb-os-updates), where update packages go so that the pb-os release page keeps only the images, and of pb-os, which has the earlier ones. A device takes packages named `pb-os` (the one image for every device) and the earlier names of its own SoC's image, never another SoC's: `sm8550` or `rp6` on the Retroid Pocket 6, Nova and AYN Thor, `pocketfit` on the Pocket FIT and Pocket S2.
+
 ## How it works
 
 1. In Game Mode, open Quick Access → Decky → **PB-OS Utils**, Update tab ([plugin](../Decky/pbos-utils/), on every image; it was the PB-OS Update plugin before). It looks for the newest pb-os release with a package for this device and shows a toast when one comes out. Press **Download and install**; the download carries on with the menu closed, can be paused, and resumes where it stopped. Then **Restart and install**.
