@@ -13,11 +13,14 @@ OVL="${ROOT}/steamos-overlay"
 KOUT="$(readlink -f "${KERNEL_OUT:-${WORKDIR}/kernel-release/current}")"
 KREL="$(basename "$KOUT")"
 # Target SoC follows the kernel being installed (build.sh LOCALVERSION
-# -<soc>-steamos) unless SOC is set. Device-specific extras key off it.
+# -<soc>-steamos; the one-image kernel, SOC=all, has none) unless SOC is set.
+# Device-specific extras key off it: SOC=all installs both SoCs' parts, which
+# check the device tree when they run.
 if [[ -z "${SOC:-}" ]]; then
   case "$KREL" in
     *-sm8550-*) SOC=sm8550 ;;
-    *) SOC=sm8650 ;;
+    *-sm8650-*) SOC=sm8650 ;;
+    *) SOC=all ;;
   esac
 fi
 export SOC
@@ -30,7 +33,7 @@ export SOC
 DEVICE="${DEVICE:-}"
 case "$DEVICE" in
   "") ;;
-  thor) [[ "$SOC" == sm8550 ]] || { echo "ERROR: DEVICE=thor needs SOC=sm8550 (have ${SOC})" >&2; exit 1; } ;;
+  thor) [[ "$SOC" != sm8650 ]] || { echo "ERROR: DEVICE=thor needs SOC=sm8550 or all (have ${SOC})" >&2; exit 1; } ;;
   *) echo "ERROR: unknown DEVICE ${DEVICE}" >&2; exit 1 ;;
 esac
 export DEVICE
@@ -51,7 +54,7 @@ log() { echo "$*" | tee -a "$LOG"; }
 [[ -f "$KOUT/boot/KERNEL" ]] || die "missing kernel $KOUT"
 [[ -x "$GSBUILD/src/gamescope" ]] || die "missing built gamescope"
 [[ -d "$GSSRC/scripts" ]] || die "missing gamescope source at $GSSRC (run scripts/build-gamescope-in-rootfs.sh)"
-if [[ "$SOC" == sm8550 ]] && ! grep -qa -- '--lease-connector' "$GSBUILD/src/gamescope"; then
+if [[ "$SOC" != sm8650 ]] && ! grep -qa -- '--lease-connector' "$GSBUILD/src/gamescope"; then
   die "SM8550 (AYN Thor) needs a gamescope with the DRM lease patches (GAMESCOPE_BUILD=$GSBUILD has none)"
 fi
 [[ -z "$MESA_SO" || -f "$MESA_SO" ]] || die "missing Mesa $MESA_SO"
@@ -544,10 +547,11 @@ rm -f "$R/usr/lib/konkr/konkrd" "$R/usr/lib/systemd/system/konkrd.service" \
   "$R/var/lib/overlays/etc/upper/konkrd.conf" \
   "$R/var/lib/overlays/etc/upper/systemd/system/multi-user.target.wants/konkrd.service"
 ln -sfn pbosctl "$R/usr/bin/konkrctl"
-if [[ "$SOC" != sm8650 ]]; then
+if [[ "$SOC" == sm8550 ]]; then
   # SM8550 keeps the Odin 2 audio policy (sm8550-audio-pipewire: pro-audio +
   # MI2S speaker routes). 53 forces the SM8650-APS2 UCM profile and software
-  # volume on the whole card; 55 is the Pocket FIT speaker tuning.
+  # volume on the whole card; 55 is the Pocket FIT speaker tuning. SOC=all
+  # keeps both: they only match the SM8650 card ("SM8650-APS2").
   rm -f "$R/etc/wireplumber/wireplumber.conf.d/53-konkr-audio.conf" \
     "$R/etc/wireplumber/wireplumber.conf.d/55-konkr-speaker.conf"
 fi
@@ -701,7 +705,7 @@ remove_thor_bottom_screen() {
     "$R/usr/lib/systemd/user/plasma-workspace.target.wants/barry_launcher_desktop.service" \
     "$R/usr/share/applications/org.barry_launcher.keyboard.desktop"
 }
-if [[ "$SOC" == sm8550 ]]; then
+if [[ "$SOC" != sm8650 ]]; then
   log "== SM8550 overlay (fan curve, power button, thread boost, steamos-manager devices, Thor touch)"
   install_file "$SM8550_OVL/usr/lib/steamos-sm8550/sm8550-fand" \
     "$R/usr/lib/steamos-sm8550/sm8550-fand" 0755
@@ -1101,7 +1105,7 @@ rm -f "$HOME_DST/Desktop/Decky Loader.desktop" "$HOME_DST/Desktop/install-decky.
 log "== plasma extras (holo kate/ark/networkmanager-qt/…)"
 # AYN Thor: xdotool for the bottom-screen keyboard (Firefox below).
 extra_pkgs=""
-[[ "$SOC" == sm8550 ]] && extra_pkgs="libxss xdotool"
+[[ "$SOC" != sm8650 ]] && extra_pkgs="libxss xdotool"
 STEAMOS_HOME="$HOME_DST" EXTRA_PKGS="$extra_pkgs" "${SCRIPT_DIR}/install-plasma-extras.sh" "$R" \
   || log "WARN: plasma extras incomplete"
 
@@ -1111,7 +1115,7 @@ STEAMOS_HOME="$HOME_DST" EXTRA_PKGS="$extra_pkgs" "${SCRIPT_DIR}/install-plasma-
 # repos lags behind (152). Its updater is off: updates come with our images.
 FIREFOX_VERSION=157.0
 FIREFOX_SHA256=73fc3d6f6f4d3fcdeee59db90156568af9959405120ad686e535f572995074d0
-if [[ "$SOC" == sm8550 ]]; then
+if [[ "$SOC" != sm8650 ]]; then
   log "== Firefox ${FIREFOX_VERSION} (Mozilla, linux-aarch64)"
   ff_tar="${WORKDIR}/cache/firefox-${FIREFOX_VERSION}-linux-aarch64.tar.xz"
   if [[ ! -s "$ff_tar" ]]; then

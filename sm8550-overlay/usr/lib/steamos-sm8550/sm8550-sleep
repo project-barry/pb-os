@@ -13,6 +13,8 @@
 #       first, then the hardware sinks and sources are suspended.
 # post: undo all of it (the LEDs fade back in); removing the null sink sends
 #       the streams back to the default devices.
+# The one image also runs on SM8650, where konkr-sleep prepares the sleep.
+grep -qa "qcom,sm8550" /sys/firmware/devicetree/base/compatible 2>/dev/null || exit 0
 BT_MARK=/run/sm8550-sleep-bt-was-on
 LED_SAVE=/run/sm8550-sleep-leds
 NULL=sm8550-sleep

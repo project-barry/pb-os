@@ -276,7 +276,8 @@ repack_kernel_partuuid() {
   if [[ -z "$soc" ]]; then
     case "$(basename "$(readlink -f "$KOUT")")" in
       *-sm8550-*) soc=sm8550 ;;
-      *) soc=sm8650 ;;
+      *-sm8650-*) soc=sm8650 ;;
+      *) soc=all ;;
     esac
   fi
   cmdline="$(SOC="$soc" build_cmdline "${partuuid}")"

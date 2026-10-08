@@ -180,8 +180,9 @@ decky_plugins=()
 if [[ -n "${DECKY_PLUGINS:-}" ]]; then
   IFS=: read -ra decky_plugins <<<"${DECKY_PLUGINS}"
 elif [[ "$SOC" != sm8650 ]]; then
-  # SM8550. Dual Screen: AYN Thor bottom screen on/off; on other devices
-  # sync-decky-bundled-plugins.sh and the updater leave it out.
+  # Dual Screen: AYN Thor bottom screen on/off (SM8550 and the one image);
+  # on other devices sync-decky-bundled-plugins.sh --prune and the updater
+  # remove it.
   decky_plugins=("${MOD}/Decky/sm8550/dual-screen")
 fi
 # PB-OS Utils (updates, moving SteamOS between the card and internal
