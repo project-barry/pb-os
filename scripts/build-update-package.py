@@ -46,7 +46,8 @@ ap.add_argument('--base-state', metavar='FILE',
 ap.add_argument('--patch-state', action='append', default=[], metavar='FILE',
                 help='with --base-state: the state of each earlier patch of that feature release (repeatable)')
 ap.add_argument('--state-only', action='store_true', help='only write the state file of --rootfs')
-ap.add_argument('--soc', choices=('sm8650', 'sm8550'), default='sm8650')
+ap.add_argument('--soc', choices=('sm8650', 'sm8550', 'all'), default='sm8650',
+                help="all: the one image's package ('pb-os') for every device")
 ap.add_argument('--device', choices=('thor',), help='ignored: the SM8550 image includes the AYN Thor')
 ap.add_argument('--thor-bridge', action='store_true',
                 help='SM8550 with --release: also name the full package for the AYN Thor\'s old channel '
@@ -59,9 +60,11 @@ if a.thor_bridge and (a.soc != 'sm8550' or not a.release or a.base_state):
     raise SystemExit('--thor-bridge needs --soc sm8550, --release and a full package (no --base-state)')
 if a.rp6_bridge and (a.soc != 'sm8550' or not a.release):
     raise SystemExit('--rp6-bridge needs --soc sm8550 and --release')
-# Device models (DTB `model`) each package may install on: one image per SoC.
-DEVICES = {'sm8650': ['KONKR Pocket FIT', 'AYANEO Pocket S2'],
-           'sm8550': ['Retroid Pocket 6', 'Retroid Pocket 6 TOP-DPAD', 'Retroid Pocket Nova', 'AYN Thor']}[a.soc]
+# Device models (DTB `model`) each package may install on: the one image
+# (SOC all) takes every device; earlier releases had one image per SoC.
+SOC_DEVICES = {'sm8650': ['KONKR Pocket FIT', 'AYANEO Pocket S2'],
+               'sm8550': ['Retroid Pocket 6', 'Retroid Pocket 6 TOP-DPAD', 'Retroid Pocket Nova', 'AYN Thor']}
+DEVICES = SOC_DEVICES['sm8550'] + SOC_DEVICES['sm8650'] if a.soc == 'all' else SOC_DEVICES[a.soc]
 root = Path(a.rootfs).resolve()
 stamped = root / 'usr/share/pb-os/version'
 version = a.version or (stamped.read_text().strip() if stamped.is_file() else '')
@@ -75,7 +78,9 @@ if a.patch_state and not a.base_state: raise SystemExit('--patch-state needs --b
 # Image name in release assets; the updater maps DTB models to it (IMAGES).
 # SM8550 packages were named 'rp6' before the rename (alpha-v0.5.1 and
 # earlier; konkr-update.py OLD_NAMES); their state files still serve as delta bases.
-image = {'sm8650': 'pocketfit', 'sm8550': 'sm8550'}[a.soc]
+# The one image's packages are 'pb-os' (konkr-update.py IMAGE; updaters from
+# alpha-v0.5.2.3 on look for it).
+image = {'sm8650': 'pocketfit', 'sm8550': 'sm8550', 'all': 'pb-os'}[a.soc]
 OLD_IMAGES = {'sm8550': ('rp6',)}.get(a.soc, ())
 if bool(a.output) == bool(a.release): raise SystemExit('give --output or --release')
 out_dir = Path(a.release).resolve() if a.release else Path(a.output).resolve().parent
