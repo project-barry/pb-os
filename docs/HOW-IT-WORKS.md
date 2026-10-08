@@ -177,9 +177,10 @@ Output: `/work/steamos-sm8650.img`.
   does not. The image ships an unmodified aarch64 build of the last 1.x commit
   (`/usr/lib/liblsfg-vk-arm64.so`, layer `VK_LAYER_LS_frame_generation_arm64`,
   rebuilt by `scripts/build-lsfg-vk-arm64.sh`). The bundled decky-lsfg-vk is
-  0.12.2 (the 1.x-era plugin) with small PB-OS changes: it sets itself up when
-  it loads (config and `~/lsfg`, used as `~/lsfg %command%`), clears what
-  lsfg-vk 2.0 left in the home folder, keeps `~/.lsfg %command%` working, and
+  upstream 0.14.4 with a PB-OS patch (`external-and-mods/Decky/decky-lsfg-vk-pbos/`):
+  it keeps per-game profiles but drives the 1.x layer (each game's
+  `~/.lsfg %command%` selects its own entry), sets itself up when it loads,
+  imports lsfg-vk 2.0 profiles, clears what 2.0 left in the home folder, and
   keeps FP16 off, which is slower and stutters on Adreno. It reads the shaders
   from `Lossless.dll` in Lossless Scaling, which must be on its `lsfg-vk` Steam
   branch (Properties > Game Versions & Betas).

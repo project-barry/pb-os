@@ -1,434 +1,194 @@
-"""
-Installation service for lsfg-vk.
+"""PB-OS: setup for the image's lsfg-vk 1.x layer.
+
+Upstream unpacked the x86 lsfg-vk 2.0 build into ~/.local. On PB-OS the
+aarch64 lsfg-vk 1.x layer is part of the image, so "installing" only writes
+the plugin's own files: the profile store, the 1.x layer config and the
+~/.lsfg wrapper. It also clears what the x86 installs left in $HOME and
+keeps launch options from earlier PB-OS builds working.
 """
 
-import os
-import shutil
 import traceback
-import zipfile
-import tempfile
-import json
-from pathlib import Path
-from typing import Dict, Any
 
 from .base_service import BaseService
-from .constants import (
-    LIB_FILENAME, JSON_FILENAME, ZIP_FILENAME, BIN_DIR,
-    SO_EXT, JSON_EXT, SYSTEM_LIB, SYSTEM_JSON, LEGACY_HOME_FILES, DOTLSFG_SHIM_NAME
-)
-from .config_schema import ConfigurationManager
-from .types import InstallationResponse, UninstallationResponse, InstallationCheckResponse
+from .config_schema import ConfigurationManager, UnsupportedConfigurationVersion
+from .constants import LEGACY_HOME_FILES, SCRIPT_NAME, V2_BACKUP_FILENAME
+from .runtime_service import RuntimeService
+from .steam_service import SteamService
+from .types import InstallationCheckResponse, InstallationResponse, UninstallationResponse
 
 
 class InstallationService(BaseService):
-    """Service for handling lsfg-vk installation and uninstallation"""
-    
-    def __init__(self, logger=None):
+    # ~/lsfg as written by decky-lsfg-vk 0.12.2 (PB-OS alpha builds; both of
+    # its script variants export LSFG_PROCESS) and the shim that replaces it
+    OLD_SCRIPT_LINE = "export LSFG_PROCESS="
+    SHIM_MARKER = "# PB-OS: ~/lsfg now runs ~/.lsfg"
+
+    def __init__(
+        self,
+        logger=None,
+        runtime_service: RuntimeService = None,
+        steam_service: SteamService = None,
+        wrapper_service=None,
+    ):
         super().__init__(logger)
-        
-        # PB-OS: the layer is part of the image, not unpacked into ~/.local
-        self.lib_file = SYSTEM_LIB
-        self.json_file = SYSTEM_JSON
-        self.dotlsfg_shim_path = self.user_home / DOTLSFG_SHIM_NAME
-    
+        self.steam_service = steam_service or SteamService(logger=self.log)
+        self.runtime_service = runtime_service or RuntimeService(logger=self.log, steam_service=self.steam_service)
+        self.wrapper_service = wrapper_service
+        self.old_script_path = self.user_home / SCRIPT_NAME
+        self.v2_backup_path = self.config_dir / V2_BACKUP_FILENAME
+
+    def needs_setup(self) -> bool:
+        if not self.runtime_service.layer_present():
+            return False
+        if not (self.config_file_path.is_file() and self.layer_config_path.is_file()):
+            return True
+        if not self._layer_config_is_v1():
+            return True
+        if self._old_script_needs_shim():
+            return True
+        return any((self.user_home / rel).exists() for rel in LEGACY_HOME_FILES)
+
     def install(self) -> InstallationResponse:
-        """Set up lsfg-vk 1.x for the image's aarch64 layer (PB-OS)
-
-        The layer itself ships in the image; this writes the config and ~/lsfg
-        and clears what lsfg-vk 2.0 / x86 installs left in $HOME.
-
-        Returns:
-            InstallationResponse with success status and message/error
-        """
         try:
-            if not (self.lib_file.exists() and self.json_file.exists()):
-                error_msg = f"lsfg-vk layer missing from the image ({self.lib_file})"
-                self.log.error(error_msg)
-                return self._error_response(InstallationResponse, error_msg, message="")
-            
-            self._ensure_directories()
-            
+            if not self.runtime_service.layer_present():
+                raise FileNotFoundError("The lsfg-vk layer is missing from this image")
+            self.config_dir.mkdir(parents=True, exist_ok=True)
             self._remove_legacy_home_files()
-            
-            self._create_config_file()
-            
-            self._create_lsfg_launch_script()
-            
-            self._create_dotlsfg_shim()
-            
-            self.log.info("lsfg-vk installed successfully")
-            return self._success_response(InstallationResponse, "lsfg-vk installed successfully")
-            
-        except (OSError, zipfile.BadZipFile, shutil.Error) as e:
-            error_msg = f"Error installing lsfg-vk: {str(e)}"
-            self.log.error(error_msg)
-            return self._error_response(InstallationResponse, str(e), message="")
-        except Exception as e:
-            error_msg = f"Unexpected error installing lsfg-vk: {str(e)}"
-            self.log.error(error_msg)
-            return self._error_response(InstallationResponse, str(e), message="")
-    
-    def _extract_and_install_files(self, zip_path: Path) -> None:
-        """Extract zip file and install files to appropriate locations
-        
-        Args:
-            zip_path: Path to the zip file to extract
-            
-        Raises:
-            zipfile.BadZipFile: If zip file is corrupted
-            OSError: If file operations fail
-        """
-        # Destination mapping for file types
-        dest_map = {
-            SO_EXT: self.local_lib_dir,
-            JSON_EXT: self.local_share_dir
-        }
-        
-        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-            with tempfile.TemporaryDirectory() as temp_dir:
-                temp_path = Path(temp_dir)
-                zip_ref.extractall(temp_path)
-                
-                # Process extracted files
-                for root, dirs, files in os.walk(temp_path):
-                    root_path = Path(root)
-                    for file in files:
-                        src_file = root_path / file
-                        file_path = Path(file)
-                        
-                        # Check if we know where this file type should go
-                        dst_dir = dest_map.get(file_path.suffix)
-                        if dst_dir:
-                            dst_file = dst_dir / file
-                            
-                            # Special handling for JSON files - need to modify library_path
-                            if file_path.suffix == JSON_EXT and file == JSON_FILENAME:
-                                self._copy_and_fix_json_file(src_file, dst_file)
-                            else:
-                                shutil.copy2(src_file, dst_file)
-                            
-                            self.log.info(f"Copied {file} to {dst_file}")
-    
-    def _copy_and_fix_json_file(self, src_file: Path, dst_file: Path) -> None:
-        """Copy JSON file and fix the library_path to use relative path
-        
-        Args:
-            src_file: Source JSON file path
-            dst_file: Destination JSON file path
-        """
-        try:
-            # Read the JSON file
-            with open(src_file, 'r') as f:
-                json_data = json.load(f)
-            
-            # Fix the library_path from "liblsfg-vk.so" to "../../../lib/liblsfg-vk.so"
-            if 'layer' in json_data and 'library_path' in json_data['layer']:
-                current_path = json_data['layer']['library_path']
-                if current_path == "liblsfg-vk.so":
-                    json_data['layer']['library_path'] = "../../../lib/liblsfg-vk.so"
-                    self.log.info(f"Fixed library_path from '{current_path}' to '../../../lib/liblsfg-vk.so'")
-            
-            # Write the modified JSON file
-            with open(dst_file, 'w') as f:
-                json.dump(json_data, f, indent=2)
-                
-        except (json.JSONDecodeError, KeyError, OSError) as e:
-            self.log.error(f"Error fixing JSON file {src_file}: {e}")
-            # Fallback to simple copy if JSON modification fails
-            shutil.copy2(src_file, dst_file)
-    
+            self._keep_v2_config_aside()
+            data = self._profile_data()
+            content = ConfigurationManager.generate_toml_content_multi_profile(data)
+            self.runtime_service.validate_config_content(content)
+            self._write_file(self.config_file_path, content, 0o644)
+            self.runtime_service.render_layer_config(data)
+            if self.wrapper_service is not None:
+                result = self.wrapper_service.repair(force=True)
+                if not result.get("success"):
+                    raise RuntimeError(result.get("error") or "Could not write ~/.lsfg")
+            self._shim_old_script()
+            return self._success_response(InstallationResponse, "lsfg-vk 1.x is set up")
+        except Exception as error:
+            self.log.error(f"Error setting up lsfg-vk: {error}")
+            return self._error_response(InstallationResponse, str(error))
+
     def _remove_legacy_home_files(self) -> None:
-        """Remove lsfg-vk 2.0 (decky-lsfg-vk 0.14) and x86 1.x leftovers from $HOME"""
         for rel in LEGACY_HOME_FILES:
-            if self._remove_if_exists(self.user_home / rel):
-                self.log.info(f"Removed leftover {rel}")
-
-    def _create_dotlsfg_shim(self) -> None:
-        """Keep games set up by decky-lsfg-vk 0.14 (`~/.lsfg %command%`) working"""
-        shim = (
-            "#!/bin/sh\n"
-            "# decky-lsfg-vk 0.14 launch option (~/.lsfg %command%), now lsfg-vk 1.x\n"
-            'exec "$HOME/lsfg" "$@"\n'
-        )
-        self._write_file(self.dotlsfg_shim_path, shim, 0o755)
-
-    def _backup_non_v1_config(self) -> None:
-        """lsfg-vk 1.x rejects other config versions; keep a 2.0 config aside"""
-        if not self.config_file_path.exists():
-            return
-        content = self.config_file_path.read_text(encoding='utf-8')
-        first = next((l.strip() for l in content.splitlines() if l.strip() and not l.strip().startswith('#')), "")
-        if first.replace(" ", "") == "version=1":
-            return
-        backup = self.config_file_path.with_name("conf.toml.lsfg-vk-2.0")
-        self.config_file_path.replace(backup)
-        self.log.info(f"Moved non-1.x config aside to {backup}")
-
-    def _create_config_file(self) -> None:
-        """Create or update the TOML config file in ~/.config/lsfg-vk with default configuration and detected DLL path
-        
-        If a config file already exists, preserve existing profiles and only update global settings like DLL path.
-        """
-        # Import here to avoid circular imports
-        from .dll_detection import DllDetectionService
-        
-        # Try to detect DLL path
-        dll_service = DllDetectionService(self.log)
-        
-        self._backup_non_v1_config()
-        
-        # Check if config file already exists
-        if self.config_file_path.exists():
             try:
-                # Read existing config to preserve user profiles
-                content = self.config_file_path.read_text(encoding='utf-8')
-                existing_profile_data = ConfigurationManager.parse_toml_content_multi_profile(content)
-                self.log.info(f"Found existing config file, preserving user profiles")
-                
-                # Create merged profile data that preserves user settings but adds any new fields
-                merged_profile_data = self._merge_config_with_defaults(existing_profile_data, dll_service)
-                
-                # Generate TOML content with merged profiles
-                toml_content = ConfigurationManager.generate_toml_content_multi_profile(merged_profile_data)
-                
-            except Exception as e:
-                self.log.warning(f"Failed to parse existing config file: {str(e)}, creating new one")
-                # Fall back to creating a new config file
-                config = ConfigurationManager.get_defaults_with_dll_detection(dll_service)
-                toml_content = ConfigurationManager.generate_toml_content(config)
-        else:
-            # No existing config file, create a new one with defaults
-            config = ConfigurationManager.get_defaults_with_dll_detection(dll_service)
-            toml_content = ConfigurationManager.generate_toml_content(config)
-            self.log.info(f"Creating new config file")
-        
-        # Write config file
-        self._write_file(self.config_file_path, toml_content, 0o644)
-        self.log.info(f"Created config file at {self.config_file_path}")
-        
-        # Log detected DLL path if found - USE GENERATED CONSTANTS
-        from .config_schema_generated import DLL
+                if self._remove_if_exists(self.user_home / rel):
+                    self.log.info(f"Removed leftover {rel}")
+            except OSError as error:
+                self.log.warning(f"Could not remove leftover {rel}: {error}")
+
+    def _layer_config_is_v1(self) -> bool:
         try:
-            # Try to parse the written content to get the DLL path
-            final_content = self.config_file_path.read_text(encoding='utf-8')
-            final_config = ConfigurationManager.parse_toml_content(final_content)
-            if final_config.get(DLL):
-                self.log.info(f"Configured DLL path: {final_config[DLL]}")
-        except (OSError, IOError, ValueError, KeyError) as e:
-            # Don't fail installation if we can't log the DLL path
-            self.log.debug(f"Could not log DLL path: {e}")
-    
-    def _create_lsfg_launch_script(self) -> None:
-        """Create the ~/lsfg launch script for easier game setup"""
-        # Use the default configuration for the initial script
-        from .config_schema import ConfigurationManager
-        default_config = ConfigurationManager.get_defaults()
-        
-        # Create configuration service to generate the script
-        from .configuration import ConfigurationService
-        config_service = ConfigurationService(logger=self.log)
-        config_service.user_home = self.user_home
-        config_service.lsfg_script_path = self.lsfg_launch_script_path
-        
-        # Generate script content with default configuration
-        script_content = config_service._generate_script_content(default_config)
-        
-        # Write the script file
-        self._write_file(self.lsfg_launch_script_path, script_content, 0o755)
-        self.log.info(f"Created lsfg launch script at {self.lsfg_launch_script_path}")
-    
-    def get_launch_script_path(self) -> str:
-        """Get the path to the lsfg launch script
-        
-        Returns:
-            String path to the launch script file
-        """
-        return str(self.lsfg_launch_script_path)
+            content = self.layer_config_path.read_text(encoding="utf-8")
+        except OSError:
+            return False
+        first = next((line.strip() for line in content.splitlines()
+                      if line.strip() and not line.strip().startswith("#")), "")
+        return first.replace(" ", "") == "version=1"
+
+    def _keep_v2_config_aside(self) -> None:
+        """conf.toml now belongs to lsfg-vk 1.x; keep a 2.0 one as a backup"""
+        if not self.layer_config_path.is_file() or self._layer_config_is_v1():
+            return
+        if self.v2_backup_path.exists():
+            self._remove_if_exists(self.layer_config_path)
+        else:
+            self.layer_config_path.replace(self.v2_backup_path)
+            self.log.info(f"Kept the lsfg-vk 2.0 config as {self.v2_backup_path}")
+
+    def _profile_data(self):
+        if self.config_file_path.is_file():
+            try:
+                return ConfigurationManager.parse_toml_content_multi_profile(
+                    self.config_file_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError, UnsupportedConfigurationVersion) as error:
+                self.log.warning(f"Profile store unreadable ({error}); starting again")
+        try:
+            data = ConfigurationManager.parse_toml_content_multi_profile(
+                self.v2_backup_path.read_text(encoding="utf-8"))
+            self.log.info(f"Imported {len(data['profiles'])} profiles from {self.v2_backup_path}")
+            return data
+        except (OSError, ValueError):
+            return {"profiles": {}, "global_config": {"dll": "", "no_fp16": True}}
+
+    def _old_script_needs_shim(self) -> bool:
+        try:
+            content = self.old_script_path.read_text(encoding="utf-8")
+        except OSError:
+            return False
+        return self.SHIM_MARKER not in content and any(
+            line.startswith(self.OLD_SCRIPT_LINE) for line in content.splitlines())
+
+    def _shim_old_script(self) -> None:
+        """Games set up with `~/lsfg %command%` (decky-lsfg-vk 0.12.2) keep working"""
+        if not self._old_script_needs_shim():
+            return
+        self._write_file(
+            self.old_script_path,
+            "#!/bin/sh\n"
+            f"{self.SHIM_MARKER}\n"
+            'exec "$HOME/.lsfg" "$@"\n',
+            0o755,
+        )
 
     def check_installation(self) -> InstallationCheckResponse:
-        """Check if lsfg-vk is already installed
-        
-        Returns:
-            InstallationCheckResponse with installation status and file paths
-        """
         try:
-            lib_exists = self.lib_file.exists()
-            json_exists = self.json_file.exists()
-            config_exists = self.config_file_path.exists()
-            script_exists = self.lsfg_launch_script_path.exists()
-            
-            self.log.info(f"Installation check: lib={lib_exists}, json={json_exists}, config={config_exists}, script={script_exists}")
-            
+            installed = (self.runtime_service.layer_present()
+                         and self.config_file_path.is_file()
+                         and self._layer_config_is_v1())
+            lossless_scaling = self.runtime_service.check_lossless_scaling()
             return {
-                "installed": lib_exists and json_exists and config_exists and script_exists,
-                "lib_exists": lib_exists,
-                "json_exists": json_exists,
-                "script_exists": config_exists,  # Keep script_exists for backward compatibility
-                "lib_path": str(self.lib_file),
-                "json_path": str(self.json_file),
-                "script_path": str(self.config_file_path),  # Keep script_path for backward compatibility
-                "error": None
+                "installed": installed,
+                "lossless_scaling_installed": bool(lossless_scaling["installed"]),
+                "lossless_scaling_status": str(lossless_scaling["status"]),
+                "error": None,
             }
-            
-        except Exception as e:
-            error_msg = f"Error checking lsfg-vk installation: {str(e)}"
-            self.log.error(error_msg)
+        except Exception as error:
             return {
                 "installed": False,
-                "lib_exists": False,
-                "json_exists": False,
-                "script_exists": False,
-                "lib_path": str(self.lib_file),
-                "json_path": str(self.json_file),
-                "script_path": str(self.config_file_path),
-                "error": str(e)
+                "lossless_scaling_installed": False,
+                "lossless_scaling_status": str(error),
+                "error": str(error),
             }
-    
-    def uninstall(self) -> UninstallationResponse:
-        """Uninstall lsfg-vk by removing the installed files
-        
-        Note: The config file (conf.toml) is preserved to maintain user's custom profiles
-        
-        Returns:
-            UninstallationResponse with success status and removed files list
-        """
-        try:
-            removed_files = []
-            # Remove core lsfg-vk files, but preserve config file to maintain user's custom profiles
-            # PB-OS: the layer belongs to the image; only remove what setup wrote
-            files_to_remove = [self.lsfg_launch_script_path, self.dotlsfg_shim_path]
-            
-            for file_path in files_to_remove:
-                if self._remove_if_exists(file_path):
-                    removed_files.append(str(file_path))
-            
-            # Also try to remove the old script file if it exists (for backward compatibility)
-            if self._remove_if_exists(self.lsfg_script_path):
-                removed_files.append(str(self.lsfg_script_path))
-            
-            # Don't remove config directory since we're preserving the config file
-            
-            if not removed_files:
-                return self._success_response(UninstallationResponse,
-                                            "No lsfg-vk files found to remove",
-                                            removed_files=None)
-            
-            self.log.info("lsfg-vk uninstalled successfully")
-            return self._success_response(UninstallationResponse, 
-                                        f"lsfg-vk uninstalled successfully. Removed {len(removed_files)} files.",
-                                        removed_files=removed_files)
-            
-        except OSError as e:
-            error_msg = f"Error uninstalling lsfg-vk: {str(e)}"
-            self.log.error(error_msg)
-            return self._error_response(UninstallationResponse, str(e), 
-                                      message="", removed_files=None)
-    
-    def cleanup_on_uninstall(self) -> None:
-        """Clean up lsfg-vk files when the plugin is uninstalled
-        
-        Note: The config file (conf.toml) is preserved to maintain user's custom profiles
-        """
-        try:
-            self.log.info("Checking for lsfg-vk files to clean up:")
-            self.log.info(f"  Library file: {self.lib_file}")
-            self.log.info(f"  JSON file: {self.json_file}")
-            self.log.info(f"  Config file: {self.config_file_path} (preserved)")
-            self.log.info(f"  Launch script: {self.lsfg_launch_script_path}")
-            self.log.info(f"  Old script file: {self.lsfg_script_path}")
-            
-            removed_files = []
-            # Remove core lsfg-vk files, but preserve config file to maintain user's custom profiles
-            files_to_remove = [self.lsfg_launch_script_path, self.lsfg_script_path, self.dotlsfg_shim_path]
-            
-            for file_path in files_to_remove:
-                try:
-                    if self._remove_if_exists(file_path):
-                        removed_files.append(str(file_path))
-                except OSError as e:
-                    self.log.error(f"Failed to remove {file_path}: {e}")
-            
-            # Don't remove config directory since we're preserving the config file
-            
-            if removed_files:
-                self.log.info(f"Cleaned up {len(removed_files)} lsfg-vk files during plugin uninstall: {removed_files}")
-            else:
-                self.log.info("No lsfg-vk files found to clean up during plugin uninstall")
-                
-        except Exception as e:
-            self.log.error(f"Error cleaning up lsfg-vk files during uninstall: {str(e)}")
-            self.log.error(f"Traceback: {traceback.format_exc()}")
 
-    def _merge_config_with_defaults(self, existing_profile_data, dll_service):
-        """Merge existing user config with current schema defaults
-        
-        This ensures that:
-        1. User's custom profiles and values are preserved
-        2. Any new fields added to the schema get their default values
-        3. Global settings like DLL path are updated as needed
-        
-        Args:
-            existing_profile_data: The user's existing ProfileData
-            dll_service: DLL detection service for updating DLL path
-            
-        Returns:
-            ProfileData with merged configuration
-        """
-        from .config_schema import ProfileData
-        
-        # Get current schema defaults
-        default_config = ConfigurationManager.get_defaults_with_dll_detection(dll_service)
-        default_global_config = {
-            "dll": default_config.get("dll", ""),
-            "no_fp16": True  # PB-OS: FP16 is slower and stutters on Adreno (Turnip)
-        }
-        
-        # Start with existing data
-        merged_data: ProfileData = {
-            "current_profile": existing_profile_data.get("current_profile", "decky-lsfg-vk"),
-            "global_config": existing_profile_data.get("global_config", {}).copy(),
-            "profiles": {}
-        }
-        
-        # Merge global config: preserve user values, add missing fields, update DLL
-        for key, default_value in default_global_config.items():
-            if key not in merged_data["global_config"]:
-                merged_data["global_config"][key] = default_value
-                self.log.info(f"Added missing global field '{key}' with default value: {default_value}")
-        
-        # Update DLL path if detected
-        dll_result = dll_service.check_lossless_scaling_dll()
-        if dll_result.get("detected") and dll_result.get("path"):
-            old_dll = merged_data["global_config"].get("dll")
-            merged_data["global_config"]["dll"] = dll_result["path"]
-            if old_dll != dll_result["path"]:
-                self.log.info(f"Updated DLL path from '{old_dll}' to: {dll_result['path']}")
-        
-        # Merge each profile: preserve user values, add missing fields
-        existing_profiles = existing_profile_data.get("profiles", {})
-        
-        for profile_name, existing_profile_config in existing_profiles.items():
-            merged_profile_config = existing_profile_config.copy()
-            
-            # Add any missing fields from current schema with default values
-            added_fields = []
-            for key, default_value in default_config.items():
-                if key not in merged_profile_config and key not in ["dll", "no_fp16"]:  # Skip global fields
-                    merged_profile_config[key] = default_value
-                    added_fields.append(key)
-            
-            if added_fields:
-                self.log.info(f"Profile '{profile_name}': Added missing fields {added_fields}")
-            
-            merged_data["profiles"][profile_name] = merged_profile_config
-        
-        # If no profiles exist, create the default one
-        if not merged_data["profiles"]:
-            merged_data["profiles"]["decky-lsfg-vk"] = {
-                k: v for k, v in default_config.items() 
-                if k not in ["dll", "no_fp16"]  # Exclude global fields
-            }
-            merged_data["current_profile"] = "decky-lsfg-vk"
-            self.log.info("No existing profiles found, created default profile")
-        
-        return merged_data
+    def uninstall(self) -> UninstallationResponse:
+        """Remove the plugin's own files; the layer belongs to the image"""
+        try:
+            removed = [
+                str(path)
+                for path in (self.config_file_path, self.layer_config_path)
+                if self._remove_if_exists(path)
+            ]
+            if self.old_script_path.is_file() and self.SHIM_MARKER in self.old_script_path.read_text(encoding="utf-8"):
+                self._remove_if_exists(self.old_script_path)
+                removed.append(str(self.old_script_path))
+            if not removed:
+                return self._success_response(
+                    UninstallationResponse,
+                    "No lsfg-vk files found to remove",
+                    removed_files=None,
+                )
+            return self._success_response(
+                UninstallationResponse,
+                f"Removed {len(removed)} lsfg-vk files (the layer stays in the image).",
+                removed_files=removed,
+            )
+        except Exception as error:
+            return self._error_response(
+                UninstallationResponse,
+                str(error),
+                removed_files=None,
+            )
+
+    def cleanup_on_uninstall(self) -> bool:
+        try:
+            result = self.uninstall()
+            if not result.get("success"):
+                self.log.error(f"Error cleaning up lsfg-vk files during uninstall: {result.get('error')}")
+                return False
+            return True
+        except Exception as error:
+            self.log.error(f"Error cleaning up lsfg-vk files during uninstall: {error}")
+            self.log.error(traceback.format_exc())
+            return False

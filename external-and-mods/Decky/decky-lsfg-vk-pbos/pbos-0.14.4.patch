@@ -1,0 +1,1050 @@
+From 9b20a9dffdd0dad8643051569f1b1073fe7b19fc Mon Sep 17 00:00:00 2001
+From: lavachemist <48248311+lavachemist@users.noreply.github.com>
+Date: Thu, 8 Oct 2026 00:07:46 -0400
+Subject: [PATCH] PB-OS: per-game profiles on the lsfg-vk 1.x layer
+
+---
+ README.md                               |  17 ++
+ package.json                            |   2 +-
+ py_modules/lsfg_vk/base_service.py      |   7 +-
+ py_modules/lsfg_vk/config_schema.py     |  40 ++-
+ py_modules/lsfg_vk/configuration.py     |  17 +-
+ py_modules/lsfg_vk/constants.py         |  26 ++
+ py_modules/lsfg_vk/installation.py      | 313 ++++++++----------------
+ py_modules/lsfg_vk/plugin.py            |  36 ++-
+ py_modules/lsfg_vk/runtime_service.py   | 149 ++++-------
+ py_modules/lsfg_vk/steam_service.py     |   3 +
+ py_modules/lsfg_vk/wrapper_service.py   |  19 +-
+ src/components/ConfigurationSection.tsx |   9 +-
+ src/components/Content.tsx              |  21 +-
+ src/components/SettingsTab.tsx          |   8 +-
+ 14 files changed, 300 insertions(+), 367 deletions(-)
+
+diff --git a/README.md b/README.md
+index 31e2ad8..0c99379 100644
+--- a/README.md
++++ b/README.md
+@@ -1,5 +1,22 @@
+ # Decky LSFG-VK
+ 
++> [!IMPORTANT]
++> **PB-OS edition (0.14.4-pbos.1).** Upstream decky-lsfg-vk 0.14.4, changed for
++> PB-OS on ARM with Claude Code (Claude Opus 5.5); only these changes are PB-OS's
++> (source: `external-and-mods/Decky/decky-lsfg-vk-pbos/` in pb-os):
++> - It drives lsfg-vk **1.x** for aarch64, which ships in the image
++>   (`/usr/lib/liblsfg-vk-arm64.so`): lsfg-vk 2.x draws garbage on Adreno (Turnip).
++>   Per-game profiles stay; they are kept in `~/.config/lsfg-vk/profiles.toml` and
++>   rendered into the 1.x `conf.toml`, and `~/.lsfg` picks each game's entry with
++>   `LSFG_PROCESS=pbos-<appid>`.
++> - It sets itself up when it loads (no download), imports the per-game profiles
++>   of an lsfg-vk 2.0 config (kept as `conf.toml.lsfg-vk-2.0`), and clears the x86
++>   files lsfg-vk 2.0 left in `$HOME`.
++> - FP16 is always off (slower and stutters on Adreno). Present-mode and swapchain
++>   options are gone (lsfg-vk 1.x has none). No Flatpak support: upstream's
++>   extensions are x86-only.
++> - Lossless Scaling stays on its `lsfg-vk` Steam branch; 1.x reads its `Lossless.dll`.
++
+ > This is an **unofficial community plugin**. It is independently developed and **not officially supported** by the creators of Lossless Scaling or lsfg-vk. For support, please use the [decky-lsfg-vk Discord Channel](https://discord.gg/TwvHdVucC3).
+ 
+ 
+diff --git a/package.json b/package.json
+index a10391d..a9b12d9 100644
+--- a/package.json
++++ b/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "decky-lsfg-vk",
+-  "version": "0.14.4",
++  "version": "0.14.4-pbos.1",
+   "description": "Use Lossless Scaling on the Steam Deck using the lsfg-vk vulkan layer",
+   "type": "module",
+   "scripts": {
+diff --git a/py_modules/lsfg_vk/base_service.py b/py_modules/lsfg_vk/base_service.py
+index 036dfc6..16cdc39 100644
+--- a/py_modules/lsfg_vk/base_service.py
++++ b/py_modules/lsfg_vk/base_service.py
+@@ -5,7 +5,7 @@ from typing import Any, Dict, Optional, TypeVar
+ 
+ import decky
+ 
+-from .constants import CONFIG_DIR, CONFIG_FILENAME, LOCAL_BIN, LOCAL_LIB, SCRIPT_NAME, VULKAN_LAYER_DIR
++from .constants import CONFIG_DIR, CONFIG_FILENAME, LOCAL_BIN, LOCAL_LIB, PROFILES_FILENAME, SCRIPT_NAME, VULKAN_LAYER_DIR
+ 
+ ResponseType = TypeVar("ResponseType", bound=Dict[str, Any])
+ 
+@@ -20,7 +20,10 @@ class BaseService:
+         self.local_share_dir = self.user_home / VULKAN_LAYER_DIR
+         self.legacy_script_path = self.user_home / SCRIPT_NAME
+         self.config_dir = self.user_home / CONFIG_DIR
+-        self.config_file_path = self.config_dir / CONFIG_FILENAME
++        # PB-OS: the plugin's own profile store (lsfg-vk 2.0 format); the
++        # layer reads the lsfg-vk 1.x config rendered from it.
++        self.config_file_path = self.config_dir / PROFILES_FILENAME
++        self.layer_config_path = self.config_dir / CONFIG_FILENAME
+ 
+     def _ensure_directories(self) -> None:
+         for directory in (self.local_bin_dir, self.local_lib_dir, self.local_share_dir, self.config_dir):
+diff --git a/py_modules/lsfg_vk/config_schema.py b/py_modules/lsfg_vk/config_schema.py
+index 8b1f29c..c8152f4 100644
+--- a/py_modules/lsfg_vk/config_schema.py
++++ b/py_modules/lsfg_vk/config_schema.py
+@@ -27,7 +27,8 @@ PROFILE_DEFAULTS: Dict[str, Any] = {
+     "override_present_mode": True,
+     "preserve_swapchain_image_count": False,
+ }
+-GLOBAL_DEFAULTS: Dict[str, Any] = {"dll": "", "no_fp16": False}
++# PB-OS: FP16 is always off; on Adreno (Turnip) it is slower and stutters.
++GLOBAL_DEFAULTS: Dict[str, Any] = {"dll": "", "no_fp16": True}
+ 
+ 
+ def _toml_value(value: Any) -> str:
+@@ -85,6 +86,7 @@ class ConfigurationManager:
+         ):
+             result[name] = bool(result[name])
+         result["dll"] = str(result["dll"] or "")
++        result["no_fp16"] = True  # PB-OS: FP16 always off
+         return result
+ 
+     @staticmethod
+@@ -119,7 +121,7 @@ class ConfigurationManager:
+         raw_global = data.get("global", {})
+         global_config = {
+             "dll": str(raw_global.get("dll", "") or ""),
+-            "no_fp16": not bool(raw_global.get("allow_fp16", True)),
++            "no_fp16": True,  # PB-OS: FP16 always off
+         }
+         profiles: Dict[str, Dict[str, Any]] = {}
+         for profile in data.get("profile", []):
+@@ -131,3 +133,37 @@ class ConfigurationManager:
+             if name or config["active_in"]:
+                 profiles[name] = config
+         return {"profiles": profiles, "global_config": global_config}
++
++
++def render_layer_config(profile_data: ProfileData, dll: str, process_prefix: str) -> str:
++    """PB-OS: the lsfg-vk 1.x config for the image's aarch64 layer.
++
++    One [[game]] per App ID of every profile; ~/.lsfg sets
++    LSFG_PROCESS=<process_prefix><appid>, which 1.x matches against exe.
++    Profiles with a multiplier below 2 get no entry, so the layer stays off.
++    """
++    lines = [
++        "version = 1",
++        "# Generated by Decky LSFG-VK (PB-OS) from profiles.toml; edits are overwritten.",
++        "",
++        "[global]",
++    ]
++    if dll:
++        lines.append(f"dll = {_toml_value(dll)}")
++    lines.append("no_fp16 = true")
++    for name, raw in sorted(profile_data["profiles"].items()):
++        config = ConfigurationManager.validate_config({**raw, **profile_data.get("global_config", {})})
++        if config["multiplier"] < 2:
++            continue
++        for appid in config["active_in"]:
++            if not appid.lstrip("-").isdigit():
++                continue
++            lines.extend([
++                "",
++                "[[game]] # " + " ".join(str(name).split()),
++                f"exe = {_toml_value(process_prefix + appid)}",
++                f"multiplier = {config['multiplier']}",
++                f"flow_scale = {config['flow_scale']}",
++                f"performance_mode = {_toml_value(config['performance_mode'])}",
++            ])
++    return "\n".join(lines) + "\n"
+diff --git a/py_modules/lsfg_vk/configuration.py b/py_modules/lsfg_vk/configuration.py
+index 5f7d625..e01cf13 100644
+--- a/py_modules/lsfg_vk/configuration.py
++++ b/py_modules/lsfg_vk/configuration.py
+@@ -3,6 +3,7 @@ from typing import Any, Dict
+ 
+ from .base_service import BaseService
+ from .config_schema import ConfigurationManager, ProfileData, UnsupportedConfigurationVersion
++from .constants import V2_BACKUP_FILENAME
+ from .runtime_service import RuntimeService
+ 
+ 
+@@ -14,7 +15,7 @@ class ConfigurationService(BaseService):
+         self.runtime_service = runtime_service or RuntimeService(logger=self.log)
+ 
+     def _default_data(self) -> ProfileData:
+-        return {"profiles": {}, "global_config": {"dll": "", "no_fp16": False}}
++        return {"profiles": {}, "global_config": {"dll": "", "no_fp16": True}}
+ 
+     def _reset_legacy_config(self, version: Any) -> ProfileData:
+         data = self._default_data()
+@@ -26,9 +27,20 @@ class ConfigurationService(BaseService):
+         )
+         return data
+ 
++    def _import_v2_profiles(self) -> ProfileData:
++        """PB-OS: first run; take the per-game profiles of an lsfg-vk 2.0 config"""
++        for source in (self.layer_config_path, self.config_dir / V2_BACKUP_FILENAME):
++            try:
++                data = ConfigurationManager.parse_toml_content_multi_profile(source.read_text(encoding="utf-8"))
++            except (OSError, ValueError) as error:
++                continue
++            self.log.info(f"Imported {len(data['profiles'])} lsfg-vk 2.0 profiles from {source}")
++            return data
++        return self._default_data()
++
+     def _get_profile_data(self) -> ProfileData:
+         if not self.config_file_path.exists():
+-            return self._default_data()
++            return self._import_v2_profiles()
+         content = self.config_file_path.read_text(encoding="utf-8")
+         try:
+             return ConfigurationManager.parse_toml_content_multi_profile(content)
+@@ -41,6 +53,7 @@ class ConfigurationService(BaseService):
+         content = ConfigurationManager.generate_toml_content_multi_profile(data)
+         self.runtime_service.validate_config_content(content)
+         self._write_file(self.config_file_path, content, 0o644)
++        self.runtime_service.render_layer_config(data)
+ 
+     @staticmethod
+     def _profile_name(data: ProfileData, appid: str, game_name: str) -> str:
+diff --git a/py_modules/lsfg_vk/constants.py b/py_modules/lsfg_vk/constants.py
+index 45ac4c5..6a9ca48 100644
+--- a/py_modules/lsfg_vk/constants.py
++++ b/py_modules/lsfg_vk/constants.py
+@@ -23,3 +23,29 @@ LEGACY_LIB_FILENAME = "liblsfg-vk.so"
+ LEGACY_JSON_FILENAME = "VkLayer_LS_frame_generation.json"
+ 
+ BIN_DIR = "bin"
++
++# PB-OS: lsfg-vk 1.x for aarch64 ships in the image (2.x draws garbage on
++# Adreno/Turnip and its x86 layers cannot load into ARM64 games). The plugin
++# keeps upstream's per-game profiles in PROFILES_FILENAME (lsfg-vk 2.0 format)
++# and renders the 1.x layer config (conf.toml) from them; ~/.lsfg selects a
++# game's [[game]] entry with LSFG_PROCESS=<PROCESS_PREFIX><appid>.
++SYSTEM_LIB = "/usr/lib/liblsfg-vk-arm64.so"
++SYSTEM_JSON = "/usr/share/vulkan/implicit_layer.d/VkLayer_LS_frame_generation_arm64.json"
++PROFILES_FILENAME = "profiles.toml"
++V2_BACKUP_FILENAME = "conf.toml.lsfg-vk-2.0"
++LOSSLESS_DLL_FILENAME = "Lossless.dll"
++PROCESS_PREFIX = "pbos-"
++
++# Left in $HOME by the x86 lsfg-vk 2.0 / 1.x installs; removed on setup.
++LEGACY_HOME_FILES = (
++    ".local/lib/liblsfg-vk.so",
++    ".local/share/vulkan/implicit_layer.d/VkLayer_LS_frame_generation.json",
++    ".local/lib/liblsfg-vk-layer.so",
++    ".local/lib/liblsfg-vk-layer.x86.so",
++    ".local/share/vulkan/implicit_layer.d/VkLayer_LSFGVK_frame_generation.json",
++    ".local/share/vulkan/implicit_layer.d/VkLayer_LSFGVK_frame_generation.x86.json",
++    ".local/bin/lsfg-vk-cli",
++    ".local/bin/lsfg-vk-ui",
++    ".local/share/applications/gay.pancake.lsfg-vk-ui.desktop",
++    ".local/share/icons/hicolor/256x256/apps/gay.pancake.lsfg-vk-ui.png",
++)
+diff --git a/py_modules/lsfg_vk/installation.py b/py_modules/lsfg_vk/installation.py
+index b216324..f4cf3ef 100644
+--- a/py_modules/lsfg_vk/installation.py
++++ b/py_modules/lsfg_vk/installation.py
+@@ -1,229 +1,142 @@
+-import os
+-import shutil
+-import tarfile
+-import tempfile
++"""PB-OS: setup for the image's lsfg-vk 1.x layer.
++
++Upstream unpacked the x86 lsfg-vk 2.0 build into ~/.local. On PB-OS the
++aarch64 lsfg-vk 1.x layer is part of the image, so "installing" only writes
++the plugin's own files: the profile store, the 1.x layer config and the
++~/.lsfg wrapper. It also clears what the x86 installs left in $HOME and
++keeps launch options from earlier PB-OS builds working.
++"""
++
+ import traceback
+-from pathlib import Path
+-from typing import Dict
+ 
+ from .base_service import BaseService
+-from .config_schema import ConfigurationManager, ProfileData, UnsupportedConfigurationVersion
+-from .constants import (
+-    ARCHIVE_FILENAME,
+-    BIN_DIR,
+-    CLI_FILENAME,
+-    JSON_FILENAME,
+-    JSON_X86_FILENAME,
+-    LEGACY_JSON_FILENAME,
+-    LEGACY_LIB_FILENAME,
+-    LIB_FILENAME,
+-    LIB_X86_FILENAME,
+-    LOCAL_SHARE,
+-    UI_DESKTOP_FILENAME,
+-    UI_FILENAME,
+-    UI_ICON_FILENAME,
+-)
++from .config_schema import ConfigurationManager, UnsupportedConfigurationVersion
++from .constants import LEGACY_HOME_FILES, SCRIPT_NAME, V2_BACKUP_FILENAME
+ from .runtime_service import RuntimeService
+ from .steam_service import SteamService
+ from .types import InstallationCheckResponse, InstallationResponse, UninstallationResponse
+ 
+ 
+ class InstallationService(BaseService):
++    # ~/lsfg as written by decky-lsfg-vk 0.12.2 (PB-OS alpha builds; both of
++    # its script variants export LSFG_PROCESS) and the shim that replaces it
++    OLD_SCRIPT_LINE = "export LSFG_PROCESS="
++    SHIM_MARKER = "# PB-OS: ~/lsfg now runs ~/.lsfg"
++
+     def __init__(
+         self,
+         logger=None,
+         runtime_service: RuntimeService = None,
+         steam_service: SteamService = None,
++        wrapper_service=None,
+     ):
+         super().__init__(logger)
+-        self.runtime_service = runtime_service or RuntimeService(logger=self.log)
+         self.steam_service = steam_service or SteamService(logger=self.log)
+-        self.lib_file = self.local_lib_dir / LIB_FILENAME
+-        self.lib_x86_file = self.local_lib_dir / LIB_X86_FILENAME
+-        self.json_file = self.local_share_dir / JSON_FILENAME
+-        self.json_x86_file = self.local_share_dir / JSON_X86_FILENAME
+-        self.cli_file = self.local_bin_dir / CLI_FILENAME
+-        self.legacy_lib_file = self.local_lib_dir / LEGACY_LIB_FILENAME
+-        self.legacy_json_file = self.local_share_dir / LEGACY_JSON_FILENAME
++        self.runtime_service = runtime_service or RuntimeService(logger=self.log, steam_service=self.steam_service)
++        self.wrapper_service = wrapper_service
++        self.old_script_path = self.user_home / SCRIPT_NAME
++        self.v2_backup_path = self.config_dir / V2_BACKUP_FILENAME
++
++    def needs_setup(self) -> bool:
++        if not self.runtime_service.layer_present():
++            return False
++        if not (self.config_file_path.is_file() and self.layer_config_path.is_file()):
++            return True
++        if not self._layer_config_is_v1():
++            return True
++        if self._old_script_needs_shim():
++            return True
++        return any((self.user_home / rel).exists() for rel in LEGACY_HOME_FILES)
+ 
+     def install(self) -> InstallationResponse:
+         try:
+-            archive_path = Path(__file__).parent.parent.parent / BIN_DIR / ARCHIVE_FILENAME
+-            if not archive_path.exists():
+-                raise FileNotFoundError(f"{ARCHIVE_FILENAME} not found at {archive_path}")
+-            self._ensure_directories()
+-            profile_data = self._prepare_config()
+-            self._remove_legacy_layer_files()
+-            self._install_archive(archive_path)
+-            content = ConfigurationManager.generate_toml_content_multi_profile(profile_data)
++            if not self.runtime_service.layer_present():
++                raise FileNotFoundError("The lsfg-vk layer is missing from this image")
++            self.config_dir.mkdir(parents=True, exist_ok=True)
++            self._remove_legacy_home_files()
++            self._keep_v2_config_aside()
++            data = self._profile_data()
++            content = ConfigurationManager.generate_toml_content_multi_profile(data)
+             self.runtime_service.validate_config_content(content)
+             self._write_file(self.config_file_path, content, 0o644)
+-            return self._success_response(InstallationResponse, "lsfg-vk 2.0.0 installed successfully")
++            self.runtime_service.render_layer_config(data)
++            if self.wrapper_service is not None:
++                result = self.wrapper_service.repair(force=True)
++                if not result.get("success"):
++                    raise RuntimeError(result.get("error") or "Could not write ~/.lsfg")
++            self._shim_old_script()
++            return self._success_response(InstallationResponse, "lsfg-vk 1.x is set up")
+         except Exception as error:
+-            self.log.error(f"Error installing lsfg-vk: {error}")
++            self.log.error(f"Error setting up lsfg-vk: {error}")
+             return self._error_response(InstallationResponse, str(error))
+ 
+-    def _payload_destinations(self) -> Dict[str, tuple[Path, int]]:
+-        return {
+-            f"bin/{CLI_FILENAME}": (self.cli_file, 0o755),
+-            f"bin/{UI_FILENAME}": (self.local_bin_dir / UI_FILENAME, 0o755),
+-            f"lib/{LIB_FILENAME}": (self.lib_file, 0o644),
+-            f"lib/{LIB_X86_FILENAME}": (self.lib_x86_file, 0o644),
+-            f"share/vulkan/implicit_layer.d/{JSON_FILENAME}": (self.json_file, 0o644),
+-            f"share/vulkan/implicit_layer.d/{JSON_X86_FILENAME}": (self.json_x86_file, 0o644),
+-            f"share/applications/{UI_DESKTOP_FILENAME}": (
+-                self.user_home / LOCAL_SHARE / "applications" / UI_DESKTOP_FILENAME,
+-                0o644,
+-            ),
+-            f"share/icons/hicolor/256x256/apps/{UI_ICON_FILENAME}": (
+-                self.user_home / LOCAL_SHARE / "icons/hicolor/256x256/apps" / UI_ICON_FILENAME,
+-                0o644,
+-            ),
+-        }
+-
+-    def _install_archive(self, archive_path: Path) -> None:
+-        destinations = self._payload_destinations()
+-        found = set()
+-        with tarfile.open(archive_path, "r:*") as archive:
+-            members = {
+-                member.name.removeprefix("./"): member
+-                for member in archive.getmembers()
+-                if member.isfile()
+-            }
+-            for source_path, (destination, mode) in destinations.items():
+-                member = members.get(source_path)
+-                if member is None:
+-                    continue
+-                source = archive.extractfile(member)
+-                if source is None:
+-                    continue
+-                destination.parent.mkdir(parents=True, exist_ok=True)
+-                temporary_path = None
+-                try:
+-                    with tempfile.NamedTemporaryFile(
+-                        mode="wb",
+-                        dir=destination.parent,
+-                        prefix=f".{destination.name}.",
+-                        delete=False,
+-                    ) as temporary_file:
+-                        temporary_path = Path(temporary_file.name)
+-                        with source:
+-                            shutil.copyfileobj(source, temporary_file)
+-                        temporary_file.flush()
+-                        os.fsync(temporary_file.fileno())
+-                    temporary_path.chmod(mode)
+-                    os.replace(temporary_path, destination)
+-                    found.add(source_path)
+-                except Exception:
+-                    if temporary_path is not None:
+-                        temporary_path.unlink(missing_ok=True)
+-                    raise
+-        missing = sorted(set(destinations) - found)
+-        if missing:
+-            raise OSError("Archive is missing required files: " + ", ".join(missing))
+-
+-    def _default_config(self) -> ProfileData:
+-        defaults = ConfigurationManager.get_defaults()
+-        return ProfileData(
+-            profiles={},
+-            global_config={"dll": defaults["dll"], "no_fp16": defaults["no_fp16"]},
+-        )
++    def _remove_legacy_home_files(self) -> None:
++        for rel in LEGACY_HOME_FILES:
++            try:
++                if self._remove_if_exists(self.user_home / rel):
++                    self.log.info(f"Removed leftover {rel}")
++            except OSError as error:
++                self.log.warning(f"Could not remove leftover {rel}: {error}")
+ 
+-    def _prepare_config(self) -> ProfileData:
++    def _layer_config_is_v1(self) -> bool:
+         try:
+-            profile_data = (
+-                ConfigurationManager.parse_toml_content_multi_profile(
+-                    self.config_file_path.read_text(encoding="utf-8")
+-                )
+-                if self.config_file_path.exists()
+-                else self._default_config()
+-            )
+-        except UnsupportedConfigurationVersion as error:
+-            if not ConfigurationManager.is_discardable_legacy_version(error.version):
+-                raise
+-            self._remove_if_exists(self.config_file_path)
+-            self.log.warning(
+-                f"Removed legacy lsfg-vk configuration version {error.version!r} during installation"
+-            )
+-            profile_data = self._default_config()
+-        except ValueError:
+-            profile_data = self._default_config()
+-        self._resolve_dll_path(profile_data)
+-        defaults = ConfigurationManager.get_defaults()
+-        for name, profile in profile_data["profiles"].items():
+-            profile_data["profiles"][name] = ConfigurationManager.validate_config(
+-                {**defaults, **profile, **profile_data["global_config"]}
+-            )
+-        return profile_data
+-
+-    def _resolve_dll_path(self, profile_data: ProfileData) -> bool:
+-        current_path = str(profile_data["global_config"].get("dll") or "")
+-        if current_path and Path(current_path).is_file():
++            content = self.layer_config_path.read_text(encoding="utf-8")
++        except OSError:
+             return False
+-        dll_path = self.steam_service.find_lsfg_vk_dll()
+-        if dll_path and current_path != dll_path:
+-            profile_data["global_config"]["dll"] = dll_path
+-            return True
+-        return False
++        first = next((line.strip() for line in content.splitlines()
++                      if line.strip() and not line.strip().startswith("#")), "")
++        return first.replace(" ", "") == "version=1"
+ 
+-    def _repair_dll_path(self) -> None:
+-        if not self.config_file_path.is_file():
++    def _keep_v2_config_aside(self) -> None:
++        """conf.toml now belongs to lsfg-vk 1.x; keep a 2.0 one as a backup"""
++        if not self.layer_config_path.is_file() or self._layer_config_is_v1():
+             return
++        if self.v2_backup_path.exists():
++            self._remove_if_exists(self.layer_config_path)
++        else:
++            self.layer_config_path.replace(self.v2_backup_path)
++            self.log.info(f"Kept the lsfg-vk 2.0 config as {self.v2_backup_path}")
++
++    def _profile_data(self):
++        if self.config_file_path.is_file():
++            try:
++                return ConfigurationManager.parse_toml_content_multi_profile(
++                    self.config_file_path.read_text(encoding="utf-8"))
++            except (OSError, ValueError, UnsupportedConfigurationVersion) as error:
++                self.log.warning(f"Profile store unreadable ({error}); starting again")
+         try:
+-            dll_path = self.steam_service.find_lsfg_vk_dll()
+-            if not dll_path:
+-                return
+-            profile_data = ConfigurationManager.parse_toml_content_multi_profile(
+-                self.config_file_path.read_text(encoding="utf-8")
+-            )
+-            if profile_data["global_config"].get("dll") == dll_path:
+-                return
+-            profile_data["global_config"]["dll"] = dll_path
+-            content = ConfigurationManager.generate_toml_content_multi_profile(profile_data)
+-            self.runtime_service.validate_config_content(content)
+-            self._write_file(self.config_file_path, content, 0o644)
+-            self.log.info(f"Repaired lsfg-vk DLL path: {dll_path}")
+-        except Exception as error:
+-            self.log.warning(f"Could not repair lsfg-vk DLL path: {error}")
++            data = ConfigurationManager.parse_toml_content_multi_profile(
++                self.v2_backup_path.read_text(encoding="utf-8"))
++            self.log.info(f"Imported {len(data['profiles'])} profiles from {self.v2_backup_path}")
++            return data
++        except (OSError, ValueError):
++            return {"profiles": {}, "global_config": {"dll": "", "no_fp16": True}}
+ 
+-    def _remove_legacy_layer_files(self) -> None:
+-        for path in (self.legacy_lib_file, self.legacy_json_file):
+-            self._remove_if_exists(path)
++    def _old_script_needs_shim(self) -> bool:
++        try:
++            content = self.old_script_path.read_text(encoding="utf-8")
++        except OSError:
++            return False
++        return self.SHIM_MARKER not in content and any(
++            line.startswith(self.OLD_SCRIPT_LINE) for line in content.splitlines())
+ 
+-    def _prune_empty_directories(self) -> None:
+-        # Only prune directories created by this plugin.  Never remove a
+-        # non-empty directory because the user's other tools may use it.
+-        candidates = (
+-            self.config_dir,
+-            self.local_bin_dir,
+-            self.local_lib_dir,
+-            self.local_share_dir,
+-            self.user_home / LOCAL_SHARE / "applications",
+-            self.user_home / LOCAL_SHARE / "icons/hicolor/256x256/apps",
++    def _shim_old_script(self) -> None:
++        """Games set up with `~/lsfg %command%` (decky-lsfg-vk 0.12.2) keep working"""
++        if not self._old_script_needs_shim():
++            return
++        self._write_file(
++            self.old_script_path,
++            "#!/bin/sh\n"
++            f"{self.SHIM_MARKER}\n"
++            'exec "$HOME/.lsfg" "$@"\n',
++            0o755,
+         )
+-        for directory in candidates:
+-            try:
+-                if directory.is_dir() and not directory.is_symlink():
+-                    directory.rmdir()
+-                    self.log.info(f"Removed empty directory {directory}")
+-            except OSError:
+-                continue
+ 
+     def check_installation(self) -> InstallationCheckResponse:
+         try:
+-            installed = all(
+-                path.is_file()
+-                for path in (
+-                    self.cli_file,
+-                    self.lib_file,
+-                    self.lib_x86_file,
+-                    self.json_file,
+-                    self.json_x86_file,
+-                    self.config_file_path,
+-                )
+-            )
+-            if installed:
+-                self._repair_dll_path()
++            installed = (self.runtime_service.layer_present()
++                         and self.config_file_path.is_file()
++                         and self._layer_config_is_v1())
+             lossless_scaling = self.runtime_service.check_lossless_scaling()
+             return {
+                 "installed": installed,
+@@ -240,26 +153,16 @@ class InstallationService(BaseService):
+             }
+ 
+     def uninstall(self) -> UninstallationResponse:
++        """Remove the plugin's own files; the layer belongs to the image"""
+         try:
+             removed = [
+                 str(path)
+-                for path in (
+-                    self.lib_file,
+-                    self.lib_x86_file,
+-                    self.json_file,
+-                    self.json_x86_file,
+-                    self.cli_file,
+-                    self.local_bin_dir / UI_FILENAME,
+-                    self.user_home / LOCAL_SHARE / "applications" / UI_DESKTOP_FILENAME,
+-                    self.user_home / LOCAL_SHARE / "icons/hicolor/256x256/apps" / UI_ICON_FILENAME,
+-                    self.legacy_lib_file,
+-                    self.legacy_json_file,
+-                    self.legacy_script_path,
+-                    self.config_file_path,
+-                )
++                for path in (self.config_file_path, self.layer_config_path)
+                 if self._remove_if_exists(path)
+             ]
+-            self._prune_empty_directories()
++            if self.old_script_path.is_file() and self.SHIM_MARKER in self.old_script_path.read_text(encoding="utf-8"):
++                self._remove_if_exists(self.old_script_path)
++                removed.append(str(self.old_script_path))
+             if not removed:
+                 return self._success_response(
+                     UninstallationResponse,
+@@ -268,7 +171,7 @@ class InstallationService(BaseService):
+                 )
+             return self._success_response(
+                 UninstallationResponse,
+-                f"lsfg-vk uninstalled successfully. Removed {len(removed)} files.",
++                f"Removed {len(removed)} lsfg-vk files (the layer stays in the image).",
+                 removed_files=removed,
+             )
+         except Exception as error:
+diff --git a/py_modules/lsfg_vk/plugin.py b/py_modules/lsfg_vk/plugin.py
+index eed7fd7..9e60474 100644
+--- a/py_modules/lsfg_vk/plugin.py
++++ b/py_modules/lsfg_vk/plugin.py
+@@ -13,12 +13,17 @@ from .wrapper_service import WrapperService
+ 
+ 
+ class Plugin:
++    # PB-OS: upstream's Flatpak runtime extensions are x86-only
++    FLATPAK_UNAVAILABLE = "Flatpak frame generation is not available on PB-OS (ARM)"
++
+     def __init__(self):
+-        self.runtime_service = RuntimeService()
+         self.steam_service = SteamService()
++        self.runtime_service = RuntimeService(steam_service=self.steam_service)
++        self.wrapper_service = WrapperService()
+         self.installation_service = InstallationService(
+             runtime_service=self.runtime_service,
+             steam_service=self.steam_service,
++            wrapper_service=self.wrapper_service,
+         )
+         self.configuration_service = ConfigurationService(runtime_service=self.runtime_service)
+         self.flatpak_service = FlatpakService()
+@@ -26,7 +31,6 @@ class Plugin:
+             self.flatpak_service,
+             self.configuration_service,
+         )
+-        self.wrapper_service = WrapperService()
+ 
+     async def install_lsfg_vk(self):
+         return self.installation_service.install()
+@@ -122,7 +126,8 @@ class Plugin:
+ 
+     async def get_debug_file_contents(self):
+         files = (
+-            ("config", "LSFG-VK configuration", self.configuration_service.config_file_path),
++            ("config", "LSFG-VK profiles", self.configuration_service.config_file_path),
++            ("layer", "lsfg-vk 1.x layer configuration", self.configuration_service.layer_config_path),
+             ("workarounds", "Per-app workarounds", self.wrapper_service.sidecar_path),
+             ("wrapper", "Generated launch wrapper", self.wrapper_service.wrapper_path),
+             ("flatpak", "Flatpak ownership state", self.flatpak_service.ownership_path),
+@@ -160,28 +165,39 @@ class Plugin:
+     async def get_lossless_scaling_branch_status(self):
+         return self.steam_service.get_branch_status()
+ 
++    def _flatpak_unavailable(self, app_id: str = "") -> Dict[str, Any]:
++        return {"success": False, "message": "", "error": self.FLATPAK_UNAVAILABLE, "app_id": str(app_id)}
++
+     async def get_flatpak_apps(self):
+-        return self.flatpak_profile_service.get_apps()
++        return {"success": True, "message": self.FLATPAK_UNAVAILABLE, "error": None, "apps": []}
+ 
+     async def enable_flatpak_app(self, flatpak_app_id: str):
+-        return self.flatpak_profile_service.enable_app(flatpak_app_id)
++        return self._flatpak_unavailable(flatpak_app_id)
+ 
+     async def update_flatpak_config(self, flatpak_app_id: str, config: Dict[str, Any]):
+-        return self.flatpak_profile_service.update_config(flatpak_app_id, config)
++        return self._flatpak_unavailable(flatpak_app_id)
+ 
+     async def get_flatpak_workaround_state(self, flatpak_app_id: str):
+-        return self.flatpak_profile_service.get_workaround_state(flatpak_app_id)
++        return self._flatpak_unavailable(flatpak_app_id)
+ 
+     async def set_flatpak_workaround_state(self, flatpak_app_id: str, state: Dict[str, Any]):
+-        return self.flatpak_profile_service.set_workaround_state(flatpak_app_id, state)
++        return self._flatpak_unavailable(flatpak_app_id)
+ 
+     async def remove_flatpak_app(self, flatpak_app_id: str):
+-        return self.flatpak_profile_service.remove_app(flatpak_app_id)
++        return self._flatpak_unavailable(flatpak_app_id)
+ 
+     async def get_running_flatpak_apps(self):
+-        return self.flatpak_profile_service.get_running_apps()
++        return {"success": True, "message": "", "error": None, "apps": []}
+ 
+     async def _main(self):
++        # PB-OS: the layer is in the image, so set up without the Install
++        # button; this also migrates lsfg-vk 2.0 and 0.12.2-era setups.
++        try:
++            if self.installation_service.needs_setup():
++                result = self.installation_service.install()
++                decky.logger.info(f"lsfg-vk setup: {result}")
++        except Exception as error:
++            decky.logger.error(f"lsfg-vk setup failed: {error}")
+         repair = self.wrapper_service.repair()
+         if not repair.get("success"):
+             decky.logger.error(f"Could not repair lsfg workaround wrapper: {repair.get('error')}")
+diff --git a/py_modules/lsfg_vk/runtime_service.py b/py_modules/lsfg_vk/runtime_service.py
+index 8785522..dcbf91a 100644
+--- a/py_modules/lsfg_vk/runtime_service.py
++++ b/py_modules/lsfg_vk/runtime_service.py
+@@ -1,120 +1,55 @@
+-import os
+-import subprocess
+-import tempfile
++"""PB-OS: checks profiles and renders the lsfg-vk 1.x layer config.
++
++Upstream ran the x86 lsfg-vk 2.0 CLI here. The image's layer is lsfg-vk 1.x
++for aarch64 and has no CLI, so the profiles are checked in Python and turned
++into the 1.x config (conf.toml) that the layer reads.
++"""
++
+ from pathlib import Path
+-from typing import Any, Sequence
++from typing import Any, Optional
+ 
+ from .base_service import BaseService
+-from .constants import CLI_FILENAME
++from .config_schema import ConfigurationManager, ProfileData, render_layer_config
++from .constants import LOSSLESS_DLL_FILENAME, PROCESS_PREFIX, SYSTEM_JSON, SYSTEM_LIB
+ 
+ 
+ class RuntimeService(BaseService):
+-    COMMAND_TIMEOUT_SECONDS = 10
+-    MAX_OUTPUT_LENGTH = 12_000
+-    DLL_MISSING_MARKER = "! The DLL file does not exist:"
+-    DLL_NONE_MARKER = "DLL override: (none)"
+-
+-    def __init__(self, logger=None):
++    def __init__(self, logger=None, steam_service=None):
+         super().__init__(logger)
+-        self.cli_path = self.local_bin_dir / CLI_FILENAME
+-
+-    def _environment(self) -> dict[str, str]:
+-        environment = os.environ.copy()
+-        environment.update(
+-            HOME=str(self.user_home),
+-            XDG_CONFIG_HOME=str(self.user_home / ".config"),
+-        )
+-        for name in ("LSFGVK_CONFIG", "LSFGVK_ENV"):
+-            environment.pop(name, None)
+-        return environment
+-
+-    @classmethod
+-    def _output(cls, stdout: Any, stderr: Any) -> str:
+-        values = []
+-        for value in (stdout, stderr):
+-            if isinstance(value, bytes):
+-                value = value.decode("utf-8", errors="replace")
+-            if value:
+-                values.append(str(value).strip())
+-        output = "\n".join(value for value in values if value)
+-        return output if len(output) <= cls.MAX_OUTPUT_LENGTH else output[: cls.MAX_OUTPUT_LENGTH]
+-
+-    def _run(self, arguments: Sequence[str]) -> tuple[int, str]:
+-        if not self.cli_path.is_file() or not os.access(self.cli_path, os.X_OK):
+-            raise FileNotFoundError(f"{CLI_FILENAME} is not installed at {self.cli_path}")
+-        result = subprocess.run(
+-            [str(self.cli_path), *arguments],
+-            cwd=str(self.user_home),
+-            env=self._environment(),
+-            capture_output=True,
+-            text=True,
+-            timeout=self.COMMAND_TIMEOUT_SECONDS,
+-            check=False,
+-        )
+-        return result.returncode, self._output(result.stdout, result.stderr)
++        self.steam_service = steam_service
+ 
+     def validate_config_content(self, content: str) -> None:
+-        self.config_dir.mkdir(parents=True, exist_ok=True)
+-        temporary_path: Path | None = None
+-        try:
+-            with tempfile.NamedTemporaryFile(
+-                mode="w",
+-                encoding="utf-8",
+-                dir=self.config_dir,
+-                prefix=".conf.toml.",
+-                suffix=".tmp",
+-                delete=False,
+-            ) as temporary_file:
+-                temporary_path = Path(temporary_file.name)
+-                temporary_file.write(content)
+-                temporary_file.flush()
+-                os.fsync(temporary_file.fileno())
+-
+-            returncode, output = self._run(("validate", "--config", str(temporary_path)))
+-            if returncode != 0:
+-                raise ValueError(output or "lsfg-vk rejected the generated configuration")
+-        finally:
+-            if temporary_path is not None:
+-                temporary_path.unlink(missing_ok=True)
++        # Raises on anything the profile store cannot hold.
++        ConfigurationManager.parse_toml_content_multi_profile(content)
++
++    def lossless_dll(self, configured_dll: str = "") -> Optional[Path]:
++        """Lossless.dll for lsfg-vk 1.x; profiles may name 2.0's lsfg-vk.dll."""
++        candidates = []
++        if configured_dll:
++            configured = Path(configured_dll)
++            candidates.append(configured if configured.name == LOSSLESS_DLL_FILENAME
++                              else configured.with_name(LOSSLESS_DLL_FILENAME))
++        if self.steam_service is not None:
++            directory = self.steam_service.lossless_scaling_path()
++            if directory:
++                candidates.append(directory / LOSSLESS_DLL_FILENAME)
++        return next((path for path in candidates if path.is_file()), None)
++
++    def render_layer_config(self, data: ProfileData) -> None:
++        dll = self.lossless_dll(data.get("global_config", {}).get("dll", ""))
++        content = render_layer_config(data, str(dll) if dll else "", PROCESS_PREFIX)
++        self._write_file(self.layer_config_path, content, 0o644)
++
++    @staticmethod
++    def layer_present() -> bool:
++        return Path(SYSTEM_LIB).is_file() and Path(SYSTEM_JSON).is_file()
+ 
+     def is_healthy(self) -> bool:
+-        returncode, output = self._run(("healthcheck",))
+-        return returncode == 0 and "Healthcheck found issues" not in output
++        return self.layer_present() and self.layer_config_path.is_file()
+ 
+     def check_lossless_scaling(self) -> dict[str, Any]:
+-        """Report Lossless Scaling state from lsfg-vk's own validator."""
+-        if not self.config_file_path.is_file():
+-            return {
+-                "installed": False,
+-                "status": "lsfg-vk configuration is not installed",
+-            }
+-
+-        try:
+-            returncode, output = self._run(
+-                ("validate", "--config", str(self.config_file_path), "--print")
+-            )
+-        except Exception as error:
+-            return {"installed": False, "status": str(error)}
+-
+-        if returncode != 0:
+-            return {
+-                "installed": False,
+-                "status": output or "lsfg-vk could not validate its configuration",
+-            }
+-
+-        if self.DLL_MISSING_MARKER in output:
+-            return {
+-                "installed": False,
+-                "status": "Lossless Scaling's lsfg-vk.dll was not found",
+-            }
+-
+-        if self.DLL_NONE_MARKER in output:
+-            return {
+-                "installed": False,
+-                "status": "Lossless Scaling's lsfg-vk.dll is not configured",
+-            }
+-
+-        return {
+-            "installed": True,
+-            "status": "Lossless Scaling detected by lsfg-vk",
+-        }
++        if not self.layer_present():
++            return {"installed": False, "status": "The lsfg-vk layer is missing from this image"}
++        if self.lossless_dll() is None:
++            return {"installed": False, "status": "Lossless Scaling's Lossless.dll was not found"}
++        return {"installed": True, "status": "Lossless Scaling detected"}
+diff --git a/py_modules/lsfg_vk/steam_service.py b/py_modules/lsfg_vk/steam_service.py
+index 71a4634..830cb09 100644
+--- a/py_modules/lsfg_vk/steam_service.py
++++ b/py_modules/lsfg_vk/steam_service.py
+@@ -154,6 +154,9 @@ class SteamService(BaseService):
+             if (path := root / "steamapps/common/Lossless Scaling").is_dir()
+         ), None)
+ 
++    def lossless_scaling_path(self) -> Optional[Path]:
++        return self._lossless_scaling_path()
++
+     def _manifest_path(self) -> Optional[Path]:
+         return next((
+             path
+diff --git a/py_modules/lsfg_vk/wrapper_service.py b/py_modules/lsfg_vk/wrapper_service.py
+index e06a747..ca42141 100644
+--- a/py_modules/lsfg_vk/wrapper_service.py
++++ b/py_modules/lsfg_vk/wrapper_service.py
+@@ -7,7 +7,7 @@ import threading
+ from typing import Any, Dict, Optional, Tuple
+ 
+ from .base_service import BaseService
+-from .constants import WRAPPER_FILENAME
++from .constants import PROCESS_PREFIX, WRAPPER_FILENAME
+ 
+ 
+ class WrapperService(BaseService):
+@@ -15,6 +15,9 @@ class WrapperService(BaseService):
+     FORMAT_VERSION = 2
+     LEGACY_MARKER = "# lsfg-vk-wrapper-format: 1"
+     MARKER = "# lsfg-vk-wrapper-format: 2"
++    # PB-OS alpha builds briefly shipped decky-lsfg-vk 0.12.2, which left this
++    # shim in ~/.lsfg; it is ours to replace.
++    PBOS_012_SHIM_MARKER = "# decky-lsfg-vk 0.14 launch option (~/.lsfg %command%), now lsfg-vk 1.x"
+     WRAPPER_TOKEN = "~/.lsfg"
+     STATE_FIELDS = (
+         "dxvkFrameRate",
+@@ -37,6 +40,8 @@ class WrapperService(BaseService):
+         "__GLX_VENDOR_LIBRARY_NAME",
+         "GALLIUM_DRIVER",
+         "DXVK_FRAME_RATE",
++        "LSFG_PROCESS",
++        "LSFG_CONFIG",
+     )
+ 
+     def __init__(self, logger=None):
+@@ -136,7 +141,7 @@ class WrapperService(BaseService):
+             prefix = "\n".join(self.wrapper_path.read_text(encoding="utf-8").splitlines()[:8])
+         except OSError as error:
+             raise RuntimeError(f"Could not read lsfg wrapper: {error}") from error
+-        return self.MARKER in prefix or self.LEGACY_MARKER in prefix
++        return self.MARKER in prefix or self.LEGACY_MARKER in prefix or self.PBOS_012_SHIM_MARKER in prefix
+ 
+     def _assert_wrapper_owned_or_absent(self) -> bool:
+         if not self.wrapper_path.exists() and not self.wrapper_path.is_symlink():
+@@ -154,8 +159,10 @@ class WrapperService(BaseService):
+         lines.extend([
+             '    SteamAppId="$appid"',
+             "    export SteamAppId",
+-            f"    LSFGVK_CONFIG={self._shell(str(self.config_file_path))}",
+-            "    export LSFGVK_CONFIG",
++            # PB-OS: lsfg-vk 1.x picks this game's [[game]] entry by process name
++            f"    LSFG_CONFIG={self._shell(str(self.layer_config_path))}",
++            f'    LSFG_PROCESS="{PROCESS_PREFIX}$appid"',
++            "    export LSFG_CONFIG LSFG_PROCESS",
+         ])
+         if state["disableGamescopeWsi"]:
+             lines.extend(["    ENABLE_GAMESCOPE_WSI=0", "    export ENABLE_GAMESCOPE_WSI"])
+@@ -346,12 +353,12 @@ class WrapperService(BaseService):
+                 "non_steam": False,
+             }
+ 
+-    def repair(self) -> Dict[str, Any]:
++    def repair(self, force: bool = False) -> Dict[str, Any]:
+         try:
+             with self._lock:
+                 document, _, _ = self._read_document()
+                 self._assert_wrapper_owned_or_absent()
+-                if not document["apps"]:
++                if not document["apps"] and not force:
+                     return self._response(document)
+                 self._write_file(self.wrapper_path, self._render_wrapper(document), 0o755)
+                 return self._response(document)
+diff --git a/src/components/ConfigurationSection.tsx b/src/components/ConfigurationSection.tsx
+index 6996bcd..c9d2d57 100644
+--- a/src/components/ConfigurationSection.tsx
++++ b/src/components/ConfigurationSection.tsx
+@@ -1,6 +1,6 @@
+ import { PanelSectionRow, ToggleField, SliderField } from "@decky/ui";
+ import { ConfigurationData } from "../config/configSchema";
+-import { FLOW_SCALE, PERFORMANCE_MODE, OVERRIDE_PRESENT_MODE, PRESERVE_SWAPCHAIN_IMAGE_COUNT } from "../config/configSchema";
++import { FLOW_SCALE, PERFORMANCE_MODE } from "../config/configSchema";
+ 
+ interface ConfigurationSectionProps {
+   config: ConfigurationData;
+@@ -15,11 +15,6 @@ export function ConfigurationSection({ config, onConfigChange }: ConfigurationSe
+     <PanelSectionRow>
+       <ToggleField label="Performance Mode" checked={config.performance_mode} onChange={(value) => onConfigChange(PERFORMANCE_MODE, value)} />
+     </PanelSectionRow>
+-    <PanelSectionRow>
+-      <ToggleField label="Present Mode Override" checked={config.override_present_mode} onChange={(value) => onConfigChange(OVERRIDE_PRESENT_MODE, value)} />
+-    </PanelSectionRow>
+-    <PanelSectionRow>
+-      <ToggleField label="Preserve Swapchain Image Count" checked={config.preserve_swapchain_image_count} onChange={(value) => onConfigChange(PRESERVE_SWAPCHAIN_IMAGE_COUNT, value)} />
+-    </PanelSectionRow>
++    {/* PB-OS: lsfg-vk 1.x has no present-mode override or swapchain options */}
+   </>;
+ }
+diff --git a/src/components/Content.tsx b/src/components/Content.tsx
+index 5d91179..e1b21cc 100644
+--- a/src/components/Content.tsx
++++ b/src/components/Content.tsx
+@@ -11,7 +11,6 @@ import { resolveNowPlayingTarget, type NowPlayingTarget } from "../utils/nowPlay
+ import { ConfigFileTab } from "./ConfigFileTab";
+ import { ConfigurationTab } from "./ConfigurationTab";
+ import { FlatpakNowPlayingTab } from "./FlatpakNowPlayingTab";
+-import { FlatpakTab } from "./FlatpakTab";
+ import { NowPlayingTab } from "./NowPlayingTab";
+ import { SettingsTab } from "./SettingsTab";
+ 
+@@ -225,25 +224,7 @@ export function Content() {
+             />
+           ),
+         },
+-        {
+-          id: "Flatpak",
+-          title: tabIcons.flatpak,
+-          content: tabContent(
+-            <FlatpakTab
+-              apps={flatpak.apps}
+-              runningApp={runningFlatpak}
+-              loading={flatpak.loading}
+-              busyAppId={flatpak.busyAppId}
+-              onRefresh={flatpak.reload}
+-              onEnable={flatpak.enableApp}
+-              onEnableAll={flatpak.enableAll}
+-              onRemove={flatpak.removeApp}
+-              onRemoveAll={flatpak.removeAll}
+-              onConfigChange={flatpak.updateConfig}
+-              onWorkaroundChange={flatpak.updateWorkarounds}
+-            />,
+-          ),
+-        },
++        // PB-OS: no Flatpak tab; upstream's Flatpak extensions are x86-only
+         ...(showDebugTab ? [{ id: "ConfigFile", title: tabIcons.configFile, content: tabContent(<ConfigFileTab />) }] : []),
+         { id: "Settings", title: tabIcons.settings, content: tabContent(settings) },
+       ]
+diff --git a/src/components/SettingsTab.tsx b/src/components/SettingsTab.tsx
+index f58bda8..13a5294 100644
+--- a/src/components/SettingsTab.tsx
++++ b/src/components/SettingsTab.tsx
+@@ -30,9 +30,7 @@ export function SettingsTab(props: SettingsTabProps) {
+     steamBranchStatus,
+     isInstalling,
+     isUninstalling,
+-    globalConfig,
+     showDebugTab,
+-    onGlobalConfigChange,
+     onShowDebugTabChange,
+     onInstall,
+     onUninstall,
+@@ -118,10 +116,10 @@ export function SettingsTab(props: SettingsTabProps) {
+         <>
+           <PanelSection title="Global settings">
+             <PanelSectionRow>
+-              <ToggleField
++              {/* PB-OS: FP16 is always off; on Adreno it is slower and stutters */}
++              <Field
+                 label="FP16 Acceleration"
+-                checked={!globalConfig.no_fp16}
+-                onChange={(value) => void onGlobalConfigChange({ ...globalConfig, no_fp16: !value })}
++                description="Off on PB-OS: slower and stutters on Adreno"
+               />
+             </PanelSectionRow>
+           </PanelSection>
+-- 
+2.50.1 (Apple Git-155)
+

@@ -19,7 +19,7 @@ from MaSi's **SteamOS-ARM-SM8550**, so everything MaSi credits below still appli
 | **ROCKNIX ABL** | https://github.com/ROCKNIX/abl | Bootloader with device model selection; the backup/flash/restore scripts in `abl/` (GPL-2.0) |
 | **Armada ABL staging** | https://github.com/armada-os/armada | The `rocknix_abl/` folder on the card, the approved-hash list (`abl/releases.tsv`, 1.1.8 rows) and the README steps. GPL-2.0-or-later |
 | **lsfg-vk** | https://github.com/PancakeTAS/lsfg-vk | Frame generation layer: the last 1.x commit, built unmodified for aarch64 (MIT) |
-| **decky-lsfg-vk** | https://github.com/xXJSONDeruloXx/decky-lsfg-vk | Frame generation Decky plugin (0.12.2, with PB-OS changes for the ARM layer) |
+| **decky-lsfg-vk** | https://github.com/xXJSONDeruloXx/decky-lsfg-vk | Frame generation Decky plugin (0.14.4 with a PB-OS patch for the lsfg-vk 1.x ARM layer) |
 
 ---
 
