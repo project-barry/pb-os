@@ -8,10 +8,12 @@ screen came on and went dark again about a second after waking. Dropping
 only the press does not help, because a release without a press is turned
 into a synthetic press + release.
 
-Ignore pon key events (press and release) from system suspend until one
-second after resume, while still tracking the key state, so a release
-after that window is not turned into a press either. One window for all
-pon keys (power and resin) of the system.
+Ignore pon key events (press and release) from system suspend until three
+seconds after resume, while still tracking the key state, so a release
+after that window is not turned into a press either. Three seconds also
+covers a second press while the screen is still coming on (about 2 s after
+resume on the Pocket FIT), which would otherwise put it back to sleep. One
+window for all pon keys (power and resin) of the system.
 ---
 --- a/drivers/input/misc/pm8941-pwrkey.c
 +++ b/drivers/input/misc/pm8941-pwrkey.c
@@ -20,11 +22,11 @@ pon keys (power and resin) of the system.
  }
  
 +/*
-+ * From system suspend until a second after resume, key events belong to
-+ * the press that woke the system and are not reported (the key state is
-+ * still tracked).
++ * From suspend until 3 s after resume, key events belong to the wake press
++ * or to an extra press while the screen comes on (~2 s on the Pocket FIT),
++ * and are not reported (the key state is still tracked).
 + */
-+#define PM8941_PWRKEY_WAKE_IGNORE_MS	1000
++#define PM8941_PWRKEY_WAKE_IGNORE_MS	3000
 +static bool pm8941_pwrkey_sleeping;
 +static ktime_t pm8941_pwrkey_ignore_end;
 +
