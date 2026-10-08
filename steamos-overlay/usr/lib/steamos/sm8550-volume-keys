@@ -9,6 +9,10 @@ it and passes volume up on through its virtual keyboard. Steam shows its
 volume indicator for that key but does not change the volume, so this
 helper also reads "InputPlumber Keyboard" — only for keys no physical device
 above already gives us, so nothing is applied twice.
+
+Holding volume up or down keeps stepping until the button is let go: none of
+these devices sends key repeats, so the helper repeats the step itself after
+SM8550_VOLUME_HOLD_DELAY seconds, every SM8550_VOLUME_HOLD_INTERVAL seconds.
 """
 from __future__ import annotations
 
@@ -30,6 +34,9 @@ KEY_VOLUMEDOWN = 114
 KEY_VOLUMEUP = 115
 STEP = os.environ.get("SM8550_VOLUME_STEP", "5%")
 LIMIT = os.environ.get("SM8550_VOLUME_LIMIT", "1.0")
+HOLD_DELAY = float(os.environ.get("SM8550_VOLUME_HOLD_DELAY", "0.4"))
+HOLD_INTERVAL = float(os.environ.get("SM8550_VOLUME_HOLD_INTERVAL", "0.1"))
+REPEAT_KEYS = (KEY_VOLUMEUP, KEY_VOLUMEDOWN)
 ALLOW = ("gpio-keys", "pmic_resin")
 IP_KEYBOARD = "inputplumber keyboard"
 RESCAN_S = 3.0
@@ -108,6 +115,10 @@ class Devices:
             self.physical |= keys
         self.ip_fd = None
         self.next_scan = 0.0
+        # The held volume key and when it next repeats; at most one at a time.
+        self.held: int | None = None
+        self.next_repeat = 0.0
+        self.held_from: dict[int, int] = {}
 
     @staticmethod
     def _open(path: str) -> int | None:
@@ -117,7 +128,8 @@ class Devices:
             return None
 
     def drop(self, fd: int) -> None:
-        path, _ = self.fds.pop(fd, ("?", set()))
+        path, keys = self.fds.pop(fd, ("?", set()))
+        self.held_from.pop(fd, None)
         os.close(fd)
         if fd == self.ip_fd:
             self.ip_fd = None
@@ -170,15 +182,35 @@ def apply(code: int) -> None:
         pactl("set-sink-mute", "@DEFAULT_SINK@", "toggle")
 
 
+def key_event(devs: Devices, fd: int, code: int, value: int, now: float) -> None:
+    if value == 1:
+        apply(code)
+        if code in REPEAT_KEYS:
+            devs.held = code
+            devs.held_from[fd] = code
+            devs.next_repeat = now + HOLD_DELAY
+    elif value == 0 and devs.held_from.get(fd) == code:
+        del devs.held_from[fd]
+        if devs.held == code:
+            devs.held = None
+
+
 def main() -> int:
     devs = Devices(use_ip=is_sm8550())
     if not devs.fds and not devs.use_ip:
         log("no gpio-keys/pmic_resin volume devices")
         return 0
     while True:
-        devs.rescan_ip(time.monotonic())
+        now = time.monotonic()
+        devs.rescan_ip(now)
+        if devs.held is not None and devs.held not in devs.held_from.values():
+            devs.held = None  # its device went away while held
+        if devs.held is not None and now >= devs.next_repeat:
+            apply(devs.held)
+            devs.next_repeat = max(devs.next_repeat + HOLD_INTERVAL, now)
+        timeout = 2.0 if devs.held is None else max(0.0, devs.next_repeat - time.monotonic())
         try:
-            ready, _, _ = select.select(list(devs.fds), [], [], 2.0)
+            ready, _, _ = select.select(list(devs.fds), [], [], timeout)
         except InterruptedError:
             continue
         for fd in ready:
@@ -193,8 +225,8 @@ def main() -> int:
             keys = devs.fds[fd][1]
             for off in range(0, len(data) - EVENT_SIZE + 1, EVENT_SIZE):
                 _s, _us, etype, code, value = struct.unpack_from(EVENT_FMT, data, off)
-                if etype == EV_KEY and value == 1 and code in keys:
-                    apply(code)
+                if etype == EV_KEY and code in keys:
+                    key_event(devs, fd, code, value, time.monotonic())
     return 0
 
 
