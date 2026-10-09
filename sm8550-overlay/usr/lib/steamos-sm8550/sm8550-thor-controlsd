@@ -20,7 +20,8 @@ session user) may use. One JSON object per connection, one reply line:
 Fan: sm8550-fand's profile, written to FAN_QUICK (read after fand's own
 config files, so it wins) and applied with a reload. Lighting: the
 multicolor LEDs around the sticks (rgb:l1-l4 and rgb:r1-r4 on the Thor, as
-Armada's armada-rgb lists them), saved to LIGHT_STATE and set again at start.
+Armada's armada-rgb lists them), saved to LIGHT_STATE and set again at start
+(DEFAULT_LIGHT until something is saved).
 The LEDs shine at brightness x dimmer: the dashboard's brightness buttons
 are shares of the dimmer, which the Barry Launcher plugin sets. The LEDs' PWM
 level is that to the power LED_GAMMA, so 25% looks about a quarter as bright
@@ -44,7 +45,9 @@ FAN_CONFS = ["/usr/share/sm8550-fand/fan.conf", "/etc/sm8550-fand.conf"]
 FAN_QUICK = "/var/lib/steamos-sm8550/fan-profile.conf"
 LIGHT_STATE = "/var/lib/steamos-sm8550/thor-lighting.json"
 LED_PREFIX = "rgb:"
-DEFAULT_LIGHT = {"enabled": True, "color": "ffffff", "brightness": 50, "dimmer": 100}
+# Out of the box: purple, the colour the other pb-os devices start with
+# (they breathe; these LEDs only take a steady colour).
+DEFAULT_LIGHT = {"enabled": True, "color": "8c00ff", "brightness": 50, "dimmer": 100}
 DIMMER_MIN = 20
 LED_GAMMA = 2.2
 
@@ -210,11 +213,13 @@ def listen() -> socket.socket:
 
 
 def main() -> int:
-    saved = light_state() if os.path.exists(LIGHT_STATE) else None
+    # The saved lighting, or the default until something is saved (not
+    # saved itself, so a later default change still reaches it).
+    saved = light_state() if os.path.exists(LIGHT_STATE) else (DEFAULT_LIGHT if leds() else None)
     if saved is not None:
         try:
             apply_light(saved)
-            log(f"lighting restored: {saved}")
+            log(f"lighting {'restored' if os.path.exists(LIGHT_STATE) else 'default'}: {saved}")
         except OSError as err:
             log(f"cannot restore the lighting: {err}")
     log(f"stick LEDs: {', '.join(os.path.basename(d) for d in leds()) or 'none'}")

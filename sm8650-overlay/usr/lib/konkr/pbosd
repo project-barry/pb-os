@@ -56,6 +56,10 @@ PROFILES = ("lowpower", "balanced")
 # way. Low Power (GPU <= 680 MHz, big cores <= 2.04 GHz) draws 41-45 % less
 # than Balanced for ~25 % fewer frames when GPU-bound.
 LEGACY_PROFILES = {"silent": "lowpower", "turbo": "balanced"}
+# Stick lighting out of the box: purple breathing, as on the Retroid Pocket 6
+# and Nova (PB-OS Utils' DEFAULT_EFFECT / DEFAULT_COLOR).
+RGB_DEFAULT_MODE = "breath"
+RGB_DEFAULT_COLOR = "8c00ff"
 
 # temp °C → pwm 0..255, linearly interpolated
 FAN_CURVES = {
@@ -194,7 +198,7 @@ def load_state() -> dict:
     except (OSError, ValueError):
         st = {}
     st.setdefault("profile", "balanced")
-    st.setdefault("rgb", {"mode": "static", "color": "ff3c00", "brightness": 160})
+    st.setdefault("rgb", {"mode": RGB_DEFAULT_MODE, "color": RGB_DEFAULT_COLOR, "brightness": 160})
     st.setdefault("fan", {"mode": "auto", "fixed": 50})
     st["fan"].pop("boost", None)             # fan boost was removed
     st.setdefault("power_led", True)
@@ -608,13 +612,13 @@ class Leds:
         if not self.sticks:
             return
         cfg = st["rgb"]
-        mode = cfg.get("mode", "static")
+        mode = cfg.get("mode", RGB_DEFAULT_MODE)
         if mode == "off":
             wr(f"{self.sticks}/brightness", 0)
             return
-        color = cfg.get("color", "ff3c00")
+        color = cfg.get("color", RGB_DEFAULT_COLOR)
         if not isinstance(color, str) or len(color) != 6 or any(c not in "0123456789abcdefABCDEF" for c in color):
-            color = "ff3c00"
+            color = RGB_DEFAULT_COLOR
         rgb = tuple(int(color[i:i + 2], 16) for i in (0, 2, 4))
         eff = f"{self.sticks}/effect"
         if mode == "breath":
@@ -628,7 +632,7 @@ class Leds:
             led_rgb(self.sticks, rgb, int(cfg.get("brightness", 160)))
 
 
-RGB_PRESETS = [("static", "ff3c00"), ("static", "00b4ff"), ("static", "a000ff"),
+RGB_PRESETS = [(RGB_DEFAULT_MODE, RGB_DEFAULT_COLOR), ("static", "ff3c00"), ("static", "00b4ff"), ("static", "a000ff"),
                ("static", "ffffff"), ("breath", "ff0040"), ("off", "000000")]
 STANDBY_FLAG = "/run/konkr-standby"
 
@@ -931,8 +935,8 @@ class Daemon:
         elif name == "sticks-toggle":
             rgb = self.st["rgb"]
             if rgb.get("mode") == "off":
-                rgb["mode"] = rgb.get("last_mode", "static")
-                rgb["color"] = rgb.get("last_color", "ff3c00")
+                rgb["mode"] = rgb.get("last_mode", RGB_DEFAULT_MODE)
+                rgb["color"] = rgb.get("last_color", RGB_DEFAULT_COLOR)
             else:
                 rgb["last_mode"], rgb["last_color"] = rgb.get("mode"), rgb.get("color")
                 rgb["mode"] = "off"
