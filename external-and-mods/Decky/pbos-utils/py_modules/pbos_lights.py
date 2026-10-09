@@ -33,6 +33,16 @@ from typing import Any
 
 PBOSD_STATE = "/var/lib/pbosd/state.json"
 LIGHTS_STATE = "/var/lib/pbos-utils/lights.json"
+# While this exists the stick lights are the charging indicator's
+# (sm8550-charge-rest: resting on the charger, or the Power tab's preview):
+# the engine writes nothing until it is gone.
+INDICATOR = "/run/pbos-charge-indicator"
+
+
+def indicator_active() -> bool:
+    """INDICATOR holds its owner's PID; a leftover from a crash counts for nothing."""
+    pid = rd(INDICATOR)
+    return pid.isdigit() and os.path.exists(f"/proc/{pid}")
 # Retroid Pocket 6 / Nova: four RGB groups around each stick
 # (leds-group-multicolor, functions l1..l4 and r1..r4).
 MULTICOLOR = "/sys/class/leds/rgb:[lr][1-4]"
@@ -717,9 +727,11 @@ class Animator:
         self.level = 1.0
         self.meter = AudioMeter()
 
-    def apply(self, st: dict[str, Any], fade: float = 0.0) -> None:
+    def apply(self, st: dict[str, Any], fade: float = 0.0, keep_brightness: bool = False) -> None:
         """Show st; with fade, brighten from off to it over that many seconds
-        (the effect already running underneath)."""
+        (the effect already running underneath). keep_brightness: the zones'
+        brightness is left as it is (after the charging indicator, which put
+        it back, and sm8550-sleep may be fading it in)."""
         self.halt()
         self.failed = set()
         self.order, self.tops = {}, {}   # read again: the devices may be new
@@ -732,8 +744,9 @@ class Animator:
         # alone near the end (blue already 0, red still 1).
         self.level = max(0, min(255, int(st.get("brightness", 160)))) / 255
         if not on:
-            for led in leds:
-                self._write(led, "brightness", 0)
+            if not keep_brightness:
+                for led in leds:
+                    self._write(led, "brightness", 0)
             return
         effect = st.get("effect", "static")
         # The colour first, then the brightness: LEDs made again (after a
@@ -742,7 +755,8 @@ class Animator:
             first = [0, 0, 0] if fade else frame(effect, 0.0, rgb, int(st.get("speed", 5)), len(leds), [-100.0] * len(leds),
                                                   0.0, (bool(st.get("reverse_left")), bool(st.get("reverse_right"))))[i]
             self._write(led, "multi_intensity", self.power(led, first))
-            self._write(led, "brightness", rd(f"{led}/max_brightness", "255"))
+            if not keep_brightness:
+                self._write(led, "brightness", rd(f"{led}/max_brightness", "255"))
         if effect == "static" and not fade:
             return
         self.stop = threading.Event()
@@ -776,6 +790,8 @@ class Animator:
         t0 = time.monotonic()
         k = 0
         while not stop.is_set():
+            if indicator_active():
+                return          # the charging indicator has the lights
             # Fading in: the sleep hook's fade-out reversed (x ** 2.2).
             r = min(1.0, k / self.FPS / fade) if fade else 1.0
             ramp = r ** GAMMA
@@ -885,6 +901,23 @@ class Engine:
         self.animator = Animator()
         self.last = lights_signature()
         self.changed_at = 0.0
+        self.lent = False           # the charging indicator has the lights
+
+    def lend(self) -> bool:
+        """True while the charging indicator (INDICATOR) has the lights. When
+        it gives them back, they are shown again, brightness untouched."""
+        if indicator_active():
+            if not self.lent:
+                self.animator.halt()
+                self.lent = True
+                log("stick lights: lent to the charging indicator")
+            return True
+        if self.lent:
+            self.lent = False
+            self.last = lights_signature()
+            log("stick lights: back from the charging indicator")
+            self.animator.apply(multicolor_lights(), keep_brightness=True)
+        return False
 
     def reload(self, fade: float = 0.0) -> None:
         self.animator.apply(multicolor_lights(), fade)
@@ -921,6 +954,8 @@ def run() -> None:
     while not stop.is_set():
         wake.wait(0.5)
         wake.clear()
+        if engine.lend():
+            continue                    # a reload waits until they are back
         if reload.is_set():
             reload.clear()
             engine.reload()

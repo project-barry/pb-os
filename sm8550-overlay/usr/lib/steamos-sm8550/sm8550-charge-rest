@@ -1,0 +1,683 @@
+#!/usr/bin/env python3
+"""sm8550-charge-rest — sleep on the charger for SM8550 handhelds (Retroid
+Pocket 6 / Nova, AYN Thor), and the stick lights' charging indicator.
+
+Kernel deep sleep (full SoC sleep) charges at about a quarter of the awake
+rate: the charger firmware slows down while the SoC is collapsed (AYN Thor,
+2026-10-08: 1.0-1.1 A asleep vs 4.7 A awake; s2idle 4.8 A). Its doorbell is
+also masked in deep sleep (patch 0504), so a charger change waits for the
+next wake. So on the charger there is no kernel suspend: Steam's Sleep goes
+through logind -> systemd-suspend.service, which runs this (`suspend`)
+instead of systemd-sleep. With the charger connected it:
+
+  - pauses the running game (SIGSTOP on the Steam-launched process tree),
+  - powers the screens' backlights down and ignores touch,
+  - freezes the user session (Steam, gamescope, Barry Launcher, games);
+    PipeWire, WirePlumber and D-Bus keep running (konkr-standby found
+    frozen PipeWire woke hours late and audio lagged),
+  - takes the big cores offline and caps the CPU and GPU clocks,
+  - shows the charging indicator on the stick lights (CHARGING_STATE):
+    a dim pulse while charging, a dim steady light once full,
+  - until the power button is pressed, the lid opens (AYN Thor) or the
+    charger is pulled. Pulled: kernel deep sleep from there (systemd-sleep),
+    until the next wake. Then everything comes back: CPUs, apps, screens.
+
+Without a charger it is plain systemd-sleep. sm8550-sleep (the unit's
+ExecStartPre/ExecStopPost) runs around both: Bluetooth off, audio parked,
+the stick lights faded out before and in after.
+
+While resting, FLAG (holding this process's PID, so a leftover from a crash
+counts for nothing) tells sm8550-powerbuttond (the wake press must not also
+ask Steam to sleep again) and sm8550-thor-backlightd (it must not power the
+bottom screen back up) to stand aside; INDICATOR tells PB-OS Utils' light
+engine that the stick lights are taken.
+
+Stick lights: the multicolor zones rgb:l1..r4 over two HTR3212 controllers.
+At the dim levels of an indicator the PWM has only a few steps, so while
+the indicator shows, the controllers run their LEDs at 1/4 current (LED
+control 0x07; the driver sets 0x03, 1/2): twice the steps for the same
+light. Restored before the lights go back to their owner.
+
+For PB-OS Utils' Power tab: `preview` shows the indicator once (a pulse,
+its gap, then the full light) with the screens on; `settings` prints the
+settings in use and the ranges as JSON; `save JSON` stores changes (merged,
+then held to the ranges).
+"""
+from __future__ import annotations
+
+import fcntl
+import glob
+import json
+import math
+import os
+import pwd
+import select
+import signal
+import struct
+import subprocess
+import sys
+import time
+
+FLAG = "/run/sm8550-charge-rest"
+INDICATOR = "/run/pbos-charge-indicator"
+CHARGING_STATE = "/var/lib/pbos-utils/charging.json"
+SYSTEMD_SLEEP = "/usr/lib/systemd/systemd-sleep"
+KONKR_SUSPEND = "/usr/lib/konkr/konkr-suspend"
+BATTERY = "/sys/class/power_supply/battery"
+USB = "/sys/class/power_supply/qcom-battmgr-usb"
+ZONES = "/sys/class/leds/rgb:*"
+HTR3212 = "/sys/bus/i2c/drivers/htr3212"
+LED_CONTROL = range(0x32, 0x3E)          # one per channel, 12 per controller
+LED_UPDATE = 0x25
+LED_QUARTER, LED_DRIVER = 0x07, 0x03     # on + 1/4 current; on + 1/2 (driver)
+I2C_SLAVE_FORCE = 0x0706
+
+# The indicator's settings (PB-OS Utils' Power tab writes CHARGING_STATE).
+# Levels are 0-255 at 1/4 LED current; the defaults are the lowest the tab
+# offers (PULSE_MAX_MIN, SOLID_MIN).
+DEFAULTS = {
+    "enabled": True,
+    "pulse_color": "00ff00",
+    "pulse_min": 0,
+    "pulse_max": 20,
+    "on_s": 4.0,
+    "off_s": 8.0,
+    "solid_color": "00ff00",
+    "solid_level": 1,
+}
+PULSE_MAX_MIN, SOLID_MIN = 20, 1
+ON_RANGE, OFF_RANGE = (1.0, 10.0), (0.0, 30.0)
+FPS = 50
+GAMMA = 2.2
+UNPLUG_S = 2.0             # charger gone this long: really unplugged
+EV = struct.Struct("llHHi")
+EV_KEY, EV_SW, KEY_POWER, SW_LID = 1, 5, 116, 0
+
+
+def log(msg: str) -> None:
+    print(f"sm8550-charge-rest: {msg}", flush=True)
+
+
+def rd(p: str, d: str = "") -> str:
+    try:
+        with open(p, encoding="utf-8") as fh:
+            return fh.read().strip().rstrip("\0")
+    except OSError:
+        return d
+
+
+def wr(p: str, v) -> bool:
+    try:
+        with open(p, "w", encoding="utf-8") as fh:
+            fh.write(str(v))
+        return True
+    except OSError:
+        return False
+
+
+def claim(p: str) -> None:
+    """A flag file holding this PID: honoured only while this process lives."""
+    wr(p, os.getpid())
+
+
+def rm(p: str) -> None:
+    try:
+        os.remove(p)
+    except OSError:
+        pass
+
+
+# ------------------------------------------------------------- settings --
+def clean_color(c, default: str) -> str:
+    c = str(c).lstrip("#").lower()
+    return c if len(c) == 6 and all(x in "0123456789abcdef" for x in c) else default
+
+
+def settings() -> dict:
+    """CHARGING_STATE over DEFAULTS, each value clamped to what the tab offers."""
+    try:
+        with open(CHARGING_STATE, encoding="utf-8") as fh:
+            raw = json.load(fh)
+        raw = raw if isinstance(raw, dict) else {}
+    except (OSError, ValueError):
+        raw = {}
+    s = {**DEFAULTS, **{k: v for k, v in raw.items() if k in DEFAULTS}}
+
+    def num(key, lo, hi, kind=int):
+        try:
+            return kind(max(lo, min(hi, kind(s[key]))))
+        except (TypeError, ValueError):
+            return DEFAULTS[key]
+    s["enabled"] = bool(s["enabled"])
+    s["pulse_color"] = clean_color(s["pulse_color"], DEFAULTS["pulse_color"])
+    s["solid_color"] = clean_color(s["solid_color"], DEFAULTS["solid_color"])
+    s["pulse_max"] = num("pulse_max", PULSE_MAX_MIN, 255)
+    s["pulse_min"] = min(num("pulse_min", 0, 254), s["pulse_max"] - 1)
+    s["solid_level"] = num("solid_level", SOLID_MIN, 255)
+    s["on_s"] = num("on_s", *ON_RANGE, kind=float)
+    s["off_s"] = num("off_s", *OFF_RANGE, kind=float)
+    return s
+
+
+# --------------------------------------------------------- stick lights --
+def zones() -> list[str]:
+    out = []
+    for d in sorted(glob.glob(ZONES)):
+        drv = os.path.basename(os.path.realpath(f"{d}/device/driver"))
+        if drv == "leds_group_multicolor" and os.path.exists(f"{d}/multi_intensity"):
+            out.append(d)
+    return out
+
+
+def controllers() -> list[tuple[int, int]]:
+    """(bus, address) of each HTR3212, from its I2C device name (2-003c)."""
+    out = []
+    for p in glob.glob(f"{HTR3212}/*-*"):
+        bus, _, addr = os.path.basename(p).partition("-")
+        try:
+            out.append((int(bus), int(addr, 16)))
+        except ValueError:
+            pass
+    return out
+
+
+def led_current(value: int) -> None:
+    """Every channel's LED control register on every controller, then the
+    update register (the driver only writes them when it starts)."""
+    for bus, addr in controllers():
+        try:
+            fd = os.open(f"/dev/i2c-{bus}", os.O_RDWR)
+        except OSError as e:
+            log(f"i2c-{bus}: {e}")
+            continue
+        try:
+            fcntl.ioctl(fd, I2C_SLAVE_FORCE, addr)
+            for reg in LED_CONTROL:
+                os.write(fd, bytes((reg, value)))
+            os.write(fd, bytes((LED_UPDATE, 0)))
+        except OSError as e:
+            log(f"i2c-{bus} 0x{addr:02x}: {e}")
+        finally:
+            os.close(fd)
+
+
+class Lights:
+    """The stick zones while the indicator has them: what they showed is
+    kept and put back exactly (colour, then brightness) at the end."""
+
+    def __init__(self) -> None:
+        self.zones = zones()
+        self.saved = [(z, rd(f"{z}/multi_intensity"), rd(f"{z}/brightness", "0")) for z in self.zones]
+        self.order = {}
+        self.shown: dict[str, str] = {}
+        self.quarter = False
+
+    def take(self) -> None:
+        claim(INDICATOR)
+        led_current(LED_QUARTER)
+        self.quarter = True
+        for z in self.zones:
+            wr(f"{z}/brightness", 0)
+            wr(f"{z}/multi_intensity", "0 0 0")
+            wr(f"{z}/brightness", rd(f"{z}/max_brightness", "255"))
+
+    def channels(self, z: str) -> list[int]:
+        if z not in self.order:
+            names = rd(f"{z}/multi_index").split()
+            self.order[z] = [("red", "green", "blue").index(n) for n in names] \
+                if sorted(names) == ["blue", "green", "red"] else [0, 1, 2]
+        return self.order[z]
+
+    def show(self, color: str, level: float) -> None:
+        """color (RRGGBB) at level (0-255 of the 1/4-current range)."""
+        rgb = [int(color[i:i + 2], 16) for i in (0, 2, 4)]
+        ch = [round(c * level / 255) for c in rgb]
+        for z in self.zones:
+            v = " ".join(str(ch[i]) for i in self.channels(z))
+            if self.shown.get(z) != v:
+                wr(f"{z}/multi_intensity", v)
+                self.shown[z] = v
+
+    def give_back(self) -> None:
+        for z in self.zones:
+            wr(f"{z}/brightness", 0)
+        if self.quarter:
+            led_current(LED_DRIVER)
+            self.quarter = False
+        for z, inten, br in self.saved:
+            wr(f"{z}/multi_intensity", inten)
+            wr(f"{z}/brightness", br)
+        self.shown = {}
+        rm(INDICATOR)
+
+
+def pulse_level(s: dict, t: float) -> float:
+    """The pulse at t seconds: a breath over on_s (raised cosine, gamma for
+    the eye) from pulse_min up to pulse_max and back, then off_s at pulse_min."""
+    tc = t % (s["on_s"] + s["off_s"])
+    if tc >= s["on_s"]:
+        return s["pulse_min"]
+    k = (0.5 - 0.5 * math.cos(2 * math.pi * tc / s["on_s"])) ** GAMMA
+    return s["pulse_min"] + (s["pulse_max"] - s["pulse_min"]) * k
+
+
+def charger_online() -> bool:
+    return rd(f"{USB}/online", "0") == "1"
+
+
+def battery_full() -> bool:
+    return rd(f"{BATTERY}/status") == "Full" or rd(f"{BATTERY}/capacity", "0") == "100"
+
+
+# -------------------------------------------------------------- the rest --
+def sm8550() -> bool:
+    return "qcom,sm8550" in rd("/sys/firmware/devicetree/base/compatible")
+
+
+def run(*cmd: str) -> int:
+    try:
+        return subprocess.run(cmd, check=False, timeout=60).returncode
+    except (OSError, subprocess.TimeoutExpired):
+        return 1
+
+
+def game_pids() -> list[int]:
+    children: dict[int, list[int]] = {}
+    roots = []
+    for p in os.listdir("/proc"):
+        if not p.isdigit():
+            continue
+        try:
+            with open(f"/proc/{p}/stat", "rb") as fh:
+                st = fh.read()
+            ppid = int(st[st.rfind(b")") + 2:].split()[1])
+            with open(f"/proc/{p}/cmdline", "rb") as fh:
+                cmd = fh.read()
+        except (OSError, ValueError, IndexError):
+            continue
+        children.setdefault(ppid, []).append(int(p))
+        if b"reaper\0SteamLaunch\0" in cmd:
+            roots.append(int(p))
+    out, stack = [], list(roots)
+    while stack:
+        for c in children.get(stack.pop(), ()):
+            out.append(c)
+            stack.append(c)
+    return out
+
+
+# Keep audio and D-Bus running while freezing the graphical user.
+KEEP_RUNNING = {"pipewire.service", "pipewire-pulse.service", "wireplumber.service",
+                "dbus-broker.service", "at-spi-dbus-bus.service", "init.scope"}
+
+
+def freeze_targets() -> list[str]:
+    """cgroups to freeze (as konkr-standby): each session scope, every
+    user-manager slice but session.slice, and every session.slice unit but
+    KEEP_RUNNING."""
+    out = []
+    try:
+        uid = pwd.getpwnam("steamos").pw_uid
+    except KeyError:
+        return []
+    for user in glob.glob(f"/sys/fs/cgroup/user.slice/user-{uid}.slice"):
+        for child in sorted(os.listdir(user)):
+            path = os.path.join(user, child)
+            if not os.path.isdir(path):
+                continue
+            if not (child.startswith("user@") and child.endswith(".service")):
+                out.append(path)
+                continue
+            for sub in sorted(os.listdir(path)):
+                spath = os.path.join(path, sub)
+                if not os.path.isdir(spath) or sub in KEEP_RUNNING:
+                    continue
+                if sub != "session.slice":
+                    out.append(spath)
+                    continue
+                for unit in sorted(os.listdir(spath)):
+                    upath = os.path.join(spath, unit)
+                    if os.path.isdir(upath) and unit not in KEEP_RUNNING:
+                        out.append(upath)
+    return out
+
+
+def set_frozen(cgroups: list[str], frozen: bool) -> list[str]:
+    done = [cg for cg in cgroups if wr(f"{cg}/cgroup.freeze", 1 if frozen else 0)]
+    if frozen:
+        end = time.monotonic() + 2.0
+        while time.monotonic() < end and any("frozen 1" not in rd(f"{cg}/cgroup.events") for cg in done):
+            time.sleep(0.05)
+    return done
+
+
+def big_cpus() -> list[int]:
+    caps = {}
+    for c in glob.glob("/sys/devices/system/cpu/cpu[0-9]*"):
+        v = rd(f"{c}/cpu_capacity", "0")
+        caps[int(os.path.basename(c)[3:])] = int(v) if v.isdigit() else 0
+    if not caps:
+        return []
+    low = min(caps.values())
+    return sorted(n for n, v in caps.items() if v > low and n != 0)
+
+
+def bind_mounted(path: str) -> bool:
+    """The AYN Thor's bottom brightness file is sm8550-thor-backlightd's
+    shadow (Steam's level), not the panel: never write it."""
+    real = os.path.realpath(path)
+    for line in rd("/proc/self/mountinfo").splitlines():
+        f = line.split()
+        if len(f) > 4 and f[4] == real:
+            return True
+    return False
+
+
+def input_dev(name: str) -> int | None:
+    for e in sorted(glob.glob("/sys/class/input/event*")):
+        if rd(f"{e}/device/name") == name:
+            try:
+                return os.open(f"/dev/input/{os.path.basename(e)}", os.O_RDONLY | os.O_NONBLOCK)
+            except OSError:
+                return None
+    return None
+
+
+def touchscreens() -> list[str]:
+    """inhibited files of the direct-touch devices (INPUT_PROP_DIRECT)."""
+    out = []
+    for d in glob.glob("/sys/class/input/input*"):
+        try:
+            props = int(rd(f"{d}/properties", "0"), 16)
+        except ValueError:
+            props = 0
+        if props & 0x2 and os.path.exists(f"{d}/inhibited"):
+            out.append(f"{d}/inhibited")
+    return out
+
+
+def drain(fd: int | None) -> None:
+    if fd is None:
+        return
+    try:
+        while os.read(fd, EV.size * 64):
+            pass
+    except (BlockingIOError, OSError):
+        pass
+
+
+WAKE_R, WAKE_W = os.pipe()
+
+
+class Rest:
+    def __init__(self) -> None:
+        self.saved: dict[str, str] = {}
+        self.paused: list[int] = []
+        self.frozen: list[str] = []
+        self.offlined: list[int] = []
+        self.inhibited: list[str] = []
+        self.backlights: list[tuple[str, str, str | None]] = []
+        self.lights: Lights | None = None
+
+    # --- going down
+    def enter(self) -> None:
+        claim(FLAG)
+        for pid in game_pids():
+            try:
+                os.kill(pid, signal.SIGSTOP)
+                self.paused.append(pid)
+            except OSError:
+                pass
+        for bl in sorted(glob.glob("/sys/class/backlight/*")):
+            if rd(f"{bl}/bl_power") != "0":
+                continue                          # already off (the Thor's bottom switch)
+            br = None if bind_mounted(f"{bl}/brightness") else rd(f"{bl}/brightness")
+            self.backlights.append((bl, "0", br))
+            if br is not None:
+                wr(f"{bl}/brightness", 0)
+            wr(f"{bl}/bl_power", 4)
+        for p in touchscreens():
+            if rd(p) == "0" and wr(p, 1):
+                self.inhibited.append(p)
+        time.sleep(0.3)
+        self.frozen = set_frozen(freeze_targets(), True)
+        self.limit_clocks()
+        log(f"resting: {len(self.paused)} game processes paused, {len(self.frozen)} cgroups frozen, "
+            f"cpus {self.offlined} offline, {len(self.backlights)} screens off")
+
+    def limit_clocks(self) -> None:
+        for pol in glob.glob("/sys/devices/system/cpu/cpufreq/policy*"):
+            self.saved[f"{pol}/scaling_min_freq"] = rd(f"{pol}/scaling_min_freq")
+            self.saved[f"{pol}/scaling_max_freq"] = rd(f"{pol}/scaling_max_freq")
+            wr(f"{pol}/scaling_min_freq", rd(f"{pol}/cpuinfo_min_freq"))
+            wr(f"{pol}/scaling_max_freq", rd(f"{pol}/cpuinfo_min_freq"))
+        for cpu in big_cpus():
+            if wr(f"/sys/devices/system/cpu/cpu{cpu}/online", 0):
+                self.offlined.append(cpu)
+        for gpu in glob.glob("/sys/class/devfreq/*gpu*"):
+            freqs = sorted(int(f) for f in rd(f"{gpu}/available_frequencies").split() if f.isdigit())
+            if freqs:
+                self.saved[f"{gpu}/max_freq"] = rd(f"{gpu}/max_freq")
+                wr(f"{gpu}/max_freq", freqs[0])
+
+    def restore_clocks(self) -> None:
+        for cpu in self.offlined:
+            wr(f"/sys/devices/system/cpu/cpu{cpu}/online", 1)
+        self.offlined = []
+        # max before min: a min above the current max is refused.
+        for key in sorted(self.saved, key=lambda k: "scaling_min_freq" in k):
+            if self.saved[key]:
+                wr(key, self.saved[key])
+        self.saved = {}
+
+    # --- coming back
+    def leave(self) -> None:
+        """Everything back, each step on its own: one failing must not leave
+        the session frozen or the screens off."""
+        steps = [self._lights_back, self.restore_clocks, self._thaw, self._touch_back,
+                 self._screens_back, self._games_back]
+        try:
+            for step in steps:
+                try:
+                    step()
+                except Exception as e:      # noqa: BLE001 — keep going
+                    log(f"{step.__name__}: {e}")
+            time.sleep(0.5)      # the wake press's release, before powerbuttond looks again
+        finally:
+            rm(FLAG)
+
+    def _lights_back(self) -> None:
+        if self.lights:
+            self.lights.give_back()
+            self.lights = None
+
+    def _thaw(self) -> None:
+        if self.frozen:
+            set_frozen(self.frozen, False)
+
+    def _touch_back(self) -> None:
+        for p in self.inhibited:
+            wr(p, 0)
+
+    def _screens_back(self) -> None:
+        for bl, power, br in self.backlights:
+            wr(f"{bl}/bl_power", power)
+            if br is not None:
+                wr(f"{bl}/brightness", br)
+
+    def _games_back(self) -> None:
+        for pid in self.paused:
+            try:
+                os.kill(pid, signal.SIGCONT)
+            except OSError:
+                pass
+
+    # --- while resting
+    def wait(self) -> str:
+        """Shows the indicator until a wake: "power", "lid" or "unplugged"."""
+        s = settings()
+        if s["enabled"] and zones():
+            self.lights = Lights()
+            self.lights.take()
+        key = input_dev("pmic_pwrkey")
+        lid = input_dev("gpio-keys-lid")
+        drain(key)
+        drain(lid)
+        signal.signal(signal.SIGUSR1, lambda *_: os.write(WAKE_W, b"x"))
+        fds = [f for f in (key, lid, WAKE_R) if f is not None]
+        pressed = False
+        t0 = time.monotonic()
+        checked = 0.0
+        full = battery_full()
+        gone_since = None
+        try:
+            while True:
+                now = time.monotonic()
+                if now - checked >= 1.0:
+                    checked = now
+                    full = battery_full()
+                    if charger_online():
+                        gone_since = None
+                    elif gone_since is None:
+                        gone_since = now
+                    elif now - gone_since >= UNPLUG_S:
+                        log("charger pulled")
+                        return "unplugged"
+                timeout = 1.0
+                if self.lights:
+                    if full:
+                        self.lights.show(s["solid_color"], s["solid_level"])
+                    else:
+                        self.lights.show(s["pulse_color"], pulse_level(s, now - t0))
+                        tc = (now - t0) % (s["on_s"] + s["off_s"])
+                        timeout = 1 / FPS if tc < s["on_s"] else min(1.0, s["on_s"] + s["off_s"] - tc)
+                r, _, _ = select.select(fds, [], [], timeout)
+                if WAKE_R in r:
+                    os.read(WAKE_R, 64)
+                    log("wake requested (SIGUSR1)")
+                    return "power"
+                for fd in r:
+                    if fd == WAKE_R:
+                        continue
+                    try:
+                        data = os.read(fd, EV.size * 64)
+                    except (BlockingIOError, OSError):
+                        continue
+                    for off in range(0, len(data) - EV.size + 1, EV.size):
+                        _s, _u, t, code, val = EV.unpack_from(data, off)
+                        if fd == key and t == EV_KEY and code == KEY_POWER:
+                            if val == 1:
+                                pressed = True
+                            elif val == 0 and pressed:
+                                log("wake: power key")
+                                return "power"
+                        elif fd == lid and t == EV_SW and code == SW_LID and val == 0:
+                            log("wake: lid opened")
+                            return "lid"
+        finally:
+            for f in (key, lid):
+                if f is not None:
+                    os.close(f)
+
+
+def deep_sleep() -> int:
+    return run(SYSTEMD_SLEEP, "suspend")
+
+
+def suspend() -> int:
+    """systemd-suspend.service's ExecStart."""
+    if not sm8550():
+        os.execv(KONKR_SUSPEND, [KONKR_SUSPEND]) if os.access(KONKR_SUSPEND, os.X_OK) \
+            else os.execv(SYSTEMD_SLEEP, [SYSTEMD_SLEEP, "suspend"])
+    if not charger_online():
+        os.execv(SYSTEMD_SLEEP, [SYSTEMD_SLEEP, "suspend"])
+    # Stopped (shutdown while resting): unwind through leave().
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+    rest = Rest()
+    try:
+        rest.enter()
+        why = rest.wait()
+        if why == "unplugged":
+            # The lights go back to their owner (dark: sm8550-sleep fades
+            # them in after) and the clocks too, then real sleep.
+            if rest.lights:
+                rest.lights.give_back()
+                rest.lights = None
+            rest.restore_clocks()
+            log("deep sleep")
+            deep_sleep()
+        log("waking")
+    finally:
+        rest.leave()
+    return 0
+
+
+def preview() -> int:
+    """The indicator once, screens on: a pulse and its gap, then full."""
+    s = settings()
+    if not zones():
+        log("no stick lights")
+        return 1
+    lights = Lights()
+    stop = []
+    signal.signal(signal.SIGTERM, lambda *_: stop.append(1))
+    signal.signal(signal.SIGINT, lambda *_: stop.append(1))
+    try:
+        lights.take()
+        t0 = time.monotonic()
+        while not stop and time.monotonic() - t0 < s["on_s"] + s["off_s"]:
+            lights.show(s["pulse_color"], pulse_level(s, time.monotonic() - t0))
+            time.sleep(1 / FPS)
+        t1 = time.monotonic()
+        while not stop and time.monotonic() - t1 < 4.0:
+            lights.show(s["solid_color"], s["solid_level"])
+            time.sleep(0.1)
+    finally:
+        lights.give_back()
+    return 0
+
+
+def limits() -> dict:
+    return {"pulse_max": [PULSE_MAX_MIN, 255], "pulse_min": [0, 254], "solid_level": [SOLID_MIN, 255],
+            "on_s": list(ON_RANGE), "off_s": list(OFF_RANGE), "defaults": DEFAULTS}
+
+
+def save(changes: dict) -> dict:
+    """changes over the settings in use, held to the ranges, stored."""
+    s = {**settings(), **{k: v for k, v in changes.items() if k in DEFAULTS}}
+    os.makedirs(os.path.dirname(CHARGING_STATE), exist_ok=True)
+    with open(CHARGING_STATE + ".tmp", "w", encoding="utf-8") as fh:
+        json.dump(s, fh, indent=2)
+    os.replace(CHARGING_STATE + ".tmp", CHARGING_STATE)
+    s = settings()                       # as held to the ranges
+    with open(CHARGING_STATE + ".tmp", "w", encoding="utf-8") as fh:
+        json.dump(s, fh, indent=2)
+    os.replace(CHARGING_STATE + ".tmp", CHARGING_STATE)
+    return s
+
+
+def main() -> int:
+    cmd = sys.argv[1] if len(sys.argv) > 1 else ""
+    if cmd == "suspend":
+        return suspend()
+    if cmd == "preview":
+        return preview()
+    if cmd == "settings":
+        print(json.dumps({"settings": settings(), "limits": limits(), "lights": bool(zones())}))
+        return 0
+    if cmd == "save" and len(sys.argv) > 2:
+        try:
+            changes = json.loads(sys.argv[2])
+        except ValueError:
+            changes = None
+        if not isinstance(changes, dict):
+            print("save: expected a JSON object", file=sys.stderr)
+            return 2
+        print(json.dumps({"settings": save(changes), "limits": limits(), "lights": bool(zones())}))
+        return 0
+    print("usage: sm8550-charge-rest suspend | preview | settings | save JSON", file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())

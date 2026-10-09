@@ -27,6 +27,12 @@ Lights   stick lighting: on/off, a colour, brightness and effects. On the
          Python) drives the multicolor LEDs and sets them again after a
          sleep; this saves the settings and nudges it. The AYN Thor's lights
          stay in Barry Launcher.
+
+Power    the charging indicator (SM8550: Retroid Pocket 6 / Nova, AYN Thor):
+         while the device rests on the charger (sm8550-charge-rest, instead
+         of kernel sleep), the stick lights pulse until it's charged, then
+         stay lit. Its settings and ranges live in sm8550-charge-rest
+         (`settings`, `save`); Preview shows it once.
 """
 from __future__ import annotations
 
@@ -341,6 +347,33 @@ def nudge_engine() -> None:
     subprocess.run(["systemctl", "kill", "-s", "HUP", f"{ENGINE_UNIT}.service"], capture_output=True)
 
 
+# The charging indicator (Power tab): sm8550-charge-rest owns its settings.
+CHARGE_REST = "/usr/lib/steamos-sm8550/sm8550-charge-rest"
+PREVIEW_UNIT = "pbos-utils-charge-preview"
+
+
+def charge_rest(*args: str) -> dict[str, Any]:
+    """sm8550-charge-rest's settings/save, on the system's native Python."""
+    if not os.access(CHARGE_REST, os.X_OK):
+        return {"supported": False}
+    r = subprocess.run(["/usr/bin/python3", CHARGE_REST, *args], capture_output=True, text=True,
+                       env=CLEAN_ENV, timeout=20)
+    try:
+        out = json.loads(r.stdout)
+    except ValueError:
+        decky.logger.info(f"charge rest {args[:1]}: {r.stderr.strip()}")
+        return {"supported": False}
+    return {"supported": bool(out.get("lights")), **out}
+
+
+def charge_preview() -> bool:
+    subprocess.run(["systemctl", "stop", f"{PREVIEW_UNIT}.service"], capture_output=True)
+    subprocess.run(["systemctl", "reset-failed", f"{PREVIEW_UNIT}.service"], capture_output=True)
+    r = subprocess.run(["systemd-run", f"--unit={PREVIEW_UNIT}", "--collect",
+                        "/usr/bin/python3", CHARGE_REST, "preview"], capture_output=True, text=True, env=CLEAN_ENV)
+    return r.returncode == 0
+
+
 class Plugin:
     async def _main(self) -> None:
         self.last: dict[str, Any] = {}
@@ -634,6 +667,18 @@ class Plugin:
         await asyncio.to_thread(write_json, LIGHTS_STATE, st)
         await asyncio.to_thread(nudge_engine)
         return await self.get_lights()
+
+    # --------------------------------------------------------------- power --
+    async def get_charging(self, **_: Any) -> dict[str, Any]:
+        return await asyncio.to_thread(charge_rest, "settings")
+
+    async def set_charging(self, changes: dict[str, Any] | None = None, **_: Any) -> dict[str, Any]:
+        if not isinstance(changes, dict):
+            return await self.get_charging()
+        return await asyncio.to_thread(charge_rest, "save", json.dumps(changes))
+
+    async def preview_charging(self, **_: Any) -> bool:
+        return await asyncio.to_thread(charge_preview)
 
     async def set_power_led(self, on: bool = True, **_: Any) -> dict[str, Any]:
         if self.lights == "pbosd":
