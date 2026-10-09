@@ -74,15 +74,16 @@ I2C_SLAVE_FORCE = 0x0706
 
 # The indicator's settings (PB-OS Utils' Power tab writes CHARGING_STATE).
 # Levels are 0-255 at 1/4 LED current; the defaults are the lowest the tab
-# offers (PULSE_MAX_MIN, SOLID_MIN).
+# offers (PULSE_MAX_MIN, SOLID_MIN). Both colours default to the stick
+# lights' own default purple (pbos_lights.DEFAULT_COLOR, pbosd).
 DEFAULTS = {
     "enabled": True,
-    "pulse_color": "00ff00",
+    "pulse_color": "8c00ff",
     "pulse_min": 0,
     "pulse_max": 20,
     "on_s": 4.0,
     "off_s": 8.0,
-    "solid_color": "00ff00",
+    "solid_color": "8c00ff",
     "solid_level": 1,
 }
 PULSE_MAX_MIN, SOLID_MIN = 20, 1
