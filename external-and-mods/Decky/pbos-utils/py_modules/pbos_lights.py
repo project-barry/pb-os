@@ -91,6 +91,10 @@ EFFECTS = {
 PBOSD_MODES = {"static": "static", "breathing": "breath", "rainbow": "rainbow"}
 DEFAULT_COLOR = "ff3c00"
 DEFAULT_COLOR2 = "ffffff"        # the audio effects' intensity colour
+# Retroid Pocket 6 / Nova out of the box (no saved settings yet): purple
+# breathing, as tuned on a Nova (2026-10-08).
+MULTICOLOR_DEFAULT_EFFECT = "breathing"
+MULTICOLOR_DEFAULT_COLOR = "8c00ff"
 
 
 def lights_kind() -> str:
@@ -171,10 +175,10 @@ def multicolor_lights() -> dict[str, Any]:
     # Before effects there was a mode: static or off.
     on = st.get("on", st.get("mode") != "off")
     audio = bool(st.get("experimental_audio", False))
-    effect = st.get("effect", "static")
+    effect = st.get("effect", MULTICOLOR_DEFAULT_EFFECT)
     if effect not in {e["id"] for e in multicolor_effects(audio)}:
         effect = "static"
-    return {"on": bool(on), "effect": effect, "color": clean_color(st.get("color", DEFAULT_COLOR)),
+    return {"on": bool(on), "effect": effect, "color": clean_color(st.get("color", MULTICOLOR_DEFAULT_COLOR)),
             "color2": clean_color(st.get("color2", DEFAULT_COLOR2)), "experimental_audio": audio, "effect_before_audio": st.get("effect_before_audio", "static"),
             "brightness": max(0, min(255, int(st.get("brightness", 160)))),
             "speed": max(1, min(10, int(st.get("speed", 5)))),

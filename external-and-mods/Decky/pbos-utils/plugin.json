@@ -3,7 +3,7 @@
   "author": "lavachemist",
   "api_version": 1,
   "flags": ["root"],
-  "version": "2.2.0",
+  "version": "2.2.1",
   "publish": {
     "tags": ["pb-os", "update", "install", "leds"],
     "description": "pb-os tools for Game Mode, in tabs (LB/RB switch them): updates from the GitHub releases, a microSD card or USB drive, or the Downloads folder; moving SteamOS from the microSD card to internal storage and back; stick lights.",

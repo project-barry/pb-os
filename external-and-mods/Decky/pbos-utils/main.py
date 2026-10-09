@@ -45,7 +45,7 @@ import decky
 # The light engine module, shared with its native process (see ENGINE).
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "py_modules"))
 from pbos_lights import (  # noqa: E402
-    AUDIO_MODES, DEFAULT_COLOR, EFFECTS, LIGHTS_STATE, clean_color, lights_kind,
+    AUDIO_MODES, DEFAULT_COLOR, EFFECTS, LIGHTS_STATE, MULTICOLOR_DEFAULT_EFFECT, clean_color, lights_kind,
     multicolor_effects, multicolor_lights, pbosd_lights, pbosd_lights_set, pbosd_set)
 
 UPDATER = "/usr/share/konkr-update/konkr-update.py"
@@ -621,7 +621,7 @@ class Plugin:
         if self.lights != "multicolor":
             return await self.get_lights()
         st = read_json(LIGHTS_STATE)
-        cur = st.get("effect", "static")
+        cur = st.get("effect", MULTICOLOR_DEFAULT_EFFECT)
         if enabled:
             if cur not in AUDIO_MODES:
                 st["effect_before_audio"] = cur
