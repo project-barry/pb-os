@@ -1,8 +1,0 @@
-{
-  "name": "pbos-control",
-  "version": "1.1.0",
-  "description": "Decky plugin \u2014 KONKR Pocket FIT control (dist/index.js is hand-written, no build step)",
-  "private": true,
-  "license": "GPL-3.0-or-later",
-  "type": "module"
-}

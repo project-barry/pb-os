@@ -48,7 +48,6 @@ STATE = f"{STATE_DIR}/state.json"
 # Before the rename (2026-10) this was konkrd with the KONKR Control plugin.
 LEGACY_STATE_DIR = "/var/lib/konkrd"
 PLUGINS_DIR = "/home/steamos/homebrew/plugins"
-PLUGIN_BUNDLE = "/usr/share/steamos-odin/decky-plugins/pbos-control"
 PROFILES = ("lowpower", "balanced")
 # Profiles before 2026-10: Silent and Turbo. The Tomb Raider A/B on battery
 # showed Turbo (big cores on `performance`, GPU floor raised) and the Turbo
@@ -156,8 +155,10 @@ def wr(path: str, value) -> bool:
 
 # ---------------------------------------------------------------- state ----
 def migrate_from_konkrd() -> None:
-    """Keep the settings of a konkrd install and drop its Decky plugin once
-    PB-OS Control is there (two panels would both drive the daemon)."""
+    """Keep the settings of a konkrd install, and drop the old panels (KONKR
+    Control, then PB-OS Control) once PB-OS Utils, which has their tabs now,
+    is there: two panels would both drive the daemon. The updater removes
+    them too; this covers anything that brought PB-OS Utils another way."""
     if os.path.isdir(LEGACY_STATE_DIR) and not os.path.exists(STATE):
         os.makedirs(STATE_DIR, exist_ok=True)
         for name in os.listdir(LEGACY_STATE_DIR):
@@ -165,20 +166,13 @@ def migrate_from_konkrd() -> None:
         log(f"moved {LEGACY_STATE_DIR} to {STATE_DIR}")
     if os.path.isdir(LEGACY_STATE_DIR) and not os.listdir(LEGACY_STATE_DIR):
         os.rmdir(LEGACY_STATE_DIR)
-    old, new = f"{PLUGINS_DIR}/konkr-control", f"{PLUGINS_DIR}/pbos-control"
-    if not os.path.isdir(old):
+    if not os.path.isdir(f"{PLUGINS_DIR}/pbos-utils"):
         return
-    if not os.path.isdir(new) and os.path.isdir(PLUGIN_BUNDLE):
-        # An updater from before the rename only knows konkr-control (and
-        # leaves it empty); install PB-OS Control from the system bundle.
-        shutil.copytree(PLUGIN_BUNDLE, new)
-        for top, dirs, files in os.walk(new):
-            for name in [top, *(os.path.join(top, n) for n in dirs + files)]:
-                os.chown(name, 1000, 1000)
-        log("installed PB-OS Control from the system bundle")
-    if os.path.isdir(new):
-        shutil.rmtree(old, ignore_errors=True)
-        log("removed the old KONKR Control plugin")
+    gone = [n for n in ("konkr-control", "pbos-control") if os.path.isdir(f"{PLUGINS_DIR}/{n}")]
+    for name in gone:
+        shutil.rmtree(f"{PLUGINS_DIR}/{name}", ignore_errors=True)
+        log(f"removed the old {name} plugin (PB-OS Utils has its tabs)")
+    if gone:
         subprocess.run(["systemctl", "try-restart", "plugin_loader.service"], check=False)
 
 
@@ -709,7 +703,7 @@ PROFILE_LABEL = {"lowpower": "Low Power", "balanced": "Balanced"}
 
 def notify_desktop(title: str, body: str) -> None:
     """Desktop Mode popup for button presses. Game Mode gets a Steam toast
-    from the PB-OS Control plugin instead, so only notify while Plasma runs."""
+    from PB-OS Utils instead, so only notify while Plasma runs."""
     import pwd
     import subprocess
     if subprocess.run(["pgrep", "-x", "plasmashell"], stdout=subprocess.DEVNULL).returncode != 0:

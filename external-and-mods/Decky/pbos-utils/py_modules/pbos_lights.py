@@ -136,7 +136,7 @@ def pbosd_lights() -> dict[str, Any]:
 
 
 def pbosd_set(**changes: Any) -> None:
-    # Only the lighting keys: PB-OS Control writes the same file for the rest.
+    # Only the keys given: pbosd, pbosctl and the other tabs share the file.
     st = read_json(PBOSD_STATE)
     st.update(changes)
     write_json(PBOSD_STATE, st)

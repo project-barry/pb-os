@@ -30,8 +30,8 @@ PLUGINS = 'homebrew/plugins'
 # Plugin folders from older images: removed on apply, restored on rollback.
 # SM8650 packages still carry an empty konkr-control folder, which updaters
 # from before the PB-OS Control rename require. PB-OS Update became PB-OS
-# Utils.
-LEGACY_PLUGINS = ('konkr-control', 'pbos-update')
+# Utils, and so did PB-OS Control (its Performance and Hardware tabs).
+LEGACY_PLUGINS = ('konkr-control', 'pbos-update', 'pbos-control')
 PRESERVE = ('passwd', 'shadow', 'group', 'gshadow', 'machine-id', 'hostname', 'hosts',
             'fstab', 'crypttab', 'localtime', 'adjtime', 'resolv.conf', 'ssh',
             'NetworkManager/system-connections', 'sudoers.d',

@@ -172,30 +172,28 @@ fi
 # ── Bundled Decky plugins (built dist, no node_modules) ──
 log "Stage Decky plugins (SOC=${SOC})"
 BUNDLE="$R/usr/share/steamos-odin/decky-plugins"
-# PB-OS Control only on SM8650 (KONKR Pocket FIT / AYANEO Pocket S2): it
-# drives pbosd, which does not run anywhere else. SM8550-Power would fight
-# pbosd over the fan/governors and SM8550-LED drives the AYN MCU LEDs, so
-# neither ships on SM8650. DECKY_PLUGINS (colon-separated paths) overrides.
+# pbosd's settings (KONKR Pocket FIT / AYANEO Pocket S2) are PB-OS Utils'
+# Performance and Hardware tabs. SM8550-Power would fight pbosd over the
+# fan/governors and SM8550-LED drives the AYN MCU LEDs, so neither ships on
+# SM8650. DECKY_PLUGINS (colon-separated paths) overrides.
 decky_plugins=()
 if [[ -n "${DECKY_PLUGINS:-}" ]]; then
   IFS=: read -ra decky_plugins <<<"${DECKY_PLUGINS}"
-elif [[ "$SOC" == sm8650 ]]; then
-  decky_plugins=("${MOD}/Decky/sm8650/pbos-control")
-else
+elif [[ "$SOC" != sm8650 ]]; then
   # SM8550. Dual Screen: AYN Thor bottom screen on/off; on other devices
   # sync-decky-bundled-plugins.sh and the updater leave it out.
   decky_plugins=("${MOD}/Decky/sm8550/dual-screen")
 fi
 # PB-OS Utils (updates, moving SteamOS between the card and internal
-# storage, stick lights) on every device.
+# storage, stick lights; performance and hardware on the Pocket FIT) on every
+# device.
 decky_plugins+=("${MOD}/Decky/pbos-utils")
 # The bundle is owned by this script: start clean so a rootfs reused from
 # another target keeps no stale plugins.
 rm -rf "$BUNDLE"
 mkdir -p "$BUNDLE"
-if [[ "$SOC" != sm8650 ]]; then
-  rm -rf "${HOME_DST}/homebrew/plugins/pbos-control"
-fi
+# PB-OS Control became PB-OS Utils' Performance and Hardware tabs.
+rm -rf "${HOME_DST}/homebrew/plugins/pbos-control"
 # Renamed to dual-screen.
 rm -rf "${BUNDLE}/thor-screens" "${HOME_DST}/homebrew/plugins/thor-screens"
 # Renamed to pbos-control.

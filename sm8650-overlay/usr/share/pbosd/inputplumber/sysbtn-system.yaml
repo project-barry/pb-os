@@ -10,7 +10,7 @@
 #
 # pbosd installs one of two variants (/usr/share/pbosd/inputplumber/) as
 # /etc/inputplumber/capability_maps.d/konkr_pocketfit_sysbtn.yaml, following
-# PB-OS Control → Buttons → "Steam Remap" (state.json "buttons_mode"), and
+# PB-OS Utils → Hardware → Buttons → "Steam Remap" (state.json "buttons_mode"), and
 # restarts InputPlumber when it changes:
 #   sysbtn-steam.yaml   (default) Custom Function / K → left/right trackpad click.
 #                       The Deck controller has no spare buttons (L4/R4/L5/R5

@@ -973,7 +973,7 @@ mkdir -p "$HOME_DST"
 # skip it (decky-lsfg-vk installs its own copy).
 rsync -a --copy-links --exclude '.local/lib/liblsfg-vk.so' "${MOD}/Decky/Plug-ins/" "$HOME_DST/"
 # Decky itself. Upstream left it to a first-boot installer in ARM-Manager
-# that most people never found — no Decky, so no PB-OS Control either.
+# that most people never found — no Decky, so no PB-OS Utils either.
 DECKY_VERSION=v3.2.9
 DECKY_LOADER="${MOD}/Decky/loader/PluginLoader-${DECKY_VERSION}"
 if [[ ! -s "$DECKY_LOADER" ]]; then

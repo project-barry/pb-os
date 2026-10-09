@@ -38,6 +38,13 @@ const setLights = callable("set_lights");
 const setPowerLed = callable("set_power_led");
 const setAudioPulse = callable("set_audio_pulse");
 const setChannel = callable("set_channel");
+// Performance and Hardware (KONKR Pocket FIT / AYANEO Pocket S2, via pbosd).
+const getControl = callable("get_control");
+const setProfile = callable("set_profile");
+const setFan = callable("set_fan");
+const setButton = callable("set_button");
+const setButtonsMode = callable("set_buttons_mode");
+const setMcu = callable("set_mcu");
 
 const row = (child) => jsx(DFL.PanelSectionRow, { children: child });
 const note = (text) => row(jsx("div", { style: { fontSize: "12px", opacity: 0.75 }, children: text }));
@@ -71,6 +78,21 @@ const LightsIcon = svg([
     jsx("rect", { x: 6.3, y: 15, width: 11.4, height: 1.9, rx: 0.4 }, "rim"),
     jsx("rect", { x: 9.2, y: 16.9, width: 1.5, height: 6.1, rx: 0.3 }, "anode"),
     jsx("rect", { x: 13.3, y: 16.9, width: 1.5, height: 4.6, rx: 0.3 }, "cathode"),
+]);
+
+// A car's tachometer: the dial open at the bottom, its ticks, and the needle
+// swung up towards the red line.
+const PerformanceIcon = svg([
+    jsx("path", { d: "M5.21 18.79A9.6 9.6 0 1 1 18.79 18.79", fill: "none", stroke: "currentColor", strokeWidth: 1.9, strokeLinecap: "round" }, "dial"),
+    jsx("path", { d: "M7.83 16.17L6.63 17.37M6.1 12L4.4 12M7.83 7.83L6.63 6.63M12 6.1L12 4.4M16.17 7.83L17.37 6.63M17.9 12L19.6 12M16.17 16.17L17.37 17.37",
+        fill: "none", stroke: "currentColor", strokeWidth: 1.5, strokeLinecap: "round" }, "ticks"),
+    jsx("path", { d: "M12.74 12.82L17.35 7.18L11.26 11.18Z" }, "needle"),
+    jsx("circle", { cx: 12, cy: 12, r: 1.8 }, "hub"),
+]);
+// A hexagonal nut seen from above: the hex, its chamfer ring and the hole.
+const HardwareIcon = svg([
+    jsx("path", { fillRule: "evenodd", d: "M22.2 12L17.1 20.83L6.9 20.83L1.8 12L6.9 3.17L17.1 3.17ZM12 7.6a4.4 4.4 0 1 0 0 8.8a4.4 4.4 0 1 0 0-8.8Z" }, "nut"),
+    jsx("circle", { cx: 12, cy: 12, r: 6.4, fill: "none", stroke: "#000", strokeOpacity: 0.35, strokeWidth: 0.9 }, "chamfer"),
 ]);
 
 // LB and RB: the controller's bumpers, in Steam's button numbering.
@@ -615,9 +637,9 @@ function LightsTab() {
             checked: st.power_led !== false,
             onChange: (v) => setPowerLed(v).then(setSt).catch(() => {}),
         })));
-        if (!usable) items.push(note("Stick lighting needs the controller MCU link: PB-OS Control → Hardware."));
+        if (!usable) items.push(note("Stick lighting needs the controller MCU link: Hardware tab."));
         if (st.daemon === false) items.push(warn("pbosd is not running."));
-        items.push(note("The K button can cycle stick lighting too (PB-OS Control → Buttons)."));
+        items.push(note("The K button can cycle stick lighting too (Hardware tab → Buttons)."));
     }
     if (st.on && usable) {
         items.push(row(jsx(DFL.ButtonItem, {
@@ -670,6 +692,131 @@ function LightsTab() {
     return jsx(DFL.PanelSection, { title: "Lighting", children: items });
 }
 
+// ---------------------------------------------- performance, hardware ---
+// Was the PB-OS Control plugin: a front for pbosd on the KONKR Pocket FIT.
+const PROFILES = [
+    { data: "lowpower", label: "Low Power", desc: "About half the power: GPU up to 680 MHz, big cores up to 2 GHz, quiet fan" },
+    { data: "balanced", label: "Balanced", desc: "Full clocks on demand, game threads on the big cores" },
+];
+const BUTTON_ACTIONS = [
+    { data: "rgb-next", label: "Cycle stick lighting" },
+    { data: "sticks-toggle", label: "Stick lighting on/off" },
+    { data: "profile-next", label: "Switch performance profile" },
+    { data: "none", label: "Do nothing" },
+];
+const lines = (...items) => jsx("div", { children: items.map((t, i) => jsx("div", { children: t }, i)) });
+
+// pbosd's settings, read again every 2 s (the buttons and pbosctl change them
+// too); not while a slider was just moved.
+function useControl() {
+    const [st, setSt] = useState(null);
+    const movedAt = useRef(0);
+    const refresh = useCallback(() => {
+        if (Date.now() - movedAt.current < 2000) return;
+        getControl().then((s) => { if (Date.now() - movedAt.current >= 2000) setSt(s); }).catch(() => {});
+    }, []);
+    useEffect(() => {
+        refresh();
+        const t = setInterval(refresh, 2000);
+        return () => clearInterval(t);
+    }, [refresh]);
+    const apply = useCallback((p) => p.then((s) => { movedAt.current = 0; setSt(s); }).catch(() => {}), []);
+    return { st, setSt, apply, movedAt };
+}
+
+function PerformanceTab() {
+    const { st, setSt, apply, movedAt } = useControl();
+    const sendFan = useThrottled(useCallback((v) => { setFan("fixed", v).catch(() => {}); }, []));
+    if (!st) return jsx(DFL.PanelSection, { children: note("Loading…") });
+    if (!st.available) return jsx(DFL.PanelSection, { children: note("This device has no performance settings here.") });
+    const prof = PROFILES.find((p) => p.data === st.profile) || PROFILES[1];
+    const fan = st.fan || { mode: "auto", fixed: 50 };
+    const status = [
+        st.temp_c != null ? `${st.temp_c} °C` : null,
+        st.fan_rpm != null ? `fan ${st.fan_rpm} rpm (${Math.round((st.fan_pwm || 0) / 2.55)}%)` : null,
+        st.gpu_mhz != null ? `GPU ${st.gpu_mhz} MHz` : null,
+    ].filter(Boolean).join(" · ");
+    return jsxs(SP_JSX.Fragment, { children: [
+        jsxs(DFL.PanelSection, { title: "Performance", children: [
+            row(jsx(DFL.DropdownItem, {
+                label: "Profile",
+                description: prof.desc,
+                rgOptions: PROFILES.map((p) => ({ data: p.data, label: p.label })),
+                selectedOption: prof.data,
+                onChange: (o) => apply(setProfile(o.data)),
+            })),
+            st.daemon ? note(status) : warn("pbosd is not running."),
+        ] }),
+        jsxs(DFL.PanelSection, { title: "Fan", children: [
+            row(jsx(DFL.DropdownItem, {
+                label: "Mode",
+                description: fan.mode === "fixed"
+                    ? "Fixed speed (switches back to automatic above 90 °C)"
+                    : "Automatic, follows the profile's temperature curve",
+                rgOptions: [{ data: "auto", label: "Automatic" }, { data: "fixed", label: "Fixed speed" }],
+                selectedOption: fan.mode,
+                onChange: (o) => apply(setFan(o.data, fan.fixed)),
+            })),
+            fan.mode === "fixed" ? row(jsx(DFL.SliderField, {
+                label: "Speed",
+                value: fan.fixed, min: 0, max: 100, step: 5, showValue: true, valueSuffix: "%",
+                onChange: (v) => {
+                    movedAt.current = Date.now();
+                    setSt({ ...st, fan: { ...fan, fixed: v } });
+                    sendFan(v);
+                },
+            })) : null,
+        ] }),
+    ] });
+}
+
+function HardwareTab() {
+    const { st, apply } = useControl();
+    if (!st) return jsx(DFL.PanelSection, { children: note("Loading…") });
+    if (!st.available) return jsx(DFL.PanelSection, { children: note("This device has no hardware settings here.") });
+    const buttons = st.buttons || {};
+    const steamButtons = (st.buttons_mode || "steam") === "steam";
+    return jsxs(SP_JSX.Fragment, { children: [
+        jsxs(DFL.PanelSection, { title: "Buttons", children: [
+            row(jsx(DFL.ToggleField, {
+                label: "Steam Remap",
+                description: steamButtons
+                    ? lines("Custom Function = Left Trackpad Click", "K = Right Trackpad Click", "Bind them in controller settings.")
+                    : "Off: buttons map to actions selected below",
+                checked: steamButtons,
+                onChange: (v) => apply(setButtonsMode(v ? "steam" : "system")).then(() => {
+                    toaster.toast({ title: "PB-OS Utils", body: "Buttons switched, controller reconnects" });
+                }),
+            })),
+            row(jsx(DFL.DropdownItem, {
+                label: "Custom Function",
+                disabled: steamButtons,
+                rgOptions: BUTTON_ACTIONS,
+                selectedOption: buttons.F14 || "profile-next",
+                onChange: (o) => apply(setButton("F14", o.data)),
+            })),
+            row(jsx(DFL.DropdownItem, {
+                label: "K",
+                disabled: steamButtons,
+                rgOptions: BUTTON_ACTIONS,
+                selectedOption: buttons.F13 || "rgb-next",
+                onChange: (o) => apply(setButton("F13", o.data)),
+            })),
+            note("Navigation → Steam · = → Quick Access · Power: tap to sleep, hold for the power menu"),
+        ] }),
+        jsxs(DFL.PanelSection, { title: "Hardware", children: [
+            row(jsx(DFL.ToggleField, {
+                label: "Controller MCU link",
+                description: "Needed for the KONKR, Performance and Quick Access buttons and stick lighting (Lighting tab)",
+                checked: st.mcu_enabled,
+                onChange: (v) => apply(setMcu(v)).then(() => {
+                    toaster.toast({ title: "PB-OS Utils", body: v ? "MCU link enabled" : "MCU link disabled" });
+                }),
+            })),
+        ] }),
+    ] });
+}
+
 // ---------------------------------------------------------------- panel ---
 function Content() {
     const [tab, setTab] = useState(lastTab);
@@ -683,6 +830,8 @@ function Content() {
     if (lights === null) return jsx(DFL.PanelSection, { children: note("Loading…") });
     const tabs = [
         ...(lights ? [{ id: "lights", icon: LightsIcon }] : []),
+        // pbosd's settings: KONKR Pocket FIT / AYANEO Pocket S2.
+        ...(lights === "pbosd" ? [{ id: "performance", icon: PerformanceIcon }, { id: "hardware", icon: HardwareIcon }] : []),
         { id: "update", icon: UpdateIcon },
         { id: "install", icon: InstallIcon },
     ];
@@ -702,6 +851,8 @@ function Content() {
             shown === "update" && jsx(UpdateTab, {}),
             shown === "install" && jsx(InstallTab, {}),
             shown === "lights" && jsx(LightsTab, {}),
+            shown === "performance" && jsx(PerformanceTab, {}),
+            shown === "hardware" && jsx(HardwareTab, {}),
         ],
     });
 }
@@ -719,8 +870,21 @@ function onMoveDone(direction, ok) {
     toaster.toast({ title: "PB-OS Utils", body: ok ? `${what} finished. Open PB-OS Utils for the next steps.` : `${what} failed. Open PB-OS Utils for details.`, duration: 8000 });
 }
 
+// Toast whenever the profile changes (Performance button, pbosctl or the
+// Performance tab), like Android's on-screen mode switch. Registered at
+// plugin load, so it works with Quick Access closed and over games.
+const MODE_TOAST = {
+    lowpower: { title: "🔋  Low Power", body: "About half the power, GPU and CPU capped" },
+    balanced: { title: "⚖️  Balanced", body: "Full clocks on demand" },
+};
+function onMode(profile) {
+    const t = MODE_TOAST[profile] || { title: profile, body: "" };
+    toaster.toast({ title: t.title, body: t.body, duration: 2000, playSound: false, critical: true });
+}
+
 var index = definePlugin(() => {
     api.addEventListener("pbos_update_available", onAvailable);
+    api.addEventListener("pbos_mode", onMode);
     api.addEventListener("pbos_local_available", onLocal);
     api.addEventListener("pbos_move_done", onMoveDone);
     return {
@@ -734,6 +898,7 @@ var index = definePlugin(() => {
             api.removeEventListener("pbos_update_available", onAvailable);
             api.removeEventListener("pbos_local_available", onLocal);
             api.removeEventListener("pbos_move_done", onMoveDone);
+            api.removeEventListener("pbos_mode", onMode);
         },
     };
 });

@@ -27,10 +27,18 @@ Lights   stick lighting: on/off, a colour, brightness and effects. On the
          Python) drives the multicolor LEDs and sets them again after a
          sleep; this saves the settings and nudges it. The AYN Thor's lights
          stay in Barry Launcher.
+
+Performance and Hardware (KONKR Pocket FIT and AYANEO Pocket S2; were the
+         PB-OS Control plugin): the performance profile, the fan, the extra
+         buttons and the controller MCU link. A front for pbosd: every
+         setting lives in its state file and pbosd applies it on SIGHUP, so
+         the buttons, pbosctl and this panel stay in sync. A profile change
+         from anywhere shows a toast (pbos_mode).
 """
 from __future__ import annotations
 
 import asyncio
+import glob
 import json
 import os
 import re
@@ -46,7 +54,7 @@ import decky
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "py_modules"))
 from pbos_lights import (  # noqa: E402
     AUDIO_MODES, DEFAULT_COLOR, DEFAULT_EFFECT, EFFECTS, LIGHTS_STATE, clean_color, lights_kind,
-    multicolor_effects, multicolor_lights, pbosd_lights, pbosd_lights_set, pbosd_set)
+    PBOSD_STATE, multicolor_effects, multicolor_lights, pbosd_lights, pbosd_lights_set, pbosd_set)
 
 UPDATER = "/usr/share/konkr-update/konkr-update.py"
 UNIT = "pbos-update"
@@ -341,6 +349,64 @@ def nudge_engine() -> None:
     subprocess.run(["systemctl", "kill", "-s", "HUP", f"{ENGINE_UNIT}.service"], capture_output=True)
 
 
+# ------------------------------------------------- performance, hardware --
+# The KONKR Pocket FIT's pbosd settings (was the PB-OS Control plugin), with
+# pbosd's own defaults.
+MCU_BLACKLIST = "/etc/modprobe.d/konkr-mcu.conf"
+PROFILES = ("lowpower", "balanced")
+LEGACY_PROFILES = {"silent": "lowpower", "turbo": "balanced"}
+BUTTON_ACTIONS = ("profile-next", "rgb-next", "sticks-toggle", "none")
+BUTTON_MODES = ("steam", "system")
+# The Performance button changes the profile in pbosd directly: look this often.
+PROFILE_WATCH_S = 0.25
+
+
+def control_state() -> dict[str, Any]:
+    st = read_json(PBOSD_STATE)
+    profile = LEGACY_PROFILES.get(st.get("profile"), st.get("profile"))
+    fan = st.get("fan") if isinstance(st.get("fan"), dict) else {}
+    buttons = st.get("buttons") if isinstance(st.get("buttons"), dict) else {}
+    return {
+        "profile": profile if profile in PROFILES else "balanced",
+        "fan": {"mode": "fixed" if fan.get("mode") == "fixed" else "auto", "fixed": int(fan.get("fixed", 50))},
+        "buttons": {"F13": "rgb-next", "F14": "profile-next", **buttons},
+        "buttons_mode": st.get("buttons_mode") if st.get("buttons_mode") in BUTTON_MODES else "steam",
+    }
+
+
+def telemetry() -> dict[str, Any]:
+    out: dict[str, Any] = {"fan_rpm": None, "fan_pwm": None, "gpu_mhz": None, "temp_c": None}
+    for d in glob.glob("/sys/class/hwmon/hwmon*"):
+        if rd(f"{d}/name") == "pwmfan":
+            out["fan_rpm"] = int(rd(f"{d}/fan1_input", "0") or 0)
+            out["fan_pwm"] = int(rd(f"{d}/pwm1", "0") or 0)
+    for d in glob.glob("/sys/class/devfreq/*gpu*"):
+        cur = rd(f"{d}/cur_freq")
+        if cur.isdigit():
+            out["gpu_mhz"] = int(cur) // 1_000_000
+    temps = []
+    for z in glob.glob("/sys/class/thermal/thermal_zone*"):
+        if rd(f"{z}/type").startswith(("cpu", "gpu")):
+            v = rd(f"{z}/temp")
+            if v.lstrip("-").isdigit():
+                temps.append(int(v) / 1000)
+    if temps:
+        out["temp_c"] = round(max(temps), 1)
+    return out
+
+
+def set_mcu_link(enabled: bool) -> None:
+    if enabled:
+        if os.path.exists(MCU_BLACKLIST):
+            os.remove(MCU_BLACKLIST)
+        subprocess.run(["modprobe", "konkr_sysbtn"], check=False)
+    else:
+        with open(MCU_BLACKLIST, "w", encoding="utf-8") as fh:
+            fh.write("# Pocket FIT MCU UART driver — opt-in (pbosctl mcu enable)\nblacklist konkr_sysbtn\n")
+        subprocess.run(["modprobe", "-r", "konkr_sysbtn"], check=False)
+    subprocess.run(["systemctl", "restart", "inputplumber.service"], check=False)
+
+
 class Plugin:
     async def _main(self) -> None:
         self.last: dict[str, Any] = {}
@@ -356,8 +422,10 @@ class Plugin:
         self.lights = await asyncio.to_thread(lights_kind)
         if self.lights == "multicolor":
             await asyncio.to_thread(start_engine)
-        self.tasks = [asyncio.create_task(t) for t in
-                      (self._watch(), self._watch_drives(), self._cleanup(), self._watch_move())]
+        watchers = [self._watch(), self._watch_drives(), self._cleanup(), self._watch_move()]
+        if self.lights == "pbosd":
+            watchers.append(self._watch_profile())
+        self.tasks = [asyncio.create_task(t) for t in watchers]
 
     async def _unload(self) -> None:
         for t in self.tasks:
@@ -639,3 +707,69 @@ class Plugin:
         if self.lights == "pbosd":
             await asyncio.to_thread(pbosd_set, power_led=bool(on))
         return await self.get_lights()
+
+    # ------------------------------------------- performance, hardware --
+    # The Performance button goes straight to pbosd, so the panel would only
+    # see a change once opened. Watch pbosd's state and tell the frontend,
+    # which shows a toast over whatever is running.
+    async def _watch_profile(self) -> None:
+        try:
+            stamp, profile = None, control_state()["profile"]
+            while True:
+                await asyncio.sleep(PROFILE_WATCH_S)
+                try:
+                    cur = os.stat(PBOSD_STATE).st_mtime_ns
+                except OSError:
+                    continue
+                if cur == stamp:
+                    continue
+                stamp = cur
+                new = control_state()["profile"]
+                if new != profile:
+                    decky.logger.info(f"profile {profile} -> {new}")
+                    profile = new
+                    await decky.emit("pbos_mode", new)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            decky.logger.exception("profile watcher stopped")
+
+    async def get_control(self, **_: Any) -> dict[str, Any]:
+        if self.lights != "pbosd":
+            return {"available": False}
+        return {
+            "available": True, **control_state(),
+            "mcu_enabled": not os.path.exists(MCU_BLACKLIST),
+            "daemon": await asyncio.to_thread(active, "pbosd"),
+            **await asyncio.to_thread(telemetry),
+        }
+
+    async def set_profile(self, profile: str = "balanced", **_: Any) -> dict[str, Any]:
+        if self.lights == "pbosd" and profile in PROFILES:
+            await asyncio.to_thread(pbosd_set, profile=profile)
+        return await self.get_control()
+
+    async def set_fan(self, mode: str = "auto", fixed: int = 50, **_: Any) -> dict[str, Any]:
+        if self.lights == "pbosd":
+            fan = {"mode": "fixed" if mode == "fixed" else "auto", "fixed": max(0, min(100, int(fixed)))}
+            await asyncio.to_thread(pbosd_set, fan=fan)
+        return await self.get_control()
+
+    async def set_button(self, key: str = "F13", action: str = "none", **_: Any) -> dict[str, Any]:
+        if self.lights == "pbosd" and key in ("F13", "F14") and action in BUTTON_ACTIONS:
+            buttons = {**control_state()["buttons"], key: action}
+            await asyncio.to_thread(pbosd_set, buttons=buttons)
+        return await self.get_control()
+
+    # "steam": Custom Function and K are trackpad clicks Steam can remap.
+    # "system": they run the actions above. pbosd swaps the InputPlumber map
+    # and restarts it.
+    async def set_buttons_mode(self, mode: str = "steam", **_: Any) -> dict[str, Any]:
+        if self.lights == "pbosd" and mode in BUTTON_MODES:
+            await asyncio.to_thread(pbosd_set, buttons_mode=mode)
+        return await self.get_control()
+
+    async def set_mcu(self, enabled: bool = False, **_: Any) -> dict[str, Any]:
+        if self.lights == "pbosd":
+            await asyncio.to_thread(set_mcu_link, bool(enabled))
+        return await self.get_control()

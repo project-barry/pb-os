@@ -38,7 +38,7 @@ off; `pbosctl monitor` shows which button sends what. Button actions live in
 
 The Deck controller has no spare buttons, but the Pocket FIT has no
 trackpads, so by default Custom Function and K send trackpad clicks that Steam
-can bind per game. PB-OS Control → Buttons → **Steam Remap** off (or
+can bind per game. PB-OS Utils → Hardware → Buttons → **Steam Remap** off (or
 `pbosctl buttons system`) makes them run pbosd's actions instead; pbosd then
 installs the other InputPlumber map from `/usr/share/pbosd/inputplumber/`
 and restarts InputPlumber, so the controller reconnects once.
@@ -97,10 +97,11 @@ konkr-game compat %command%    # strict TSO / split locks for crashing games
 
 ### Quick Access panels (Decky)
 
-**PB-OS Control**: profile, live temperature, fan and GPU clock, MCU link
-toggle, Steam Remap and the Custom Function / K actions. It replaces the
-SM8550-Power and SM8550-LED plugins, which would fight `pbosd` over the fan
-and drive AYN-only LEDs.
+**PB-OS Utils**, on the Pocket FIT: the **Performance** tab has the profile,
+live temperature, fan and GPU clock; the **Hardware** tab has Steam Remap, the
+Custom Function / K actions and the MCU link toggle (until alpha v0.5.2 these
+were the PB-OS Control plugin). They replace the SM8550-Power and SM8550-LED
+plugins, which would fight `pbosd` over the fan and drive AYN-only LEDs.
 
 **PB-OS Utils** (every device): tabs for pb-os updates, moving SteamOS
 between the microSD card and internal storage, and the stick lights (here
