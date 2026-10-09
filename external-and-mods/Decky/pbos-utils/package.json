@@ -1,7 +1,7 @@
 {
   "name": "pbos-utils",
-  "version": "2.3.0",
-  "description": "Decky plugin — pb-os tools in tabs: update, install, lights (dist/index.js is hand-written, no build step)",
+  "version": "2.4.0",
+  "description": "Decky plugin — pb-os tools in tabs: update, install, lights, power (dist/index.js is hand-written, no build step)",
   "private": true,
   "license": "GPL-3.0-or-later",
   "type": "module"

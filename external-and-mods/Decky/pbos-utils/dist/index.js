@@ -45,6 +45,9 @@ const setFan = callable("set_fan");
 const setButton = callable("set_button");
 const setButtonsMode = callable("set_buttons_mode");
 const setMcu = callable("set_mcu");
+const getCharging = callable("get_charging");
+const setCharging = callable("set_charging");
+const previewCharging = callable("preview_charging");
 
 const row = (child) => jsx(DFL.PanelSectionRow, { children: child });
 const note = (text) => row(jsx("div", { style: { fontSize: "12px", opacity: 0.75 }, children: text }));
@@ -94,6 +97,9 @@ const HardwareIcon = svg([
     jsx("path", { fillRule: "evenodd", d: "M22.2 12L17.1 20.83L6.9 20.83L1.8 12L6.9 3.17L17.1 3.17ZM12 7.6a4.4 4.4 0 1 0 0 8.8a4.4 4.4 0 1 0 0-8.8Z" }, "nut"),
     jsx("circle", { cx: 12, cy: 12, r: 6.4, fill: "none", stroke: "#000", strokeOpacity: 0.35, strokeWidth: 0.9 }, "chamfer"),
 ]);
+
+// A lightning bolt: power and charging.
+const PowerIcon = svg(jsx("path", { d: "M13.5 2 4.5 13.5h6L9.5 22l9-11.5h-6z" }));
 
 // LB and RB: the controller's bumpers, in Steam's button numbering.
 const GB = DFL.GamepadButton || {};
@@ -817,21 +823,109 @@ function HardwareTab() {
     ] });
 }
 
+// ---------------------------------------------------------------- power ---
+// The charging indicator: while the device rests on the charger (instead of
+// sleeping), the stick lights pulse until it's charged, then stay lit.
+// sm8550-charge-rest keeps the settings and their ranges; levels are 0-255
+// at a quarter of the LEDs' current, so the lowest are very dim.
+const secs = (v) => `${Number(v).toFixed(1).replace(/\.0$/, "")} s`;
+
+function PowerTab() {
+    const [st, setSt] = useState(null);
+    const [previewing, setPreviewing] = useState(false);
+    const movedAt = useRef(0);
+    const refresh = useCallback(() => {
+        if (Date.now() - movedAt.current < 2000) return;
+        getCharging().then((r) => { if (Date.now() - movedAt.current >= 2000) setSt(r); }).catch(() => {});
+    }, []);
+    const send = useThrottled(useCallback((changes) => { setCharging(changes).catch(() => {}); }, []));
+    useEffect(() => { refresh(); }, [refresh]);
+
+    if (!st) return jsx(DFL.PanelSection, { children: note("Loading…") });
+    if (!st.supported) return jsx(DFL.PanelSection, { title: "Power", children: note("This device has no charging indicator pb-os can show.") });
+    const s = st.settings;
+    const lim = st.limits;
+    // Every change goes out whole, so a throttled send never drops one.
+    const change = (patch) => {
+        movedAt.current = Date.now();
+        const next = { ...s, ...patch };
+        if (next.pulse_min >= next.pulse_max) next.pulse_min = next.pulse_max - 1;
+        setSt({ ...st, settings: next });
+        send(next);
+    };
+    const swatch = (c) => jsx("span", { style: { display: "inline-block", width: "14px", height: "14px", borderRadius: "7px",
+        marginLeft: "8px", verticalAlign: "middle", border: "1px solid rgba(255,255,255,0.5)", background: `#${c}` } });
+    const colorSlider = (key) => row(jsx(DFL.SliderField, {
+        label: jsxs("span", { children: ["Color", swatch(s[key])] }),
+        description: jsx("div", { style: { height: "8px", borderRadius: "4px", background: RAINBOW } }),
+        value: colorHue(s[key]), min: 0, max: 359, step: 3,
+        onChange: (h) => change({ [key]: hueColor(h) }),
+    }));
+    const level = (label, key, min, max, description) => row(jsx(DFL.SliderField, {
+        label, description, value: s[key], min, max, step: 1, showValue: true,
+        onChange: (v) => change({ [key]: v }),
+    }));
+    const time = (label, key, range) => row(jsx(DFL.SliderField, {
+        label: `${label}: ${secs(s[key])}`,
+        value: s[key], min: range[0], max: range[1], step: 0.5,
+        onChange: (v) => change({ [key]: v }),
+    }));
+    const heading = (text) => row(jsx("div", { style: { fontWeight: "bold", marginTop: "4px" }, children: text }));
+    const items = [
+        row(jsx(DFL.ToggleField, {
+            label: "Charging Indicator",
+            description: "While the device sleeps on the charger, the stick lights pulse until it's charged, then stay lit.",
+            checked: !!s.enabled,
+            onChange: (v) => change({ enabled: v }),
+        })),
+    ];
+    if (s.enabled) {
+        items.push(
+            heading("Charging"),
+            colorSlider("pulse_color"),
+            level("Pulse Brightness", "pulse_max", lim.pulse_max[0], lim.pulse_max[1]),
+            level("Pulse Minimum", "pulse_min", lim.pulse_min[0], Math.max(lim.pulse_min[0] + 1, s.pulse_max - 1),
+                "How far each pulse fades; 0 is off between pulses."),
+            time("Pulse Length", "on_s", lim.on_s),
+            time("Time Between Pulses", "off_s", lim.off_s),
+            heading("Charged"),
+            colorSlider("solid_color"),
+            level("Brightness", "solid_level", lim.solid_level[0], lim.solid_level[1]),
+            row(jsx(DFL.ButtonItem, {
+                layout: "below",
+                disabled: previewing,
+                onClick: () => {
+                    setPreviewing(true);
+                    previewCharging().catch(() => {});
+                    setTimeout(() => setPreviewing(false), (s.on_s + s.off_s + 4) * 1000);
+                },
+                children: previewing ? "Previewing…" : "Preview",
+            })),
+            note("Preview shows one pulse, its pause, then the charged light. The lights are very dim on purpose "
+                + "(the lowest settings are the defaults); at the dimmest levels a mixed color can show as its strongest part."),
+        );
+    }
+    return jsx(DFL.PanelSection, { title: "Power", children: items });
+}
+
 // ---------------------------------------------------------------- panel ---
 function Content() {
     const [tab, setTab] = useState(lastTab);
     const [lights, setLightsKind] = useState(null);
+    const [power, setPower] = useState(null);
     const pick = (id) => { lastTab = id; setTab(id); };
     useEffect(() => {
         getLights().then((s) => setLightsKind(s.kind || "")).catch(() => setLightsKind(""));
+        getCharging().then((s) => setPower(!!s.supported)).catch(() => setPower(false));
     }, []);
     // Until it's known whether there are lights: Lighting comes first where
     // there are, and the panel shouldn't open on Update and then jump.
-    if (lights === null) return jsx(DFL.PanelSection, { children: note("Loading…") });
+    if (lights === null || power === null) return jsx(DFL.PanelSection, { children: note("Loading…") });
     const tabs = [
         ...(lights ? [{ id: "lights", icon: LightsIcon }] : []),
         // pbosd's settings: KONKR Pocket FIT / AYANEO Pocket S2.
         ...(lights === "pbosd" ? [{ id: "performance", icon: PerformanceIcon }, { id: "hardware", icon: HardwareIcon }] : []),
+        ...(power ? [{ id: "power", icon: PowerIcon }] : []),
         { id: "update", icon: UpdateIcon },
         { id: "install", icon: InstallIcon },
     ];
@@ -853,6 +947,7 @@ function Content() {
             shown === "lights" && jsx(LightsTab, {}),
             shown === "performance" && jsx(PerformanceTab, {}),
             shown === "hardware" && jsx(HardwareTab, {}),
+            shown === "power" && jsx(PowerTab, {}),
         ],
     });
 }

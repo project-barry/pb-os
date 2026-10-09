@@ -798,6 +798,11 @@ if [[ "$SOC" == sm8550 ]]; then
     "$R/usr/lib/steamos-sm8550/sm8550-sleep" 0755
   install_file "$SM8550_OVL/usr/lib/systemd/system/systemd-suspend.service.d/50-sm8550-sleep.conf" \
     "$R/usr/lib/systemd/system/systemd-suspend.service.d/50-sm8550-sleep.conf" 0644
+  # On the charger: rest instead of kernel sleep, with the charging indicator.
+  install_file "$SM8550_OVL/usr/lib/steamos-sm8550/sm8550-charge-rest" \
+    "$R/usr/lib/steamos-sm8550/sm8550-charge-rest" 0755
+  install_file "$SM8550_OVL/usr/lib/systemd/system/systemd-suspend.service.d/20-sm8550-charge-rest.conf" \
+    "$R/usr/lib/systemd/system/systemd-suspend.service.d/20-sm8550-charge-rest.conf" 0644
   # Output volume across reboots (pro-audio outputs have no saved routes).
   install_file "$SM8550_OVL/usr/lib/steamos-sm8550/sm8550-volume-keeper" \
     "$R/usr/lib/steamos-sm8550/sm8550-volume-keeper" 0755
@@ -832,6 +837,7 @@ else
     "$R/usr/lib/udev/rules.d/73-sm8550-ufs-sleep.rules" \
     "$R/usr/lib/udev/rules.d/75-sm8550-tsens-nowake.rules" \
     "$R/usr/lib/systemd/system/systemd-suspend.service.d/50-sm8550-sleep.conf" \
+    "$R/usr/lib/systemd/system/systemd-suspend.service.d/20-sm8550-charge-rest.conf" \
     "$R/usr/lib/systemd/user/barry_launcher.service" \
     "$R/usr/lib/systemd/user/gamescope-session.target.wants/barry_launcher.service" \
     "$R/etc/inputplumber/devices.d/50-ayn_thor.yaml" \

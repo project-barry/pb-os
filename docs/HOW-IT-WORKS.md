@@ -105,7 +105,12 @@ plugins, which would fight `pbosd` over the fan and drive AYN-only LEDs.
 
 **PB-OS Utils** (every device): tabs for pb-os updates, moving SteamOS
 between the microSD card and internal storage, and the stick lights (here
-written to `pbosd`'s state like the K button).
+written to `pbosd`'s state like the K button). On SM8550 (Retroid Pocket 6 /
+Nova, AYN Thor) a Power tab sets the charging indicator: sleeping on the
+charger is a rest instead of kernel deep sleep, which charges at only about a
+quarter of the speed (`sm8550-charge-rest`: screens off, session frozen,
+clocks capped; pulling the charger goes on into deep sleep), and the stick
+lights pulse dimly until the battery is full, then stay dimly lit.
 
 ## Compared with the SM8550 setup, in short
 

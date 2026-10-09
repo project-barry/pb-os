@@ -47,6 +47,10 @@ screen (GAMESCOPE_BOTTOM_SCREEN_SHOWING, 1 shown or 2 waiting) yields it for
 Barry Launcher's home as well, until the button is held again or the game's
 window is gone.
 
+Charge rest: while sm8550-charge-rest has the device resting on the
+charger (CHARGE_REST), both screens are its to power off and back on, and
+this does nothing.
+
 Idle dim: Steam dims the screens (and later sleeps) when it has seen no
 input for a while, and touches on the bottom screen go to the bottom
 session's gamescope, not Steam's. So a touch there brightens nothing until
@@ -75,6 +79,7 @@ import time
 BOTTOM = "/sys/class/backlight/ae94000.dsi.0"
 TOP = "/sys/class/backlight/ae96000.dsi.0"
 STATE = "/var/lib/steamos-sm8550/thor-bottom-screen"
+CHARGE_REST = "/run/sm8550-charge-rest"  # sm8550-charge-rest: resting on the charger
 DIMMERS = "/var/lib/steamos-sm8550/thor-screen-dimmers.json"
 RUN_DIR = "/run/sm8550-thor"
 LEVEL = f"{RUN_DIR}/steam-brightness"
@@ -110,6 +115,16 @@ PANEL_RETRY_S = 0.5
 
 def log(msg: str) -> None:
     print(msg, flush=True)
+
+
+def charge_rest() -> bool:
+    """sm8550-charge-rest is resting (CHARGE_REST holds its live PID)."""
+    try:
+        with open(CHARGE_REST, encoding="utf-8") as fh:
+            pid = fh.read().strip()
+    except OSError:
+        return False
+    return pid.isdigit() and os.path.exists(f"/proc/{pid}")
 
 
 def read(path: str, default: str = "") -> str:
@@ -401,6 +416,11 @@ def run(bl_fd: int, bottom_path: str, bottom_max: int, top_max: int) -> int:
     home_checked = 0.0
     log(f"following {BOTTOM} (max {bottom_max}) -> {TOP} (max {top_max})")
     while True:
+        if charge_rest():
+            # Resting on the charger: sm8550-charge-rest has the screens off
+            # and puts them back. Hands off until then.
+            time.sleep(POLL_MS / 1000)
+            continue
         poller = select.poll()
         if steam_fd is not None:
             poller.register(steam_fd, select.POLLIN)

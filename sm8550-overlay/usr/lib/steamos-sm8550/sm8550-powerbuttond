@@ -10,7 +10,10 @@ Steam Deck behaviour (same as pbosd's power_press):
   Game Mode     short press -> Steam's sleep, long press -> Steam's power menu
   Desktop Mode  short press -> suspend, long press -> Plasma's shut down prompt
 Presses right after a wake are ignored (the wake press was followed by a
-second one that put the device straight back to sleep).
+second one that put the device straight back to sleep), and so are presses
+while sm8550-charge-rest has the device resting on the charger (CHARGE_REST):
+that press wakes it, and Steam, frozen until then, would read a sleep
+request on waking.
 """
 from __future__ import annotations
 
@@ -30,10 +33,21 @@ KEY_POWER = 116
 LONG_PRESS_S = 1.0
 WAKE_GRACE_S = 2.5
 USER = "steamos"
+CHARGE_REST = "/run/sm8550-charge-rest"
 
 
 def log(msg: str) -> None:
     print(f"sm8550-powerbuttond: {msg}", flush=True)
+
+
+def charge_rest() -> bool:
+    """sm8550-charge-rest is resting (CHARGE_REST holds its live PID)."""
+    try:
+        with open(CHARGE_REST, encoding="utf-8") as fh:
+            pid = fh.read().strip()
+    except OSError:
+        return False
+    return pid.isdigit() and os.path.exists(f"/proc/{pid}")
 
 
 def find_pwrkey() -> str | None:
@@ -109,6 +123,9 @@ def main() -> int:
     while True:
         r, _, _ = select.select([fd], [], [], 0.1 if down_at is not None else None)
         now = time.monotonic()
+        if charge_rest():
+            grace_until = now + WAKE_GRACE_S
+            down_at = None
         if r:
             if slept_total() - slept > 1.0:
                 # Resumed since the last event: this press is the wake-up.

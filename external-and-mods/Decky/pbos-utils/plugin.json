@@ -3,10 +3,10 @@
   "author": "lavachemist",
   "api_version": 1,
   "flags": ["root"],
-  "version": "2.3.0",
+  "version": "2.4.0",
   "publish": {
-    "tags": ["pb-os", "update", "install", "leds", "performance", "fan"],
-    "description": "pb-os tools for Game Mode, in tabs (LB/RB switch them): updates from the GitHub releases, a microSD card or USB drive, or the Downloads folder; moving SteamOS from the microSD card to internal storage and back; stick lights; on the KONKR Pocket FIT also the performance profile, fan and buttons.",
+    "tags": ["pb-os", "update", "install", "leds", "performance", "fan", "power"],
+    "description": "pb-os tools for Game Mode, in tabs (LB/RB switch them): updates from the GitHub releases, a microSD card or USB drive, or the Downloads folder; moving SteamOS from the microSD card to internal storage and back; stick lights; the charging indicator (stick lights while the device sleeps on the charger); on the KONKR Pocket FIT also the performance profile, fan and buttons.",
     "image": "https://opengraph.githubassets.com/1/SteamDeckHomebrew/decky-loader"
   }
 }
