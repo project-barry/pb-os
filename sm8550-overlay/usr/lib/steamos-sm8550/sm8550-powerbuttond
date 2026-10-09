@@ -9,11 +9,11 @@ takes over; nothing did on SM8550, so the button did nothing.
 Steam Deck behaviour (same as pbosd's power_press):
   Game Mode     short press -> Steam's sleep, long press -> Steam's power menu
   Desktop Mode  short press -> suspend, long press -> Plasma's shut down prompt
-Presses right after a wake are ignored (the wake press was followed by a
-second one that put the device straight back to sleep), and so are presses
-while sm8550-charge-rest has the device resting on the charger (CHARGE_REST):
-that press wakes it, and Steam, frozen until then, would read a sleep
-request on waking.
+The wake press from sleep is not seen here: the kernel (pm8941-pwrkey patch
+0018) drops key events from suspend until 3 s after resume. Resting on the
+charger (sm8550-charge-rest, CHARGE_REST) is not a suspend, so presses while
+it rests, and for WAKE_GRACE_S after, are ignored here: that press wakes it,
+and Steam, frozen until then, would read a sleep request on waking.
 """
 from __future__ import annotations
 
@@ -102,12 +102,6 @@ def power_press(long: bool) -> None:
                 "org.kde.LogoutPrompt.promptShutDown")
 
 
-def slept_total() -> float:
-    """Seconds spent suspended since boot (BOOTTIME counts suspend,
-    MONOTONIC does not), so a jump means we just resumed."""
-    return time.clock_gettime(time.CLOCK_BOOTTIME) - time.clock_gettime(time.CLOCK_MONOTONIC)
-
-
 def main() -> int:
     path = None
     while path is None:
@@ -118,7 +112,6 @@ def main() -> int:
     log(f"watch {path}")
     down_at = None
     long_sent = False
-    slept = slept_total()
     grace_until = 0.0
     while True:
         r, _, _ = select.select([fd], [], [], 0.1 if down_at is not None else None)
@@ -127,11 +120,6 @@ def main() -> int:
             grace_until = now + WAKE_GRACE_S
             down_at = None
         if r:
-            if slept_total() - slept > 1.0:
-                # Resumed since the last event: this press is the wake-up.
-                slept = slept_total()
-                grace_until = now + WAKE_GRACE_S
-                down_at = None
             data = os.read(fd, EVENT_SIZE * 16)
             for off in range(0, len(data) - EVENT_SIZE + 1, EVENT_SIZE):
                 _s, _us, etype, code, value = struct.unpack_from(EVENT_FMT, data, off)
