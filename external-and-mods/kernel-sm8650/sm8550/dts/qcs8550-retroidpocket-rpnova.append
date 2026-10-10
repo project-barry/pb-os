@@ -1,0 +1,20 @@
+
+/*
+ * The Nova's own ADSP and speaker tuning (sm8550/firmware/.../rpnova), not
+ * AYN Odin 2's. With Retroid's ADSP the amps take stock Android's channel
+ * numbering: 0x34 is channel 1, 0x35 is channel 0 (left and right swap otherwise).
+ */
+&remoteproc_adsp {
+	firmware-name = "qcom/sm8550/retroidpocket/rpnova/adsp.mbn",
+			"qcom/sm8550/retroidpocket/rpnova/adsp_dtb.mbn";
+};
+
+&spk_amp_l {
+	firmware-name = "qcom/sm8550/retroidpocket/rpnova/aw883xx_acf.bin";
+	awinic,audio-channel = <1>;
+};
+
+&spk_amp_r {
+	firmware-name = "qcom/sm8550/retroidpocket/rpnova/aw883xx_acf.bin";
+	awinic,audio-channel = <0>;
+};

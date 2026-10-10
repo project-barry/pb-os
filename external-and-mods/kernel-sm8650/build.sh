@@ -368,6 +368,11 @@ install_output() {
   cp -a "${EXTRA_FW_SRC}/${SOC_UC}/." "$o/firmware/"
   # Built-in copies are enough for the GPU; keep rootfs copies too for tooling.
   cp -a "${SRC}/external-firmware/." "$o/firmware/"
+  # Device firmware kept in this repo (the Retroid Pocket Nova's own ADSP and
+  # speaker tuning); its README.md files stay out of the image.
+  if [[ -d "${PORT_DIR}/firmware" ]]; then
+    tar -C "${PORT_DIR}/firmware" --exclude README.md -cf - . | tar -C "$o/firmware" -xf -
+  fi
 
   local dtb
   for dtb in $DTBS; do cp "${SRC}/arch/arm64/boot/dts/qcom/${dtb}.dtb" "$o/dtbs/"; done
