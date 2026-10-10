@@ -108,8 +108,8 @@ export DEVICE
 
 # Base: the Steam Frame's stable channel (what atomupd offers on "stable").
 # Other channels drop the prefix: deckard-<build>-<version> (e.g. main 0.5.0).
-STEAMOS_BUILD="${STEAMOS_BUILD:-20260922.6101926}"
-STEAMOS_VERSION="${STEAMOS_VERSION:-0.3.0}"
+STEAMOS_BUILD="${STEAMOS_BUILD:-20261007.6125817}"
+STEAMOS_VERSION="${STEAMOS_VERSION:-0.4.5}"
 STEAMOS_CHANNEL="${STEAMOS_CHANNEL-stable}"
 STEAMOS_BUNDLE="deckard-${STEAMOS_CHANNEL:+${STEAMOS_CHANNEL}-}${STEAMOS_BUILD}-${STEAMOS_VERSION}"
 STEAMOS_URL="https://steamdeck-images.steamos.cloud/vr/${STEAMOS_BUILD}"
