@@ -467,9 +467,11 @@ install_output() {
   cp -a "${SRC}/external-firmware/." "$o/firmware/"
   # Device firmware kept in this repo (the Retroid Pocket Nova's own ADSP and
   # speaker tuning); its README.md files stay out of the image.
-  if [[ -d "${PORT_DIR}/firmware" ]]; then
-    tar -C "${PORT_DIR}/firmware" --exclude README.md -cf - . | tar -C "$o/firmware" -xf -
-  fi
+  local pd
+  for pd in "${PORT_DIRS[@]}"; do
+    [[ -d "${pd}/firmware" ]] || continue
+    tar -C "${pd}/firmware" --exclude README.md -cf - . | tar -C "$o/firmware" -xf -
+  done
 
   local dtb
   for dtb in $DTBS; do cp "${SRC}/arch/arm64/boot/dts/qcom/${dtb}.dtb" "$o/dtbs/"; done
