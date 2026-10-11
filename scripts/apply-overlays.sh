@@ -719,6 +719,10 @@ if [[ "$SOC" == sm8550 ]]; then
     "$R/usr/lib/steamos-sm8550/sm8550-charge-control" 0755
   install_file "$SM8550_OVL/usr/lib/systemd/system/sm8550-charge-control.service" \
     "$R/usr/lib/systemd/system/sm8550-charge-control.service" 0644
+  install_file "$SM8550_OVL/usr/lib/steamos-sm8550/sm8550-stickcal" \
+    "$R/usr/lib/steamos-sm8550/sm8550-stickcal" 0755
+  install_file "$SM8550_OVL/usr/lib/systemd/system/sm8550-stickcal.service" \
+    "$R/usr/lib/systemd/system/sm8550-stickcal.service" 0644
   install_file "$SM8550_OVL/usr/lib/systemd/system/sm8550-powerbuttond.service" \
     "$R/usr/lib/systemd/system/sm8550-powerbuttond.service" 0644
   install_file "$SM8550_OVL/usr/lib/steamos-sm8550/sm8550-touch-inhibit" \
@@ -840,7 +844,8 @@ if [[ "$SOC" == sm8550 ]]; then
     "$R/usr/lib/udev/rules.d/72-sm8550-touch-inhibit.rules" 0644
   mkdir -p "$R/usr/lib/systemd/system/multi-user.target.wants"
   for u in sm8550-fand.service sm8550-powerbuttond.service \
-           sm8550-boostd.service sm8550-charge-control.service; do
+           sm8550-boostd.service sm8550-charge-control.service \
+           sm8550-stickcal.service; do
     ln -sfn ../$u "$R/usr/lib/systemd/system/multi-user.target.wants/$u"
   done
 else
@@ -857,6 +862,9 @@ else
     "$R/usr/lib/systemd/system/multi-user.target.wants/sm8550-fand.service" \
     "$R/usr/lib/systemd/system/sm8550-charge-control.service" \
     "$R/usr/lib/systemd/system/multi-user.target.wants/sm8550-charge-control.service" \
+    "$R/usr/lib/steamos-sm8550/sm8550-stickcal" \
+    "$R/usr/lib/systemd/system/sm8550-stickcal.service" \
+    "$R/usr/lib/systemd/system/multi-user.target.wants/sm8550-stickcal.service" \
     "$R/usr/lib/udev/rules.d/73-sm8550-ufs-sleep.rules" \
     "$R/usr/lib/udev/rules.d/75-sm8550-tsens-nowake.rules" \
     "$R/usr/lib/systemd/system/systemd-suspend.service.d/50-sm8550-sleep.conf" \

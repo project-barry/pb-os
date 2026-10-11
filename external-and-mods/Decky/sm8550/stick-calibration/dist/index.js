@@ -29,7 +29,7 @@ const startEdges = callable("start_edges");
 const getLive = callable("get_live");
 const cancel = callable("cancel");
 const save = callable("save");
-const setEnabled = callable("set_enabled");
+const setSwitch = callable("set_switch");
 const deleteCal = callable("delete");
 
 const row = (child) => jsx(DFL.PanelSectionRow, { children: child });
@@ -37,10 +37,7 @@ const note = (text) => row(jsx("div", { style: { fontSize: "12px", opacity: 0.75
 const warn = (text) => row(jsx("div", { style: { fontSize: "12px", color: "#ffb070" }, children: text }));
 const failure = (text) => row(jsx("div", { style: { color: "#ff8080" }, children: text }));
 
-const EXPERIMENTAL = "Experimental, for testing only. Your calibration lasts until you turn it off "
-    + "or restart; after a restart the sticks are back to PB-OS's normal settings. "
-    + "If it works well, a later PB-OS release will keep it on for good.";
-const RECONNECT = "Turning it on or off restarts InputPlumber: the controller drops out for a second.";
+const EXPERIMENTAL = "Experimental, for testing.";
 
 // Each direction of each axis has to reach this far (the helper's MIN_HALF)
 // before Save is offered.
@@ -161,27 +158,22 @@ function CalibrateModal({ closeModal, onDone }) {
     } else if (step === "edges") {
         const ok = ready(live, rest);
         body = [
-            text("Push each stick to the edge and rotate it slowly a few times. "
-                + "When the numbers stop changing, press Save."),
-            jsx("div", { style: { fontSize: "12px", opacity: 0.75, marginBottom: "8px" },
-                children: "Steam ignores the sticks until you save or cancel; the buttons still work." }),
+            text("Rotate each stick slowly around the edge 3–4 times, then press Save."),
             jsx("div", { style: { display: "flex", justifyContent: "space-around", margin: "8px 0" },
                 children: STICKS.map((s) => jsx(StickView, { ...s, live, rest }, s.label)) }),
             !ok && jsx("div", { style: { fontSize: "12px", opacity: 0.75 },
-                children: `Each number turns green once that direction has gone far enough (${MIN_HALF}).` }),
+                children: "Save works once every number is green." }),
             error && jsx("div", { style: { color: "#ff8080" }, children: error }),
             buttons(button(busy ? "Saving…" : "Save", finish, !ok), button("Cancel", close)),
         ];
     } else {
         body = [
-            text("Saved and turned on. The controller reconnects in a second."),
-            text("Try the sticks in Steam's controller test or a game. Turn the switch off to go back."),
+            text("Saved and turned on."),
             buttons(button("Close", close)),
         ];
     }
     return jsx(DFL.ModalRoot, { onCancel: close, closeModal, children: jsxs("div", { children: [
-        jsx("div", { style: { fontSize: "20px", fontWeight: 600, marginBottom: "8px" }, children: "Stick calibration" }),
-        jsx("div", { style: { fontSize: "12px", color: "#ffb070", marginBottom: "12px" }, children: EXPERIMENTAL }),
+        jsx("div", { style: { fontSize: "20px", fontWeight: 600, marginBottom: "12px" }, children: "Calibrate sticks" }),
         ...body.filter(Boolean),
     ] }) });
 }
@@ -211,47 +203,46 @@ function Content() {
 
     if (!st) return jsx(DFL.PanelSection, { children: note("Loading…") });
     const items = [warn(EXPERIMENTAL)];
-    if (!st.thor) {
-        items.push(note("This is for the AYN Thor only."));
+    if (!st.pad) {
+        items.push(failure(st.error || "No controller found."));
         return jsx(DFL.PanelSection, { children: items });
     }
-    if (!st.pad) items.push(failure("The controller (rsinput) isn't there."));
     items.push(row(jsx(DFL.ToggleField, {
         label: "Use my calibration",
-        description: st.saved ? (st.active ? "On until you turn it off or restart." : "Off: PB-OS's normal stick settings.")
+        description: st.has_calibration ? "Centres the sticks and gives them their full reach."
             : "Calibrate the sticks first.",
-        checked: st.active,
-        disabled: busy || !st.saved || !st.pad,
-        onChange: (on) => run(() => setEnabled(on)),
+        checked: st.use_calibration,
+        disabled: busy || !st.has_calibration,
+        onChange: (on) => run(() => setSwitch("calibration", on)),
     })));
+    if (st.fine_supported) {
+        items.push(row(jsx(DFL.ToggleField, {
+            label: "Fine stick steps",
+            description: "Smaller steps for more precise movement.",
+            checked: st.fine,
+            disabled: busy,
+            onChange: (on) => run(() => setSwitch("fine", on)),
+        })));
+    }
     items.push(row(jsx(DFL.ButtonItem, {
         layout: "below",
-        disabled: busy || !st.pad,
-        onClick: () => DFL.showModal(jsx(CalibrateModal, { onDone: () => {
-            refresh();
-            toaster.toast({ title: "Stick Calibration", body: "Calibration saved and on until restart" });
-        } })),
-        children: st.saved ? "Calibrate again" : "Calibrate sticks",
+        disabled: busy,
+        onClick: () => DFL.showModal(jsx(CalibrateModal, { onDone: refresh })),
+        children: st.has_calibration ? "Calibrate again" : "Calibrate sticks",
     })));
-    if (st.saved) {
-        const a = st.saved.axes;
-        const line = (label, x, y) => note(`${label}: rest ${a[x].rest > 0 ? "+" : ""}${a[x].rest} / ${a[y].rest > 0 ? "+" : ""}${a[y].rest}, `
-            + `travel ±${a[x].half} / ±${a[y].half}`);
-        items.push(line("Left stick", "left_x", "left_y"));
-        items.push(line("Right stick", "right_x", "right_y"));
+    if (st.has_calibration) {
         items.push(row(jsx(DFL.ButtonItem, {
             layout: "below",
             disabled: busy,
             onClick: () => DFL.showModal(jsx(DFL.ConfirmModal, {
                 strTitle: "Delete calibration?",
-                strDescription: "This turns it off and forgets the measured values.",
+                strDescription: "Your sticks go back to the default settings.",
                 strOKButtonText: "Delete",
                 onOK: () => run(deleteCal),
             })),
             children: "Delete calibration",
         })));
     }
-    items.push(note(RECONNECT));
     if (error) items.push(failure(error));
     return jsx(DFL.PanelSection, { children: items });
 }

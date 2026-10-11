@@ -1,49 +1,32 @@
 #!/usr/bin/env python3
-"""Decky backend — Stick Calibration (AYN Thor). EXPERIMENTAL, for testing.
+"""Decky backend — Stick Calibration (EXPERIMENTAL): AYN Thor, Retroid Pocket 6, Nova.
 
-The AYN Android tool in Game Mode: let go of the sticks, push them round
-the edge a few times, save. The calibration then sets each stick's centre
-and range (py_modules/pbos_stickcal.py, run on the system's native Python:
-Decky's own is emulated here).
-
-Nothing is permanent yet: the switch turns the calibration on and off, and
-a restart always brings back PB-OS's normal stick settings with the switch
-off. Only the measured values are kept (SAVED), so the switch can turn them
-on again without calibrating again. If testing goes well, a later PB-OS
-release applies a calibration at boot.
+Two switches for the rsinput pad, both kept across restarts:
+  Use my calibration  AYN's Android stick calibration in Game Mode: let go
+                      of the sticks, push them round the edge, save; each
+                      stick's centre and range are set from that.
+  Fine stick steps    the controller's finer reporting (AYN's and Retroid's
+                      Android setting).
+The work is done by /usr/lib/steamos-sm8550/sm8550-stickcal on the
+system's native Python (Decky's own is emulated here), which also keeps the
+switches and sets them again at boot (sm8550-stickcal.service).
 """
 from __future__ import annotations
 
 import asyncio
 import json
-import os
 import subprocess
-import sys
 import threading
-import time
 from typing import Any
 
 import decky
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-HELPER = os.path.join(HERE, "py_modules", "pbos_stickcal.py")
-# Only its checks; everything that touches the pad runs in the helper.
-sys.path.insert(0, os.path.dirname(HELPER))
-from pbos_stickcal import check  # noqa: E402
+HELPER = "/usr/lib/steamos-sm8550/sm8550-stickcal"
 PYTHON = "/usr/bin/python3"
-SAVED = os.path.join(decky.DECKY_PLUGIN_SETTINGS_DIR, "calibration.json")
 AXES = ("left_x", "left_y", "right_x", "right_y")
 REST_S = 1.5
 REST_SPREAD = 80          # a resting stick moving more than this was touched
 EDGES_MAX_S = 180
-
-
-def is_thor() -> bool:
-    try:
-        with open("/sys/firmware/devicetree/base/compatible", "rb") as fh:
-            return b"ayn,thor" in fh.read()
-    except OSError:
-        return False
 
 
 def helper(*args: str, stdin: str | None = None, timeout: float = 30) -> dict[str, Any]:
@@ -63,26 +46,6 @@ def helper(*args: str, stdin: str | None = None, timeout: float = 30) -> dict[st
     return res
 
 
-def load_saved() -> dict[str, Any] | None:
-    try:
-        with open(SAVED, encoding="utf-8") as fh:
-            return json.load(fh)
-    except (OSError, ValueError):
-        return None
-
-
-def summary(cal: dict[str, Any] | None) -> dict[str, Any] | None:
-    """What the panel shows of a calibration."""
-    if not cal:
-        return None
-    axes = {}
-    for name in AXES:
-        a = cal[name]
-        r = a["rest"]
-        axes[name] = {"rest": round(r), "half": round(min(a["hi"] - r, r - a["lo"]))}
-    return {"axes": axes, "time": cal.get("time")}
-
-
 class Plugin:
     def __init__(self) -> None:
         self.edges: subprocess.Popen | None = None
@@ -92,17 +55,13 @@ class Plugin:
         self.lock = threading.Lock()
 
     async def _main(self) -> None:
-        decky.logger.info(f"Stick Calibration ready (Thor: {is_thor()})")
+        decky.logger.info("Stick Calibration ready")
 
     async def _unload(self) -> None:
         self._stop_edges()
 
-    # ---------------------------------------------------------- state --
     async def get_state(self, **_: Any) -> dict[str, Any]:
-        thor = is_thor()
-        st = await asyncio.to_thread(helper, "status") if thor else {}
-        return {"thor": thor, "pad": bool(st.get("pad")), "active": bool(st.get("active")),
-                "saved": summary(load_saved()), "measuring": self.edges is not None}
+        return await asyncio.to_thread(helper, "status")
 
     # ------------------------------------------------------ measuring --
     async def measure_rest(self, **_: Any) -> dict[str, Any]:
@@ -173,37 +132,23 @@ class Plugin:
         reach = live.get("reach") or {n: {"lo": live["lo"][n], "hi": live["hi"][n]} for n in AXES}
         cal = {n: {"rest": self.rest[n], "lo": reach[n]["lo"], "hi": reach[n]["hi"],
                    "furthest": [live["lo"][n], live["hi"][n]]} for n in AXES}
-        why = check(cal)
-        if why:
-            return {"ok": False, "error": f"Not saved: {why}. Push each stick all the way round the edge."}
-        cal["time"] = int(time.time())
-        os.makedirs(os.path.dirname(SAVED), exist_ok=True)
-        with open(SAVED + ".tmp", "w", encoding="utf-8") as fh:
-            json.dump(cal, fh)
-        os.replace(SAVED + ".tmp", SAVED)
-        decky.logger.info(f"saved: {json.dumps(summary(cal)['axes'])}")
+        res = await asyncio.to_thread(helper, "save", stdin=json.dumps(cal))
+        if not res.get("ok"):
+            res["error"] = f"Not saved: {res.get('error')}. Push each stick all the way round the edge."
+            return res
         self.rest = None
-        return await self.set_enabled(True)
+        decky.logger.info(f"saved and on: {json.dumps(res.get('plan'))}")
+        return res
 
-    # ------------------------------------------------------- the switch --
-    async def set_enabled(self, enabled: bool = False, **_: Any) -> dict[str, Any]:
-        if not is_thor():
-            return {"ok": False, "error": "This is for the AYN Thor only."}
-        if enabled:
-            cal = load_saved()
-            if not cal:
-                return {"ok": False, "error": "Calibrate the sticks first."}
-            res = await asyncio.to_thread(helper, "apply", stdin=json.dumps(cal))
-        else:
-            res = await asyncio.to_thread(helper, "restore")
-        decky.logger.info(f"calibration {'on' if enabled else 'off'}: {json.dumps(res)}")
+    # ------------------------------------------------------- switches --
+    async def set_switch(self, which: str = "", on: bool = False, **_: Any) -> dict[str, Any]:
+        if which not in ("calibration", "fine"):
+            return {"ok": False, "error": f"unknown switch {which}"}
+        res = await asyncio.to_thread(helper, "set", which, "on" if on else "off")
+        decky.logger.info(f"{which} {'on' if on else 'off'}: {json.dumps(res)}")
         return res
 
     async def delete(self, **_: Any) -> dict[str, Any]:
-        res = await self.set_enabled(False)
-        try:
-            os.remove(SAVED)
-        except FileNotFoundError:
-            pass
-        decky.logger.info("calibration deleted")
+        res = await asyncio.to_thread(helper, "delete")
+        decky.logger.info(f"calibration deleted: {json.dumps(res)}")
         return res

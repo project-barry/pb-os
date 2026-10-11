@@ -1,25 +1,32 @@
 #!/usr/bin/env python3
-"""pbos_stickcal — the AYN Thor stick calibration's hardware side.
+"""sm8550-stickcal — stick calibration and fine stick steps (EXPERIMENTAL).
 
-EXPERIMENTAL, for testing. Nothing here lasts past a restart: rsinput is
-built into the kernel, so its parameters start from the driver's defaults
-at every boot, and the evdev ranges and the state in RUN go with them.
+For the rsinput pad of the AYN Thor, Retroid Pocket 6 and Nova. The Stick
+Calibration plugin (Decky) is its front; it runs as root on the system's
+native Python. Two switches, kept in STATE and set again at every boot by
+sm8550-stickcal.service, before InputPlumber opens the pad:
 
-The Stick Calibration plugin runs this with the system's native Python
-(Decky's own Python is emulated on these devices) as root:
+  calibration  each stick's centre and range from the user's calibration
+  fine         the controller MCU's joystick frame: FINE (10,4, what AYN's
+               and Retroid's Android send) instead of the driver's default
+               NORMAL (40,7). The first number is how far a stick must move
+               before the MCU reports it: 40 gives steps of 41+ counts (about
+               25 from centre to edge), 10 gives 11+. Kernel patch 0548 makes
+               it settable (rsinput's mcu_frame); without it the switch is
+               not offered.
 
-  status          JSON: the pad, whether a calibration is on, the driver's
-                  centres and the ranges now
-  rest SECONDS    the sticks at rest: per axis the mean, lowest and highest
-                  value, in centre-0 terms (see below); one JSON line
-  edges [MAX_S]   the sticks pushed round the edge: a JSON line every
-                  0.1 s with each axis's value now and its lowest and
-                  highest so far, until stopped (SIGTERM) or MAX_S; the
-                  last line also has each direction's typical reach (see
-                  REACH). Steam doesn't see the sticks meanwhile (see HOLD)
-  apply           calibration JSON on stdin (as the plugin saves it): sets
-                  the centres and ranges, then restarts InputPlumber
-  restore         puts back what the pad had before the first apply
+  status            JSON: the pad, the switches, whether fine is supported
+  rest SECONDS      the sticks at rest: per axis the mean, lowest and highest
+                    value, in centre-0 terms (see below); one JSON line
+  edges [MAX_S]     the sticks pushed round the edge: a JSON line every
+                    0.1 s with each axis's value now and its lowest and
+                    highest so far, until stopped (SIGTERM) or MAX_S; the
+                    last line also has each direction's typical reach (see
+                    REACH). Steam doesn't see the sticks meanwhile (see HOLD)
+  save              a calibration (JSON on stdin) is kept and turned on
+  set calibration|fine on|off
+  delete            the calibration off and forgotten
+  boot              the switches as kept (the service; no InputPlumber restart)
 
 What the driver reports (drivers/input/joystick/rsinput.c): per stick axis
 -raw + axis_*_center (negated again if the device tree says invert-*), with
@@ -52,7 +59,10 @@ filter back when it ends, however it ends short of SIGKILL, and at the
 latest after MAX_S; apply's InputPlumber restart clears it too.
 
 sm8550-fixpad (at boot and at each Steam session start) leaves the pad
-alone while ACTIVE exists; ACTIVE is in /run, so it is gone after a restart.
+alone while ACTIVE exists (the calibration is on). Turning the calibration
+off puts back what the pad had before it went on (STOCK, taken at boot or
+at the first apply). A calibration saved by the first test build (the
+Thor-only plugin, in its Decky settings) is taken over once.
 """
 from __future__ import annotations
 
@@ -67,7 +77,12 @@ import sys
 import time
 
 PARAMS = os.environ.get("PBOS_STICKCAL_PARAMS", "/sys/module/rsinput/parameters")
-RUN = os.environ.get("PBOS_STICKCAL_RUN", "/run/pbos-stickcal")
+RUN = os.environ.get("PBOS_STICKCAL_RUN", "/run/sm8550-stickcal")
+STATE = os.environ.get("PBOS_STICKCAL_STATE", "/var/lib/sm8550-stickcal/state.json")
+OLD_SAVED = os.environ.get("PBOS_STICKCAL_OLD",
+                           "/home/steamos/homebrew/settings/thor-stick-calibration/calibration.json")
+FINE, NORMAL = "10,4", "40,7"
+WAIT_S = 10          # for the pad at boot
 ACTIVE = os.path.join(RUN, "active")      # sm8550-fixpad checks this path
 STOCK = os.path.join(RUN, "stock.json")   # the pad before the first apply
 DT = os.environ.get("PBOS_STICKCAL_DT", "/proc/device-tree")
@@ -230,7 +245,7 @@ class Hold:
         self.path = ip_composite(dev)
         self.before: dict[str, list[str]] | None = None
         if not self.path:
-            print("pbos_stickcal: no InputPlumber device for the pad, Steam still sees the sticks",
+            print("sm8550-stickcal: no InputPlumber device for the pad, Steam still sees the sticks",
                   file=sys.stderr)
             return
         self.before = ip_get(self.path, "FilteredEvents") or {}
@@ -238,7 +253,7 @@ class Hold:
         filt = {k: list(v) for k, v in self.before.items()}
         filt[source] = sorted(set(filt.get(source, [])) | set(HOLD_EVENTS))
         if not ip_set_filter(self.path, filt):
-            print("pbos_stickcal: InputPlumber refused the stick filter", file=sys.stderr)
+            print("sm8550-stickcal: InputPlumber refused the stick filter", file=sys.stderr)
             self.before = None
 
     def release(self) -> None:
@@ -383,12 +398,8 @@ def restart_inputplumber() -> str | None:
     return None if r.returncode == 0 else (r.stderr.strip() or f"exit {r.returncode}")
 
 
-def apply() -> int:
-    cal = json.load(sys.stdin)
-    why = check(cal)
-    if why:
-        out({"ok": False, "error": why})
-        return 1
+def apply_cal(cal: dict, restart: bool) -> dict:
+    """Centres and ranges for a checked calibration."""
     inv = inverted()
     fd = open_pad(os.O_RDWR)
     try:
@@ -409,12 +420,10 @@ def apply() -> int:
             set_abs(fd, code, -half, half)
     finally:
         os.close(fd)
-    err = restart_inputplumber()
-    out({"ok": True, "plan": p, "restart_error": err})
-    return 0
+    return {"ok": True, "plan": p, "restart_error": restart_inputplumber() if restart else None}
 
 
-def restore() -> int:
+def restore_cal(restart: bool) -> dict:
     try:
         with open(STOCK, encoding="utf-8") as fh:
             snap = json.load(fh)
@@ -435,21 +444,124 @@ def restore() -> int:
             os.remove(path)
         except FileNotFoundError:
             pass
-    err = restart_inputplumber() if snap else None
-    out({"ok": True, "restored": bool(snap), "restart_error": err})
-    return 0
+    err = restart_inputplumber() if snap and restart else None
+    return {"ok": True, "restored": bool(snap), "restart_error": err}
+
+
+# ------------------------------------------------------------ the switches --
+def fine_supported() -> bool:
+    return os.path.exists(os.path.join(PARAMS, "mcu_frame"))
+
+
+def set_frame(fine: bool) -> dict:
+    if not fine_supported():
+        return {"ok": not fine, "error": None if not fine else "this kernel can't set it"}
+    try:
+        with open(os.path.join(PARAMS, "mcu_frame"), "w", encoding="utf-8") as fh:
+            fh.write(FINE if fine else NORMAL)
+    except OSError as exc:
+        return {"ok": False, "error": f"mcu_frame: {exc}"}
+    return {"ok": True}
+
+
+def load_state() -> dict:
+    try:
+        with open(STATE, encoding="utf-8") as fh:
+            st = json.load(fh)
+    except (OSError, ValueError):
+        st = {}
+    st.setdefault("calibration", None)
+    st.setdefault("use_calibration", False)
+    st.setdefault("fine", False)
+    if st["calibration"] is None and not st.get("migrated"):
+        try:
+            with open(OLD_SAVED, encoding="utf-8") as fh:
+                old = json.load(fh)
+            if not check(old):
+                st["calibration"] = old
+        except (OSError, ValueError):
+            pass
+        st["migrated"] = True
+        save_state(st)
+    return st
+
+
+def save_state(st: dict) -> None:
+    os.makedirs(os.path.dirname(STATE), exist_ok=True)
+    with open(STATE + ".tmp", "w", encoding="utf-8") as fh:
+        json.dump(st, fh)
+    os.replace(STATE + ".tmp", STATE)
+
+
+def set_switch(which: str, on: bool) -> dict:
+    st = load_state()
+    if which == "fine":
+        res = set_frame(on)
+        if res["ok"]:
+            st["fine"] = on
+            save_state(st)
+        return res
+    if on:
+        if not st["calibration"]:
+            return {"ok": False, "error": "calibrate the sticks first"}
+        res = apply_cal(st["calibration"], restart=True)
+    else:
+        res = restore_cal(restart=True)
+    if res["ok"]:
+        st["use_calibration"] = on
+        save_state(st)
+    return res
 
 
 def status() -> int:
-    dev = pad()
-    res: dict = {"ok": True, "pad": dev, "active": os.path.exists(ACTIVE)}
-    if dev:
-        fd = os.open(dev, os.O_RDONLY)
-        try:
-            res.update(snapshot(fd))
-        finally:
-            os.close(fd)
+    st = load_state()
+    out({"ok": True, "pad": pad(), "active": os.path.exists(ACTIVE),
+         "use_calibration": st["use_calibration"], "has_calibration": bool(st["calibration"]),
+         "fine": st["fine"], "fine_supported": fine_supported()})
+    return 0
+
+
+def save() -> int:
+    cal = json.load(sys.stdin)
+    why = check(cal)
+    if why:
+        out({"ok": False, "error": why})
+        return 1
+    st = load_state()
+    st["calibration"] = cal
+    save_state(st)
+    res = set_switch("calibration", True)
     out(res)
+    return 0 if res["ok"] else 1
+
+
+def delete() -> int:
+    res = set_switch("calibration", False)
+    st = load_state()
+    st["calibration"], st["use_calibration"] = None, False
+    save_state(st)
+    out(res)
+    return 0
+
+
+def boot() -> int:
+    """The kept switches, before InputPlumber starts (no restart)."""
+    st = load_state()
+    if not (st["fine"] or (st["use_calibration"] and st["calibration"])):
+        return 0
+    for _ in range(WAIT_S * 2):
+        if pad() and os.path.isdir(PARAMS):
+            break
+        time.sleep(0.5)
+    else:
+        print("sm8550-stickcal: no rsinput pad", file=sys.stderr)
+        return 0
+    res: dict = {}
+    if st["fine"]:
+        res["fine"] = set_frame(True)
+    if st["use_calibration"] and st["calibration"] and not check(st["calibration"]):
+        res["calibration"] = apply_cal(st["calibration"], restart=False)
+    print("sm8550-stickcal: " + json.dumps(res))
     return 0
 
 
@@ -461,12 +573,19 @@ def main() -> int:
         return rest(float(sys.argv[2]) if len(sys.argv) > 2 else 1.5)
     if cmd == "edges":
         return edges(float(sys.argv[2]) if len(sys.argv) > 2 else 120)
-    if cmd == "apply":
-        return apply()
-    if cmd == "restore":
-        return restore()
-    print("usage: pbos_stickcal.py status | rest [S] | edges [MAX_S] | apply < cal.json | restore",
-          file=sys.stderr)
+    if cmd == "save":
+        return save()
+    if cmd == "set" and len(sys.argv) == 4 and sys.argv[2] in ("calibration", "fine") \
+            and sys.argv[3] in ("on", "off"):
+        res = set_switch(sys.argv[2], sys.argv[3] == "on")
+        out(res)
+        return 0 if res["ok"] else 1
+    if cmd == "delete":
+        return delete()
+    if cmd == "boot":
+        return boot()
+    print("usage: sm8550-stickcal status | rest [S] | edges [MAX_S] | save < cal.json"
+          " | set calibration|fine on|off | delete | boot", file=sys.stderr)
     return 2
 
 

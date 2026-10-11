@@ -1,0 +1,14 @@
+[Unit]
+Description=Stick Calibration switches (experimental)
+ConditionPathExists=/var/lib/sm8550-stickcal/state.json
+After=systemd-udevd.service local-fs.target sm8550-fixpad.service
+# InputPlumber reads the pad's ranges when it opens it.
+Before=inputplumber.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/steamos-sm8550/sm8550-stickcal boot
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

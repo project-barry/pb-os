@@ -125,16 +125,16 @@ using Retroid's own battery firmware (kernel patch 0545,
 a level, and Run from USB (charge separation: the device runs from USB power
 and the battery is left alone).
 
-**Stick Calibration** (AYN Thor only, EXPERIMENTAL, for testing): AYN's
-Android stick calibration in Game Mode. Let go of the sticks, push them round
-the edge, save; it sets each stick's centre (`rsinput`'s `axis_*_center`) and
-a range of ± its shorter half-travel, then restarts InputPlumber, which reads
-the range when it opens the pad. A switch turns it off again (back to what
-the pad had). Nothing outlasts a restart: the driver's parameters, the ranges
-and the flag in `/run/pbos-stickcal` (which keeps `sm8550-fixpad`'s ±740
-away while it is on) start fresh at boot, with the switch off; only the
-measured values are kept, in the plugin's settings. If testing goes well, a
-later release applies a calibration at boot.
+**Stick Calibration** (AYN Thor, Retroid Pocket 6 and Nova, EXPERIMENTAL):
+two switches for the `rsinput` pad, kept across restarts
+(`/var/lib/sm8550-stickcal`, set again at boot by `sm8550-stickcal.service`
+before InputPlumber opens the pad). **Use my calibration** is AYN's Android
+stick calibration in Game Mode: let go of the sticks, rotate them round the
+edge, save; it sets each stick's centre (`axis_*_center`) and a range of ±
+its shorter typical half-travel, and `sm8550-fixpad` leaves that range alone.
+**Fine stick steps** sends the controller MCU the joystick frame AYN's and
+Retroid's Android use (10,4 instead of the driver's 40,7; kernel patch 0548):
+the MCU then reports a stick once it has moved 11 counts instead of 41.
 
 ## Compared with the SM8550 setup, in short
 
