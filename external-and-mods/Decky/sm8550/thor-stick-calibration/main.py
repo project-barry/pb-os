@@ -86,6 +86,7 @@ def summary(cal: dict[str, Any] | None) -> dict[str, Any] | None:
 class Plugin:
     def __init__(self) -> None:
         self.edges: subprocess.Popen | None = None
+        self.reader: threading.Thread | None = None
         self.live: dict[str, Any] | None = None
         self.rest: dict[str, Any] | None = None
         self.lock = threading.Lock()
@@ -126,7 +127,8 @@ class Plugin:
                                           text=True)
         except OSError as exc:
             return {"ok": False, "error": str(exc)}
-        threading.Thread(target=self._read_edges, args=(self.edges,), daemon=True).start()
+        self.reader = threading.Thread(target=self._read_edges, args=(self.edges,), daemon=True)
+        self.reader.start()
         return {"ok": True}
 
     def _read_edges(self, proc: subprocess.Popen) -> None:
@@ -146,6 +148,10 @@ class Plugin:
                 proc.wait(timeout=3)
             except subprocess.TimeoutExpired:
                 proc.kill()
+        # Its last line (the typical reach) is read before anything uses it.
+        if self.reader:
+            self.reader.join(timeout=3)
+            self.reader = None
 
     async def get_live(self, **_: Any) -> dict[str, Any] | None:
         with self.lock:
@@ -162,7 +168,11 @@ class Plugin:
             live = self.live
         if not live or not self.rest:
             return {"ok": False, "error": "Nothing measured yet."}
-        cal = {n: {"rest": self.rest[n], "lo": live["lo"][n], "hi": live["hi"][n]} for n in AXES}
+        # The typical reach of each direction (the helper's last line);
+        # the furthest values only if the helper died before writing it.
+        reach = live.get("reach") or {n: {"lo": live["lo"][n], "hi": live["hi"][n]} for n in AXES}
+        cal = {n: {"rest": self.rest[n], "lo": reach[n]["lo"], "hi": reach[n]["hi"],
+                   "furthest": [live["lo"][n], live["hi"][n]]} for n in AXES}
         why = check(cal)
         if why:
             return {"ok": False, "error": f"Not saved: {why}. Push each stick all the way round the edge."}

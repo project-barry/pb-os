@@ -14,8 +14,9 @@ The Stick Calibration plugin runs this with the system's native Python
                   value, in centre-0 terms (see below); one JSON line
   edges [MAX_S]   the sticks pushed round the edge: a JSON line every
                   0.1 s with each axis's value now and its lowest and
-                  highest so far, until stopped (SIGTERM) or MAX_S. Steam
-                  doesn't see the sticks meanwhile (see HOLD)
+                  highest so far, until stopped (SIGTERM) or MAX_S; the
+                  last line also has each direction's typical reach (see
+                  REACH). Steam doesn't see the sticks meanwhile (see HOLD)
   apply           calibration JSON on stdin (as the plugin saves it): sets
                   the centres and ranges, then restarts InputPlumber
   restore         puts back what the pad had before the first apply
@@ -29,7 +30,16 @@ were set while it was measured. Apply then sets
   - each axis's range to ± its shorter half-travel (× EDGE): InputPlumber
     reads the range when it opens the pad and scales around its middle, so
     the range must be symmetric round the resting stick, and the shorter
-    side must still reach the edge.
+    side must still reach the edge. A lopsided stick's longer side then
+    reaches full output a little before its edge.
+
+REACH: how far a direction goes is not the furthest single value seen.
+The same push reaches differently from one time to the next (a Nova's
+left stick: 780 to 1000 one way), so the furthest value overshoots what a
+normal push gets to. Each pass through a direction (the value beyond
+PASS of the furthest) has a peak; the typical reach is the median of the
+peaks of the passes that got past KEEP of the furthest. EDGE leaves a
+margin below that.
 The pad is grabbed by InputPlumber, so no events reach a second reader:
 rest and edges read each axis's current value with EVIOCGABS, which the
 input core keeps up to date whoever has the grab. They poll, but only
@@ -68,7 +78,9 @@ IP_BUS = "org.shadowblip.InputPlumber"
 IP_IFACE = "org.shadowblip.Input.CompositeDevice"
 HOLD_EVENTS = ("Gamepad:Axis:LeftStick", "Gamepad:Axis:RightStick")
 
-EDGE = 0.98          # range = 98 % of the shorter half-travel
+EDGE = 0.92          # range = 92 % of the shorter typical half-travel
+PASS = 0.6           # a pass through a direction: beyond 60 % of its furthest
+KEEP = 0.8           # passes whose peak got past 80 % of the furthest count
 POLL_S = 0.005       # 200 Hz while measuring
 REPORT_S = 0.1
 MAX_REST = 300       # a resting stick further off than this is not at rest
@@ -271,6 +283,27 @@ def rest(seconds: float) -> int:
     return 0
 
 
+def typical_reach(values: list[int], direction: int) -> tuple[float, int]:
+    """(median peak of the passes through one direction, passes counted)."""
+    furthest = max((direction * v for v in values), default=0)
+    if furthest <= 0:
+        return 0.0, 0
+    peaks, peak = [], None
+    for v in values:
+        x = direction * v
+        if x >= PASS * furthest:
+            peak = x if peak is None else max(peak, x)
+        elif peak is not None:
+            peaks.append(peak)
+            peak = None
+    if peak is not None:
+        peaks.append(peak)
+    kept = sorted(p for p in peaks if p >= KEEP * furthest)
+    n = len(kept)
+    mid = kept[n // 2] if n % 2 else (kept[n // 2 - 1] + kept[n // 2]) / 2
+    return float(mid), n
+
+
 def edges(max_s: float) -> int:
     stop = False
 
@@ -288,11 +321,13 @@ def edges(max_s: float) -> int:
     try:
         now = centre0(fd, off)
         lo, hi = dict(now), dict(now)
+        seen: dict[str, list[int]] = {name: [] for name, *_ in AXES}
         end = time.monotonic() + max_s
         next_report = 0.0
         while not stop and time.monotonic() < end:
             now = centre0(fd, off)
             for name, v in now.items():
+                seen[name].append(v)
                 lo[name] = min(lo[name], v)
                 hi[name] = max(hi[name], v)
             t = time.monotonic()
@@ -300,7 +335,13 @@ def edges(max_s: float) -> int:
                 out({"now": now, "lo": lo, "hi": hi})
                 next_report = t + REPORT_S
             time.sleep(POLL_S)
-        out({"now": now, "lo": lo, "hi": hi, "done": True})
+        reach, passes = {}, {}
+        for name, vals in seen.items():
+            neg, npass = typical_reach(vals, -1)
+            pos, ppass = typical_reach(vals, 1)
+            reach[name] = {"lo": -neg, "hi": pos}
+            passes[name] = {"lo": npass, "hi": ppass}
+        out({"now": now, "lo": lo, "hi": hi, "reach": reach, "passes": passes, "done": True})
     finally:
         hold.release()
         os.close(fd)
