@@ -163,6 +163,8 @@ function CalibrateModal({ closeModal, onDone }) {
         body = [
             text("Push each stick to the edge and rotate it slowly a few times. "
                 + "When the numbers stop changing, press Save."),
+            jsx("div", { style: { fontSize: "12px", opacity: 0.75, marginBottom: "8px" },
+                children: "Steam ignores the sticks until you save or cancel; the buttons still work." }),
             jsx("div", { style: { display: "flex", justifyContent: "space-around", margin: "8px 0" },
                 children: STICKS.map((s) => jsx(StickView, { ...s, live, rest }, s.label)) }),
             !ok && jsx("div", { style: { fontSize: "12px", opacity: 0.75 },

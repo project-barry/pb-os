@@ -14,7 +14,8 @@ The Stick Calibration plugin runs this with the system's native Python
                   value, in centre-0 terms (see below); one JSON line
   edges [MAX_S]   the sticks pushed round the edge: a JSON line every
                   0.1 s with each axis's value now and its lowest and
-                  highest so far, until stopped (SIGTERM) or MAX_S
+                  highest so far, until stopped (SIGTERM) or MAX_S. Steam
+                  doesn't see the sticks meanwhile (see HOLD)
   apply           calibration JSON on stdin (as the plugin saves it): sets
                   the centres and ranges, then restarts InputPlumber
   restore         puts back what the pad had before the first apply
@@ -33,6 +34,12 @@ The pad is grabbed by InputPlumber, so no events reach a second reader:
 rest and edges read each axis's current value with EVIOCGABS, which the
 input core keeps up to date whoever has the grab. They poll, but only
 while the plugin's calibration screen is open.
+
+HOLD: while edges runs, InputPlumber's FilteredEvents keeps both sticks
+from its virtual pad, so pushing them round doesn't move Steam's menus;
+the buttons still reach Steam (Save, Cancel). edges puts the previous
+filter back when it ends, however it ends short of SIGKILL, and at the
+latest after MAX_S; apply's InputPlumber restart clears it too.
 
 sm8550-fixpad (at boot and at each Steam session start) leaves the pad
 alone while ACTIVE exists; ACTIVE is in /run, so it is gone after a restart.
@@ -56,6 +63,10 @@ STOCK = os.path.join(RUN, "stock.json")   # the pad before the first apply
 DT = os.environ.get("PBOS_STICKCAL_DT", "/proc/device-tree")
 PHYS = os.environ.get("PBOS_STICKCAL_PHYS", "rsinput-gamepad/input0")
 RESTART = os.environ.get("PBOS_STICKCAL_RESTART", "systemctl restart inputplumber.service")
+BUSCTL = os.environ.get("PBOS_STICKCAL_BUSCTL", "busctl")
+IP_BUS = "org.shadowblip.InputPlumber"
+IP_IFACE = "org.shadowblip.Input.CompositeDevice"
+HOLD_EVENTS = ("Gamepad:Axis:LeftStick", "Gamepad:Axis:RightStick")
 
 EDGE = 0.98          # range = 98 % of the shorter half-travel
 POLL_S = 0.005       # 200 Hz while measuring
@@ -164,6 +175,66 @@ def open_pad(flags: int = os.O_RDONLY) -> int:
     return os.open(dev, flags)
 
 
+# ----------------------------------------------------------- InputPlumber --
+def busctl(*args: str) -> str | None:
+    if not BUSCTL:
+        return None
+    try:
+        r = subprocess.run([BUSCTL, *args], capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return r.stdout if r.returncode == 0 else None
+
+
+def ip_get(path: str, prop: str):
+    text = busctl("--json=short", "get-property", IP_BUS, path, IP_IFACE, prop)
+    try:
+        return json.loads(text)["data"] if text else None
+    except (ValueError, KeyError):
+        return None
+
+
+def ip_composite(dev: str) -> str | None:
+    """InputPlumber's composite device that has the pad as a source."""
+    tree = busctl("tree", "--list", IP_BUS) or ""
+    for path in tree.split():
+        if path.rsplit("/", 1)[-1].startswith("CompositeDevice"):
+            if dev in (ip_get(path, "SourceDevicePaths") or []):
+                return path
+    return None
+
+
+def ip_set_filter(path: str, filt: dict[str, list[str]]) -> bool:
+    args = ["set-property", IP_BUS, path, IP_IFACE, "FilteredEvents", "a{sas}", str(len(filt))]
+    for source, events in filt.items():
+        args += [source, str(len(events)), *events]
+    return busctl(*args) is not None
+
+
+class Hold:
+    """Keeps the sticks from Steam (InputPlumber's FilteredEvents) while open."""
+
+    def __init__(self, dev: str):
+        self.path = ip_composite(dev)
+        self.before: dict[str, list[str]] | None = None
+        if not self.path:
+            print("pbos_stickcal: no InputPlumber device for the pad, Steam still sees the sticks",
+                  file=sys.stderr)
+            return
+        self.before = ip_get(self.path, "FilteredEvents") or {}
+        source = "evdev://" + os.path.basename(dev)
+        filt = {k: list(v) for k, v in self.before.items()}
+        filt[source] = sorted(set(filt.get(source, [])) | set(HOLD_EVENTS))
+        if not ip_set_filter(self.path, filt):
+            print("pbos_stickcal: InputPlumber refused the stick filter", file=sys.stderr)
+            self.before = None
+
+    def release(self) -> None:
+        if self.path and self.before is not None:
+            ip_set_filter(self.path, self.before)
+            self.before = None
+
+
 # ------------------------------------------------------------- measuring --
 def offsets() -> dict[str, int]:
     """Per axis: what its centre parameter adds to the value now."""
@@ -201,16 +272,19 @@ def rest(seconds: float) -> int:
 
 
 def edges(max_s: float) -> int:
-    off = offsets()
-    fd = open_pad()
     stop = False
 
     def done(*_):
         nonlocal stop
         stop = True
 
+    # Before the hold: a SIGTERM from now on still ends in hold.release().
     signal.signal(signal.SIGTERM, done)
     signal.signal(signal.SIGINT, done)
+    off = offsets()
+    dev = pad()
+    fd = open_pad()
+    hold = Hold(dev)
     try:
         now = centre0(fd, off)
         lo, hi = dict(now), dict(now)
@@ -228,6 +302,7 @@ def edges(max_s: float) -> int:
             time.sleep(POLL_S)
         out({"now": now, "lo": lo, "hi": hi, "done": True})
     finally:
+        hold.release()
         os.close(fd)
     return 0
 
