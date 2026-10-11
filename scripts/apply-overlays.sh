@@ -1024,6 +1024,7 @@ rsync -a --copy-links --exclude '.local/lib/liblsfg-vk.so' "${MOD}/Decky/Plug-in
 # Decky itself. Upstream left it to a first-boot installer in ARM-Manager
 # that most people never found — no Decky, so no PB-OS Utils either.
 DECKY_VERSION=v3.2.9
+DECKY_SHA256=0a5246db98f2df93a6685ac8230e0acfbfa6e91d99b41b8dbbf1f94c308dedce
 DECKY_LOADER="${MOD}/Decky/loader/PluginLoader-${DECKY_VERSION}"
 if [[ ! -s "$DECKY_LOADER" ]]; then
   mkdir -p "${DECKY_LOADER%/*}"
@@ -1032,6 +1033,8 @@ if [[ ! -s "$DECKY_LOADER" ]]; then
     mv "$DECKY_LOADER.part" "$DECKY_LOADER"
 fi
 [[ -s "$DECKY_LOADER" ]] || die "Decky loader ${DECKY_VERSION} missing and download failed"
+echo "${DECKY_SHA256}  ${DECKY_LOADER}" | sha256sum -c --quiet - \
+  || die "Decky loader ${DECKY_VERSION} does not match its pinned sha256 (delete ${DECKY_LOADER} to re-download)"
 mkdir -p "$HOME_DST/homebrew/services" "$HOME_DST/homebrew/settings" "$HOME_DST/homebrew/data" "$HOME_DST/homebrew/logs"
 # ~/.cache must exist (user-owned, see chown below) before anything running
 # as root with HOME=/home/steamos can create it root-owned.

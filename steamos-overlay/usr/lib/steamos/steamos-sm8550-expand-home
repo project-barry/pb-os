@@ -116,10 +116,8 @@ log "home SOURCE=${HOME_SRC} disk=${DISK} part=${PART_NUM}"
 
 if command -v growpart >/dev/null 2>&1; then
   log "growpart ${DISK} ${PART_NUM}"
-  set +e
   GROW_OUT="$(growpart "${DISK}" "${PART_NUM}" 2>&1)"
   GROW_RC=$?
-  set -e
   printf '%s\n' "${GROW_OUT}"
   if [[ "${GROW_RC}" -eq 0 ]]; then
     log "partition grew"
@@ -144,10 +142,8 @@ partx -u "${DISK}" 2>/dev/null || true
 sleep 0.2
 
 log "resize2fs ${HOME_SRC}"
-set +e
 RESIZE_OUT="$(resize2fs "${HOME_SRC}" 2>&1)"
 RESIZE_RC=$?
-set -e
 printf '%s\n' "${RESIZE_OUT}"
 if [[ "${RESIZE_RC}" -ne 0 ]]; then
   if ! printf '%s\n' "${RESIZE_OUT}" | grep -qiE 'Nothing to do|already|is already'; then

@@ -182,12 +182,18 @@ for r in rels:
 }
 
 write_plugin_loader_unit() {
-  local dest="$1" emu start
+  local dest="$1" emu start cache=""
   emu="$(emulator_bin || true)"
   if [[ -n "$emu" ]]; then
     start="${emu} ${PLUGIN_LOADER}"
   else
     start="${PLUGIN_LOADER}"
+  fi
+  if [[ "$emu" == */box64 ]]; then
+    # Runs as root with HOME=~steamos: keep box64's code cache out of ~/.cache,
+    # or it creates ~/.cache root-owned and KDE can't build its app list
+    # (empty Desktop Mode menu). Same lines as the shipped unit.
+    cache=$'Environment=BOX64_DYNACACHE_FOLDER=/var/cache/decky-box64\nCacheDirectory=decky-box64'
   fi
   mkdir -p "$(dirname "$dest")"
   cat >"$dest" <<EOF
@@ -214,6 +220,7 @@ Environment=XDG_CONFIG_HOME=${REAL_HOME}/.config
 Environment=XDG_DATA_HOME=${REAL_HOME}/.local/share
 Environment=XDG_RUNTIME_DIR=/run/user/${REAL_UID}
 Environment=BOX64_NOBANNER=1
+${cache}
 
 [Install]
 WantedBy=multi-user.target

@@ -17,6 +17,8 @@ MOD="${ROOT}/external-and-mods"
 OVL="${ROOT}/steamos-overlay"
 KOUT="${KERNEL_OUT:-${WORKDIR}/kernel-release/current}"
 BOX64_SRC="${BOX64_SRC:-${MOD}/BOX64/box64}"
+# Pinned: the commit the alpha v0.5.2.x images were built from (v0.4.5 dev).
+BOX64_COMMIT="${BOX64_COMMIT:-c6a8c4472f74f9ad204d35195f084b5f996b12e3}"
 BOX64_BUILD="${BOX64_BUILD:-/tmp/box64-build-frame}"
 IMG="${STEAMOS_SM8650_IMG:-${WORKDIR}/steamos-sm8650.img}"
 MNT="${WORKDIR}/.image-mnt"
@@ -52,7 +54,13 @@ sudo_run() {
     sudo "$@"
     return
   fi
-  printf 'steam\n' | sudo -S -p '' "$@"
+  # No baked-in password: a terminal gets one sudo prompt (cached after),
+  # anything else must run as root or with passwordless sudo on the VM.
+  if [[ -t 0 ]] && sudo -v; then
+    sudo "$@"
+    return
+  fi
+  die "sudo needs a password: run as root or allow passwordless sudo on the build VM"
 }
 
 usage() {
@@ -165,8 +173,16 @@ build_box64() {
     die "Box64 missing or needs GLIBC_2.43, and --skip-box64 is set"
   fi
   if [[ ! -d "${BOX64_SRC}/.git" && ! -f "${BOX64_SRC}/CMakeLists.txt" ]]; then
-    log "Cloning ptitSeb/box64"
-    git clone --recursive --depth 1 https://github.com/ptitSeb/box64 "${BOX64_SRC}"
+    log "Fetching ptitSeb/box64 at ${BOX64_COMMIT}"
+    mkdir -p "${BOX64_SRC}"
+    git -C "${BOX64_SRC}" init -q
+    git -C "${BOX64_SRC}" fetch -q --depth 1 https://github.com/ptitSeb/box64 "${BOX64_COMMIT}"
+    git -C "${BOX64_SRC}" checkout -q FETCH_HEAD
+    git -C "${BOX64_SRC}" submodule update -q --init --recursive --depth 1
+  fi
+  if [[ -d "${BOX64_SRC}/.git" ]] \
+      && [[ "$(git -C "${BOX64_SRC}" rev-parse HEAD 2>/dev/null)" != "${BOX64_COMMIT}" ]]; then
+    die "box64 checkout at ${BOX64_SRC} is not ${BOX64_COMMIT}: delete it or set BOX64_COMMIT"
   fi
   log "Building Box64 inside Frame rootfs (glibc 2.39, SD8G2)"
   "${SCRIPTS}/build-box64-in-rootfs.sh" "${R}"
@@ -472,6 +488,9 @@ size=$((ROOT_MIB * 2048)), type=83
 type=83
 EOF
 
+  # Armed before losetup so a loop device whose partitions never appear is
+  # still detached on the way out.
+  trap cleanup_image EXIT
   LOOPDEV="$(sudo_run losetup -f --show -P "${IMG}")"
   [[ -n "${LOOPDEV}" ]] || die "losetup failed"
   log "loop ${LOOPDEV}"
@@ -479,8 +498,6 @@ EOF
   boot_dev="${LOOPDEV}p1"
   root_dev="${LOOPDEV}p2"
   home_dev="${LOOPDEV}p3"
-
-  trap cleanup_image EXIT
 
   sudo_run mkfs.vfat -F 32 -n BOOT "${boot_dev}"
   sudo_run mkfs.ext4 -F -L root -U "${root_uuid}" -m 1 "${root_dev}"
@@ -527,7 +544,8 @@ EOF
   log "Writing fstab and KERNEL (root PARTUUID ${disk_id}-02)"
   # SteamOS mounts /etc from the overlay. Write both layers so first boot
   # actually uses this 3-partition layout (and home can grow).
-  sudo_run tee "${MNT}/root/etc/fstab" >/dev/null <<EOF
+  # install, not tee: tee leaves the file at the root umask (0666 seen on devices).
+  sudo_run install -m 0644 /dev/stdin "${MNT}/root/etc/fstab" <<EOF
 # SteamOS SM8650 — PC/handheld layout (not Steam Deck A/B)
 UUID=${root_uuid}  /      ext4  defaults,noatime                         0 1
 LABEL=BOOT         /boot  vfat  defaults,umask=0077,nofail               0 2
