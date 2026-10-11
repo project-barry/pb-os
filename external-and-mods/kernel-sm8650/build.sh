@@ -69,6 +69,11 @@ PREFER_SM8650=(0060-Add-Silergy-SY7758-backlight-driver.patch)
 # SOC=all: ROCKNIX patches rebased onto the other SoC's (same name, replaces
 # ROCKNIX's copy). See all/README.
 ALL_ROCKNIX="${HERE}/all/rocknix"
+# SOC=all: port patches for the combined tree only (all/patches), and the
+# SM8650 port patches they or an SM8550 twin replace (all/port-skip, one
+# basename per line). See all/README.
+ALL_PORT="${HERE}/all/patches"
+ALL_PORT_SKIP="${HERE}/all/port-skip"
 # 7.2 only boots when built with GCC 15 (see build-gcc15.sh, which runs this
 # script in a Fedora 43 container). GCC 13's kernel dies before the initramfs
 # on the Retroid Pocket 6.
@@ -219,7 +224,23 @@ prepare_source() {
     local -a list=()
     case "$d" in
       @devices) for s in "${SOCS[@]}"; do list+=("$(rocknix_path "projects/ROCKNIX/devices/${s}/patches/linux")"/*.patch); done ;;
-      @port) for pd in "${PORT_DIRS[@]}"; do list+=("${pd}/patches"/*.patch); done ;;
+      @port)
+        local -A port_skip=()
+        if ((${#SOCS[@]} > 1)) && [[ -f "$ALL_PORT_SKIP" ]]; then
+          while IFS= read -r line; do
+            line="${line%%#*}"; line="${line//[[:space:]]/}"
+            [[ -n "$line" ]] && port_skip["$line"]=1
+          done <"$ALL_PORT_SKIP"
+        fi
+        for pd in "${PORT_DIRS[@]}"; do
+          for p in "${pd}/patches"/*.patch; do
+            if [[ "$pd" == "$HERE" && -n "${port_skip[$(basename "$p")]:-}" ]]; then
+              log "SOC=all: skip $(basename "$p") (all/port-skip)"; continue
+            fi
+            list+=("$p")
+          done
+        done
+        ((${#SOCS[@]} > 1)) && list+=("${ALL_PORT}"/*.patch) ;;
       *)
         [[ -d "$(rocknix_path "$d")" ]] || { log "skip missing patch dir $d"; continue; }
         list=("$(rocknix_path "$d")"/*.patch) ;;

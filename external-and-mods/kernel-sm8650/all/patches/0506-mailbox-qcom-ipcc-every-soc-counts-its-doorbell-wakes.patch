@@ -1,0 +1,83 @@
+From: lavachemist <48248311+lavachemist@users.noreply.github.com>
+Subject: [PATCH] mailbox: qcom-ipcc: SOC=all: every SoC counts its doorbell wakes
+
+For the combined SM8550 + SM8650 kernel only (SOC=all), on top of the
+SM8550 port's 0504 + 0505, in place of the SM8650 port's 0019 (which is
+written against the unmasked driver). 0505 counts the doorbell wakes
+("ipcc-wake") only on the SoCs 0504 masks (SM8550/SM8750). On SM8650 a
+doorbell always woke deep sleep, and the KONKR Pocket FIT's charge rest
+needs the count there too: register the wakeup source and the syscore ops
+for every instance, and let deep_wake=N mask the other SoCs across the
+whole of suspend-to-RAM (0019's switch).
+---
+--- a/drivers/mailbox/qcom-ipcc.c
++++ b/drivers/mailbox/qcom-ipcc.c
+@@ -45,7 +45,7 @@
+  */
+ static bool deep_wake = true;
+ module_param(deep_wake, bool, 0644);
+-MODULE_PARM_DESC(deep_wake, "SM8550/SM8750: an ADSP doorbell wakes suspend-to-RAM");
++MODULE_PARM_DESC(deep_wake, "An ADSP doorbell wakes suspend-to-RAM (N: masked across it)");
+ 
+ /**
+  * struct qcom_ipcc_chan_info - Per-mailbox-channel info
+@@ -302,7 +302,12 @@
+ {
+ 	struct qcom_ipcc *ipcc = dev_get_drvdata(dev);
+ 
+-	if (ipcc->mask_on_s2ram && pm_suspend_target_state == PM_SUSPEND_MEM) {
++	/*
++	 * The other SoCs (SM8650) never masked: a doorbell always woke
++	 * suspend-to-RAM there. deep_wake=N masks it across the whole of it.
++	 */
++	if ((ipcc->mask_on_s2ram || !READ_ONCE(deep_wake)) &&
++	    pm_suspend_target_state == PM_SUSPEND_MEM) {
+ 		disable_irq(ipcc->irq);
+ 		ipcc->masked = true;
+ 	}
+@@ -454,17 +459,16 @@
+ 	 * A lazy disable leaves the GIC enable bit set, and a doorbell on the
+ 	 * still-powered GIC then wakes suspend-to-RAM despite the masking.
+ 	 */
+-	if (ipcc->mask_on_s2ram) {
+-		irq_set_status_flags(ipcc->irq, IRQ_DISABLE_UNLAZY);
++	irq_set_status_flags(ipcc->irq, IRQ_DISABLE_UNLAZY);
+ 
+-		ipcc->ws = wakeup_source_register(&pdev->dev, "ipcc-wake");
+-		if (!ipcc->ws) {
+-			ret = -ENOMEM;
+-			goto err_req_irq;
+-		}
+-		ipcc->syscore.ops = &qcom_ipcc_syscore_ops;
+-		ipcc->syscore.data = ipcc;
++	/* Every SoC counts its doorbell wakes (SM8650: a charger plugged in). */
++	ipcc->ws = wakeup_source_register(&pdev->dev, "ipcc-wake");
++	if (!ipcc->ws) {
++		ret = -ENOMEM;
++		goto err_req_irq;
+ 	}
++	ipcc->syscore.ops = &qcom_ipcc_syscore_ops;
++	ipcc->syscore.data = ipcc;
+ 
+ 	ret = devm_request_irq(&pdev->dev, ipcc->irq, qcom_ipcc_irq_fn,
+ 			       IRQF_TRIGGER_HIGH | IRQF_NO_SUSPEND |
+@@ -475,8 +479,7 @@
+ 	}
+ 
+ 	platform_set_drvdata(pdev, ipcc);
+-	if (ipcc->mask_on_s2ram)
+-		register_syscore(&ipcc->syscore);
++	register_syscore(&ipcc->syscore);
+ 
+ 	return 0;
+ 
+@@ -494,8 +497,7 @@
+ {
+ 	struct qcom_ipcc *ipcc = platform_get_drvdata(pdev);
+ 
+-	if (ipcc->mask_on_s2ram)
+-		unregister_syscore(&ipcc->syscore);
++	unregister_syscore(&ipcc->syscore);
+ 	wakeup_source_unregister(ipcc->ws);
+ 	disable_irq_wake(ipcc->irq);
+ 	irq_domain_remove(ipcc->irq_domain);

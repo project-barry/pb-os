@@ -6,3 +6,14 @@ rocknix/  ROCKNIX device patches rebased for the combined tree. A file here
           touched the same lines:
   0063-gpu-drm-panel-add-pocket-fit-panel.patch (SM8650): Makefile hunk
           after the SM8550 AR06/AR02 panel lines.
+
+patches/  port patches for the combined tree only, queued with the port
+          patches by name:
+  0506-mailbox-qcom-ipcc-every-soc-counts-its-doorbell-wakes.patch: on top
+          of SM8550 0504/0505, gives SM8650 the "ipcc-wake" count (SM8650's
+          0019 is written against the unmasked driver).
+
+port-skip SM8650 port patches the combined tree leaves out (each replaced by
+          an SM8550 twin or a patch in patches/). Port patches whose code is
+          identical to the other SoC's (e.g. SM8650 0021 = SM8550 0539) are
+          dropped automatically.

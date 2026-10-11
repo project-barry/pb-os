@@ -1,0 +1,4 @@
+# SOC=all: SM8650 port patches left out of the combined kernel (one basename
+# per line), each replaced by an SM8550 twin or by a patch in all/patches.
+0015-power-supply-qcom_battmgr-no-battery-notifications-while-asleep.patch  # SM8550 0547 = 0015 + USB refresh after wake, written on top of 0545/0546
+0019-mailbox-qcom-ipcc-count-the-deep-sleep-wakes-by-an-adsp-doorbell.patch  # SM8550 0504 + 0505 + all/patches/0506
