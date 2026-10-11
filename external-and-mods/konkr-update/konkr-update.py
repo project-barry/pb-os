@@ -867,7 +867,7 @@ def install_kernel(src, boot):
 
 # Plugins one device of a shared image uses (sync-decky-bundled-plugins.sh's
 # DEVICE_ONLY, by DTB model here); other devices get them removed.
-DEVICE_PLUGINS = {'dual-screen': ('AYN Thor',)}
+DEVICE_PLUGINS = {'dual-screen': ('AYN Thor',), 'thor-stick-calibration': ('AYN Thor',)}
 
 
 def plugin_dirs(work, manifest):

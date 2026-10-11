@@ -1,0 +1,12 @@
+{
+  "name": "Stick Calibration",
+  "author": "lavachemist",
+  "api_version": 1,
+  "flags": ["root"],
+  "version": "0.1.0",
+  "publish": {
+    "tags": ["ayn", "thor", "sm8550", "controller", "calibration"],
+    "description": "EXPERIMENTAL, for testing: the AYN Thor's stick calibration in Game Mode, like AYN's Android tool. Let go of the sticks, push them round the edge, save: each stick's centre and range are set until you turn it off or restart.",
+    "image": "https://opengraph.githubassets.com/1/SteamDeckHomebrew/decky-loader"
+  }
+}

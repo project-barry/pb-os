@@ -12,6 +12,7 @@ set -euo pipefail
 
 declare -A DEVICE_ONLY=(
   [dual-screen]="ayn,thor"
+  [thor-stick-calibration]="ayn,thor"
 )
 
 STEAM_USER="${STEAM_USER:-steamos}"

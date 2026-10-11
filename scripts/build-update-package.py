@@ -188,7 +188,7 @@ if not (root / 'usr/lib/liblsfg-vk-arm64.so').is_file(): raise SystemExit('missi
 bundle = root / 'usr/share/steamos-odin/decky-plugins'
 bundled = [p.name for p in bundle.iterdir() if p.is_dir()] if bundle.is_dir() else []
 PLUGINS = sorted({'decky-lsfg-vk', *bundled})
-REMOVE = sorted({'pbos-control', 'dual-screen', 'thor-screens', 'pbos-update'} - set(PLUGINS))
+REMOVE = sorted({'pbos-control', 'dual-screen', 'thor-stick-calibration', 'thor-screens', 'pbos-update'} - set(PLUGINS))
 def load_state(f):
     b = json.load(gzip.open(f, 'rt'))
     if b.get('image') not in (image, *OLD_IMAGES): raise SystemExit(f'{f}: state of {b.get("image")}, building {image}')

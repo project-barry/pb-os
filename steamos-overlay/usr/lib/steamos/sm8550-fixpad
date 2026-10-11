@@ -9,6 +9,10 @@ handheld userspace.
 This only changes absinfo on the native evdev node (EVIOCSABS). It does
 not grab the device, does not create a virtual keyboard, and does not
 use InputPlumber — external USB/Bluetooth keyboards stay independent.
+
+While the Thor's experimental Stick Calibration plugin has its calibration
+on (CALIBRATED exists; it is in /run, so never after a restart), `apply`
+leaves the pad alone: the calibration set the ranges for that unit.
 """
 from __future__ import annotations
 
@@ -18,6 +22,7 @@ import struct
 import sys
 
 TARGET = int(os.environ.get("FIXPAD_TARGET", "740"))
+CALIBRATED = "/run/pbos-stickcal/active"
 NAMES = {
     "AYN Odin2 Gamepad",
     "AYN Thor Gamepad",
@@ -115,6 +120,9 @@ def status() -> int:
 
 
 def apply(target: int) -> int:
+    if os.path.exists(CALIBRATED):
+        print("sm8550-fixpad: Stick Calibration is on, leaving the pad alone")
+        return 0
     pads = iter_gamepads()
     if not pads:
         print("sm8550-fixpad: no rsinput gamepad yet (ok at early boot)", file=sys.stderr)

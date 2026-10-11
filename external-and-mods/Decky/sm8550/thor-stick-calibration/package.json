@@ -1,0 +1,8 @@
+{
+  "name": "thor-stick-calibration",
+  "version": "0.1.0",
+  "description": "Decky plugin — experimental AYN Thor stick calibration (dist/index.js is hand-written, no build step)",
+  "private": true,
+  "license": "GPL-3.0-or-later",
+  "type": "module"
+}
