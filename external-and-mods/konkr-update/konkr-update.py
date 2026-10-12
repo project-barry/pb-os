@@ -4,6 +4,7 @@ No partitioning or formatting commands are used. Games and Steam account data ar
 """
 from __future__ import annotations
 import argparse
+import base64
 import fcntl
 import hashlib
 import json
@@ -52,13 +53,25 @@ BASE_FILE = 'usr/share/pb-os/base'
 # to the images people flash; earlier releases stay on pb-os.
 RELEASES = ('https://api.github.com/repos/project-barry/pb-os-updates/releases',
             'https://api.github.com/repos/project-barry/pb-os/releases')
-# Dev devices also take test builds from pb-os-dev: /etc/pb-os/update-channel
-# says "dev" (`konkr-update.py channel dev`, `pbosctl update-channel dev`, or
-# PB-OS Utils' Dev updates switch). Images ship without the file (prod), and
-# updates never touch it. A build that passes is promoted to pb-os-updates as
-# it is (same files, same signature).
+# Dev devices also take test builds from pb-os-dev. Only testers turn that
+# on, with their passphrase (`konkr-update.py channel dev`, `pbosctl
+# update-channel dev`, or PB-OS Utils: tap the Installed line 7 times):
+# /etc/pb-os/update-channel then holds "dev", the tester's name and a
+# signature over this device's machine-id, checked against the tester's
+# public key in TESTERS. Nothing on the device can make that signature: the
+# passphrase stretched by scrypt (with the tester's salt) is the private key.
+# A plain "dev" (from before testers) or a file copied from another device
+# counts as prod, and a tester taken out of TESTERS turns their devices back
+# to prod. Images ship without the file (prod), and updates never touch it.
+# A build that passes is promoted to pb-os-updates as it is (same files, same
+# signature).
 DEV_RELEASES = 'https://api.github.com/repos/project-barry/pb-os-dev/releases'
 CHANNEL_FILE = Path('/etc/pb-os/update-channel')
+TESTERS = Path('/usr/share/konkr-update/dev_testers')
+MACHINE_ID = Path('/etc/machine-id')
+# scrypt cost: 32 MiB and about a tenth of a second per try on the devices.
+SCRYPT = dict(n=2 ** 15, r=8, p=1, maxmem=64 << 20, dklen=32)
+WRONG_PASSPHRASE_WAIT = 3
 # Release assets of each device's packages, split into .001, .002, ... parts
 # under GitHub's 2 GiB limit: pb-os-<tag>-<image>.update.tar.gz (full) and
 # pb-os-<tag>-<image>.from-<installed tag>.delta.tar.gz (delta).
@@ -77,10 +90,134 @@ OLD_NAMES = {'KONKR Pocket FIT': ('pocketfit',), 'AYANEO Pocket S2': ('pocketfit
              'Retroid Pocket Nova': ('sm8550', 'rp6'), 'AYN Thor': ('sm8550', 'rp6')}
 
 
+# Ed25519 (RFC 8032), small and slow, for the tester check only (releases
+# are checked by ssh-keygen): Python's standard library has no Ed25519.
+ED_P = 2 ** 255 - 19
+ED_Q = 2 ** 252 + 27742317777372353535851937790883648493
+ED_D = -121665 * pow(121666, ED_P - 2, ED_P) % ED_P
+ED_I = pow(2, (ED_P - 1) // 4, ED_P)
+
+
+def ed_add(a, b):
+    p = ED_P
+    A = (a[1] - a[0]) * (b[1] - b[0]) % p
+    B = (a[1] + a[0]) * (b[1] + b[0]) % p
+    C = 2 * a[3] * b[3] * ED_D % p
+    D = 2 * a[2] * b[2] % p
+    E, F, G, H = B - A, D - C, D + C, B + A
+    return E * F % p, G * H % p, F * G % p, E * H % p
+
+
+def ed_mul(s, pt):
+    q = (0, 1, 1, 0)
+    while s:
+        if s & 1: q = ed_add(q, pt)
+        pt = ed_add(pt, pt); s >>= 1
+    return q
+
+
+def ed_x(y, sign):
+    p = ED_P
+    if y >= p: return None
+    x2 = (y * y - 1) * pow(ED_D * y * y + 1, p - 2, p) % p
+    if x2 == 0: return None if sign else 0
+    x = pow(x2, (p + 3) // 8, p)
+    if (x * x - x2) % p: x = x * ED_I % p
+    if (x * x - x2) % p: return None
+    return p - x if (x & 1) != sign else x
+
+
+ED_GY = 4 * pow(5, ED_P - 2, ED_P) % ED_P
+ED_G = (ed_x(ED_GY, 0), ED_GY, 1, ed_x(ED_GY, 0) * ED_GY % ED_P)
+
+
+def ed_bytes(pt):
+    zi = pow(pt[2], ED_P - 2, ED_P)
+    x, y = pt[0] * zi % ED_P, pt[1] * zi % ED_P
+    return (y | (x & 1) << 255).to_bytes(32, 'little')
+
+
+def ed_point(b):
+    if len(b) != 32: return None
+    y = int.from_bytes(b, 'little'); sign = y >> 255; y &= (1 << 255) - 1
+    x = ed_x(y, sign)
+    return None if x is None else (x, y, 1, x * y % ED_P)
+
+
+def ed_hash(*parts):
+    return int.from_bytes(hashlib.sha512(b''.join(parts)).digest(), 'little') % ED_Q
+
+
+def ed_secret(seed):
+    h = hashlib.sha512(seed).digest()
+    a = int.from_bytes(h[:32], 'little') & ((1 << 254) - 8) | (1 << 254)
+    return a, h[32:]
+
+
+def ed_public(seed):
+    return ed_bytes(ed_mul(ed_secret(seed)[0], ED_G))
+
+
+def ed_sign(seed, msg):
+    a, prefix = ed_secret(seed)
+    pub = ed_bytes(ed_mul(a, ED_G))
+    r = ed_hash(prefix, msg)
+    R = ed_bytes(ed_mul(r, ED_G))
+    return R + ((r + ed_hash(R, pub, msg) * a) % ED_Q).to_bytes(32, 'little')
+
+
+def ed_verify(pub, msg, sig):
+    if len(sig) != 64: return False
+    A, R = ed_point(pub), ed_point(sig[:32])
+    s = int.from_bytes(sig[32:], 'little')
+    if not A or not R or s >= ED_Q: return False
+    h = ed_hash(sig[:32], pub, msg)
+    left, right = ed_mul(s, ED_G), ed_add(R, ed_mul(h, A))
+    return (left[0] * right[2] - right[0] * left[2]) % ED_P == 0 and \
+           (left[1] * right[2] - right[1] * left[2]) % ED_P == 0
+
+
+def b64(data): return base64.b64encode(data).decode()
+
+
+def tester_seed(passphrase, salt):
+    return hashlib.scrypt(passphrase.encode(), salt=salt, **SCRYPT)
+
+
+def testers():
+    """{name: public key} from TESTERS; lines: name v1 salt public-key."""
+    found = {}
+    try: lines = TESTERS.read_text().splitlines()
+    except OSError: return found
+    for line in lines:
+        f = line.split()
+        if len(f) == 4 and f[1] == 'v1' and not f[0].startswith('#'):
+            try: found[f[0]] = (base64.b64decode(f[2], validate=True), base64.b64decode(f[3], validate=True))
+            except ValueError: pass
+    return found
+
+
+def unlock_message(name):
+    """What a tester signs for this device: its machine-id."""
+    mid = MACHINE_ID.read_text().strip()
+    if not mid: raise ValueError('this device has no machine-id yet')
+    return b'pb-os dev updates\0' + mid.encode() + b'\0' + name.encode()
+
+
+def dev_tester():
+    """The tester whose signature turned dev updates on here, or None."""
+    try:
+        f = CHANNEL_FILE.read_text().split()
+        if len(f) != 3 or f[0] != 'dev': return None
+        key = testers().get(f[1])
+        if key and ed_verify(key[1], unlock_message(f[1]), base64.b64decode(f[2], validate=True)): return f[1]
+    except (OSError, ValueError): pass
+    return None
+
+
 def update_channel():
-    """'dev' on a device that opted in, else 'prod'."""
-    try: return 'dev' if CHANNEL_FILE.read_text().strip() == 'dev' else 'prod'
-    except OSError: return 'prod'
+    """'dev' on a device a tester unlocked, else 'prod'."""
+    return 'dev' if dev_tester() else 'prod'
 
 
 def release_lists():
@@ -520,20 +657,51 @@ def find_update(reinstall=False):
 def check(args):
     current = installed_version()
     found = find_update()
-    print(json.dumps({'current': current, 'base': installed_base(), 'channel': update_channel(), 'update': found,
+    print(json.dumps({'current': current, 'base': installed_base(), 'channel': update_channel(), 'tester': dev_tester(),
+                      'update': found,
                       'available': bool(found) and found['version'] != current}, indent=2))
 
 
+def read_passphrase():
+    if sys.stdin.isatty():
+        import getpass
+        return getpass.getpass('Tester passphrase: ')
+    return sys.stdin.readline().rstrip('\n')
+
+
 def set_channel(args):
-    """Print the update channel, or set it (dev or prod)."""
+    """Print the update channel, or set it: dev needs a tester's passphrase
+    (asked for, or the first line on stdin), prod turns it off."""
     if args.channel:
         if os.geteuid() != 0: raise ValueError('needs administrator access')
         if args.channel == 'dev':
+            passphrase = read_passphrase()
+            for name, (salt, pub) in testers().items():
+                seed = tester_seed(passphrase, salt)
+                if ed_public(seed) == pub: break
+            else:
+                time.sleep(WRONG_PASSPHRASE_WAIT)  # slows down guessing
+                raise ValueError('not a tester passphrase')
+            line = f'dev {name} {b64(ed_sign(seed, unlock_message(name)))}\n'
             CHANNEL_FILE.parent.mkdir(parents=True, exist_ok=True)
-            CHANNEL_FILE.write_text('dev\n'); os.chmod(CHANNEL_FILE, 0o644)
+            tmp = CHANNEL_FILE.with_suffix('.new')
+            tmp.write_text(line); os.chmod(tmp, 0o644); os.replace(tmp, CHANNEL_FILE)
         else:
             CHANNEL_FILE.unlink(missing_ok=True)
-    print(update_channel())
+    tester = dev_tester()
+    print(f'dev ({tester})' if tester else 'prod')
+
+
+def tester_line(args):
+    """A new TESTERS line for a passphrase (asked for twice); the passphrase
+    itself is never stored."""
+    import getpass
+    if not re.fullmatch(r'[A-Za-z0-9_.-]{1,32}', args.name): raise ValueError('name: letters, digits, . _ - only')
+    passphrase = getpass.getpass('New tester passphrase: ')
+    if len(passphrase) < 16: raise ValueError('use at least 16 characters (a few words)')
+    if getpass.getpass('Again: ') != passphrase: raise ValueError('the two passphrases differ')
+    salt = os.urandom(16)
+    print(f'{args.name} v1 {b64(salt)} {b64(ed_public(tester_seed(passphrase, salt)))}')
 
 
 def download(update, dest):
@@ -1479,6 +1647,8 @@ def main():
     sub.add_parser('cleanup', help='free what finished updates left on HOME')
     p = sub.add_parser('channel', help='show the update channel, or set it: dev also takes test builds')
     p.add_argument('channel', nargs='?', choices=('dev', 'prod'))
+    p = sub.add_parser('tester-line', help='a dev_testers line for a new passphrase (run on your own computer)')
+    p.add_argument('name')
     a = ap.parse_args()
     try:
         if a.command in ('stage', 'update', 'local-update', 'cleanup'):
@@ -1494,6 +1664,7 @@ def main():
                 else: cleanup()
         elif a.command == 'check': check(a)
         elif a.command == 'channel': set_channel(a)
+        elif a.command == 'tester-line': tester_line(a)
         elif a.command == 'local-check': local_check(a)
         elif a.command == 'recover': return recover(a)
         else:

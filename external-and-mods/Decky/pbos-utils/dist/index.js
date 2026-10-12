@@ -154,9 +154,52 @@ function useThrottled(send) {
 }
 
 // --------------------------------------------------------------- update ---
+// Dev updates are for testers: the switch shows only on a device a tester
+// unlocked with their passphrase. Tapping the Installed line this many times
+// (each within TAP_GAP_MS of the last) asks for it.
+const UNLOCK_TAPS = 7;
+const TAP_GAP_MS = 3000;
+
+function TesterUnlock({ closeModal, onDone }) {
+    const [pass, setPass] = useState("");
+    const [busy, setBusy] = useState(false);
+    const [error, setError] = useState("");
+    const submit = () => {
+        if (busy || !pass) return;
+        setBusy(true);
+        setError("");
+        setChannel("dev", pass).then((r) => {
+            if (r && r.ok) { onDone(); closeModal(); return; }
+            setError((r && r.error === "not a tester passphrase") ? "Not a tester passphrase." : `Could not turn on dev updates: ${(r && r.error) || "unknown error"}`);
+            setPass("");
+        }).catch(() => setError("Could not turn on dev updates.")).finally(() => setBusy(false));
+    };
+    return jsx(DFL.ModalRoot, {
+        closeModal, onCancel: closeModal,
+        children: jsxs("div", { children: [
+            jsx("div", { style: { fontSize: "20px", fontWeight: "bold", marginBottom: "12px" }, children: "Tester unlock" }),
+            jsx(DFL.TextField, {
+                label: "Passphrase", bIsPassword: true, value: pass, disabled: busy,
+                onChange: (e) => setPass(e.target.value),
+            }),
+            error ? jsx("div", { style: { color: "#ff6b6b", marginTop: "8px" }, children: error }) : null,
+            busy ? jsx("div", { style: { opacity: 0.75, marginTop: "8px" }, children: "Checking…" }) : null,
+            jsxs(DFL.Focusable, {
+                "flow-children": "horizontal",
+                style: { display: "flex", gap: "8px", marginTop: "16px", justifyContent: "flex-end" },
+                children: [
+                    jsx(DFL.DialogButton, { style: { width: "auto", minWidth: "120px" }, onClick: closeModal, children: "Cancel" }),
+                    jsx(DFL.DialogButton, { style: { width: "auto", minWidth: "120px" }, disabled: busy || !pass, onClick: submit, children: "Unlock" }),
+                ],
+            }),
+        ] }),
+    });
+}
+
 function UpdateTab() {
     const [st, setSt] = useState(null);
     const [checking, setChecking] = useState(false);
+    const taps = useRef({ n: 0, at: 0 });
     const refresh = useCallback(() => {
         getState().then(setSt).catch(() => {});
     }, []);
@@ -185,7 +228,20 @@ function UpdateTab() {
     const up = rel.update;
     const job = st.job || {};
     const dev = rel.channel === "dev";
-    const items = [note(`Installed: ${st.installed}${dev ? " · Dev updates on" : ""}`)];
+    const tap = () => {
+        if (dev) return;
+        const t = taps.current, now = Date.now();
+        t.n = now - t.at > TAP_GAP_MS ? 1 : t.n + 1;
+        t.at = now;
+        if (t.n < UNLOCK_TAPS) return;
+        t.n = 0;
+        DFL.showModal(jsx(TesterUnlock, { onDone: refresh }));
+    };
+    const items = [row(jsx(DFL.Focusable, {
+        onActivate: tap, onClick: tap,
+        style: { fontSize: "12px", opacity: 0.75 },
+        children: `Installed: ${st.installed}${dev ? ` · Dev updates on${rel.tester ? ` (${rel.tester})` : ""}` : ""}`,
+    }))];
 
     if (st.pending) {
         items.push(
@@ -274,16 +330,17 @@ function UpdateTab() {
         items.push(note("No internet here? Put the update's files, SHA256SUMS and SHA256SUMS.sig from the release "
             + "in the top folder of a microSD card or USB drive and put it in. Or download them in Desktop Mode "
             + "to the Downloads folder; they are deleted from there once the update is ready."));
-        // For testers: also offer test builds (pb-os-dev). Off on every device
-        // until turned on here; a fresh image starts with it off.
-        items.push(row(jsx(DFL.ToggleField, {
+        // For testers: also offer test builds (pb-os-dev). Shown only once a
+        // tester unlocked this device (UNLOCK_TAPS); off hides it again.
+        if (dev) items.push(row(jsx(DFL.ToggleField, {
             label: "Dev updates",
-            description: "Also offer test builds before they are released. For testers.",
-            checked: dev,
-            disabled: checking || rel.ok === undefined,
+            description: "Also offer test builds before they are released. Turning this off hides it until a tester unlocks it again.",
+            checked: true,
+            disabled: checking,
             onChange: (on) => {
+                if (on) return;
                 setChecking(true);
-                setChannel(on ? "dev" : "prod").catch(() => {}).finally(() => { setChecking(false); refresh(); });
+                setChannel("prod").catch(() => {}).finally(() => { setChecking(false); refresh(); doCheck(); });
             },
         })));
     }

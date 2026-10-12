@@ -1,0 +1,5 @@
+# Testers who may turn on dev updates (test builds from pb-os-dev).
+# One line each: name v1 salt public-key, made by scripts/dev-passphrase.sh.
+# Only the public key is here; the passphrase is never stored anywhere.
+# Delete a line to turn that tester's devices back to prod with the next
+# update.
