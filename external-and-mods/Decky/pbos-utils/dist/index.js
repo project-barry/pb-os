@@ -1044,8 +1044,11 @@ function onMode(profile) {
 // (Steam Linux Runtime), games the user set themselves, and games whose Valve
 // pick is just "the default" (they get the global default, below). A game the
 // user changes after PB-OS switched it is left alone from then on.
-// The global default becomes Proton 11.0-2 PB-OS (ARM) while it is still
-// Valve's own (proton-stable); a default the user picks stays.
+// The global default is checked once: if it is still Valve's own
+// (proton-stable or empty), it becomes Proton 11.0-2 PB-OS (ARM). Either way
+// the check is recorded ("global_set" in proton-games.json) and the global
+// default is never touched again, so whatever the user picks later stays.
+// A device where an earlier version already set the twin just records it.
 // Event-driven: at Steam start, when Steam's app overviews change (installs,
 // updates), and when a game's Play is pressed.
 const USER_PICK = 250;
@@ -1063,11 +1066,18 @@ async function protonCheck(appids) {
     if (!Object.keys(twins).length) return;
     const settings = window.settingsStore && window.settingsStore.m_Settings;
     const stable = twins["proton_11-arm64"];
-    if (stable && settings && VALVE_DEFAULT.includes(settings.strCompatTool || "")) {
-        SteamClient.Settings.SpecifyGlobalCompatTool(stable);
-        await setProtonGames(null, `global default -> ${stable}`);
-    }
     const state = await getProtonGames();
+    if (stable && settings && !state.global_set) {
+        const current = settings.strCompatTool || "";
+        if (VALVE_DEFAULT.includes(current)) {
+            SteamClient.Settings.SpecifyGlobalCompatTool(stable);
+            state.global_set = stable;
+            await setProtonGames(state, `global default -> ${stable} (once)`);
+        } else {
+            state.global_set = current;
+            await setProtonGames(state, `global default is ${current}, left as is from now on`);
+        }
+    }
     const ours = new Set(Object.values(twins));
     const notes = [];
     let changed = false;
