@@ -113,28 +113,8 @@ else
   want_kb=1
 fi
 
-# KONKR Pocket FIT: its built-in pad goes to Steam as a real Steam Deck
-# controller (InputPlumber "deck" target, USB/IP via vhci_hcd, 28de:1205)
-# instead of deck-uhid's generic 28de:12f0. Steam only names the pad
-# "Steam Deck Controller" (and only applies Deck layouts) for the real ID,
-# and emulator defaults such as EmuDeck's Dolphin profile bind to that name.
-# steamos-manager knows deck-uhid only and resets every composite to its
-# device file's list when the composite appears, so this runs after it.
-deck_pad=""
-if grep -qa "konkr,pocket-fit" /sys/firmware/devicetree/base/compatible 2>/dev/null \
-  && modinfo vhci-hcd >/dev/null 2>&1; then
-  deck_pad="KONKR Pocket FIT"
-fi
-
-composite_name() {
-  busctl --system get-property org.shadowblip.InputPlumber \
-    "/org/shadowblip/InputPlumber/CompositeDevice$1" \
-    org.shadowblip.Input.CompositeDevice Name 2>/dev/null \
-    | sed -n 's/^s "\(.*\)"$/\1/p'
-}
-
 apply() {
-  local id="$1" have_kb=0 pad="" want_pad
+  local id="$1" have_kb=0 pad=""
   targets_have_keyboard "$id" && have_kb=1
   for _ in $(seq 1 25); do
     pad="$(gamepad_target "$id")"
@@ -145,17 +125,13 @@ apply() {
     logger -t sm8550-inputplumber-ext-hid "composite $id: no gamepad target, left alone"
     return 1
   fi
-  want_pad="$pad"
-  if [[ -n "$deck_pad" && "$(composite_name "$id")" == "$deck_pad" ]]; then
-    want_pad=deck
-  fi
-  [[ "$want_pad" == "$pad" && "$want_kb" -eq "$have_kb" ]] && return 0
+  [[ "$want_kb" -eq "$have_kb" ]] && return 0
   if [[ "$want_kb" -eq 1 ]]; then
-    logger -t sm8550-inputplumber-ext-hid "composite $id: $want_pad + keyboard"
-    set_targets "$id" "$want_pad" keyboard || true
+    logger -t sm8550-inputplumber-ext-hid "composite $id: $pad + keyboard"
+    set_targets "$id" "$pad" keyboard || true
   else
-    logger -t sm8550-inputplumber-ext-hid "composite $id: $want_pad without keyboard"
-    set_targets "$id" "$want_pad" || true
+    logger -t sm8550-inputplumber-ext-hid "composite $id: $pad without keyboard"
+    set_targets "$id" "$pad" || true
   fi
   return 1
 }
