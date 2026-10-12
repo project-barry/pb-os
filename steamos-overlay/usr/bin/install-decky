@@ -154,8 +154,30 @@ ask_steam_client_channel() {
   log "Selected: $(branch_label "$DECKY_BRANCH")"
 }
 
+# polkit asks for the user's password before this script runs as root
+# (org.steamos.install-decky.policy). SteamOS ships the user without one, so
+# a fresh device can't answer that dialog: set a password here first, the way
+# Decky's own installer does on the Steam Deck.
+ensure_password() {
+  local me state try
+  me="$(id -un)"
+  state="$(passwd -S "$me" 2>/dev/null | awk '{print $2}')"
+  [[ "$state" == "NP" ]] || return 0
+  log "Installing Decky asks for your password, and your user (${me}) has none yet."
+  if [[ ! -t 0 ]]; then
+    die "Set one first: open Konsole, run 'passwd', then start Decky Loader again"
+  fi
+  log "Choose one now; you type it twice and it is not shown. sudo and SSH use it too."
+  for try in 1 2 3; do
+    passwd && return 0
+    warn "Password not set (attempt ${try} of 3)"
+  done
+  die "No password set; run 'passwd' in Konsole, then start Decky Loader again"
+}
+
 elevate_if_needed() {
   [[ "${EUID}" -eq 0 ]] && return 0
+  ensure_password
   exec pkexec --disable-internal-agent "$SCRIPT_PATH" "$@"
 }
 
