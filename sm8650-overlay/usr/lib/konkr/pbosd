@@ -509,7 +509,7 @@ class GameBoost:
                     continue
                 set_ioprio(tid, io)
                 try:
-                    if self.avoid_little and self.big:
+                    if self.avoid_little and self.big and pid in games_set:
                         os.sched_setaffinity(tid, self.big)
                 except OSError:
                     pass

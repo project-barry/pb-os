@@ -154,8 +154,30 @@ ask_steam_client_channel() {
   log "Selected: $(branch_label "$DECKY_BRANCH")"
 }
 
+# polkit asks for the user's password before this script runs as root
+# (org.steamos.install-decky.policy). SteamOS ships the user without one, so
+# a fresh device can't answer that dialog: set a password here first, the way
+# Decky's own installer does on the Steam Deck.
+ensure_password() {
+  local me state try
+  me="$(id -un)"
+  state="$(passwd -S "$me" 2>/dev/null | awk '{print $2}')"
+  [[ "$state" == "NP" ]] || return 0
+  log "Installing Decky asks for your password, and your user (${me}) has none yet."
+  if [[ ! -t 0 ]]; then
+    die "Set one first: open Konsole, run 'passwd', then start Decky Loader again"
+  fi
+  log "Choose one now; you type it twice and it is not shown. sudo and SSH use it too."
+  for try in 1 2 3; do
+    passwd && return 0
+    warn "Password not set (attempt ${try} of 3)"
+  done
+  die "No password set; run 'passwd' in Konsole, then start Decky Loader again"
+}
+
 elevate_if_needed() {
   [[ "${EUID}" -eq 0 ]] && return 0
+  ensure_password
   exec pkexec --disable-internal-agent "$SCRIPT_PATH" "$@"
 }
 
@@ -182,12 +204,18 @@ for r in rels:
 }
 
 write_plugin_loader_unit() {
-  local dest="$1" emu start
+  local dest="$1" emu start cache=""
   emu="$(emulator_bin || true)"
   if [[ -n "$emu" ]]; then
     start="${emu} ${PLUGIN_LOADER}"
   else
     start="${PLUGIN_LOADER}"
+  fi
+  if [[ "$emu" == */box64 ]]; then
+    # Runs as root with HOME=~steamos: keep box64's code cache out of ~/.cache,
+    # or it creates ~/.cache root-owned and KDE can't build its app list
+    # (empty Desktop Mode menu). Same lines as the shipped unit.
+    cache=$'Environment=BOX64_DYNACACHE_FOLDER=/var/cache/decky-box64\nCacheDirectory=decky-box64'
   fi
   mkdir -p "$(dirname "$dest")"
   cat >"$dest" <<EOF
@@ -214,6 +242,7 @@ Environment=XDG_CONFIG_HOME=${REAL_HOME}/.config
 Environment=XDG_DATA_HOME=${REAL_HOME}/.local/share
 Environment=XDG_RUNTIME_DIR=/run/user/${REAL_UID}
 Environment=BOX64_NOBANNER=1
+${cache}
 
 [Install]
 WantedBy=multi-user.target

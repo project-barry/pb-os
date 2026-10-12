@@ -345,10 +345,13 @@ def cleanup():
     pending = Path('/') / PENDING
     busy = pending.read_text().strip() if pending.exists() else ''
     current = installed_version(); freed = 0
+    # Every package name any device takes ('pb-os' itself has a hyphen).
+    alts = '|'.join(map(re.escape, sorted({IMAGE, *(n for old in OLD_NAMES.values() for n in old)})))
+    package = re.compile(rf'pb-os-(.+?)-(?:{alts})\.(?:from-.+\.delta|update)\.tar\.gz')
     for d in sorted(base.iterdir()):
         if d.name == 'downloads' and d.is_dir() and not d.is_symlink():
             for f in d.iterdir():
-                m = re.fullmatch(r'pb-os-(.+?)-[a-z0-9]+\.(?:from-.+\.delta|update)\.tar\.gz', f.name)
+                m = package.fullmatch(f.name)
                 # Older than the installed version (a reinstall's download may resume).
                 if m and current and not current.startswith('dev-') and newer(current, m.group(1)):
                     freed += size_of(f); remove(f)
@@ -587,12 +590,6 @@ def update(args):
         if old.name != found['name']: old.unlink()
     package = downloads / found['name']
     have = package.stat().st_size if package.exists() else 0
-    # Rough room for the download, its unpacked payload and the rollback copy (stage checks exactly).
-    if found['kind'] == 'delta':
-        need = found['size'] - have + found['size'] * 5 + (512 << 20)
-    else:
-        used = shutil.disk_usage('/').total - shutil.disk_usage('/').free
-        need = found['size'] - have + found['size'] * 5 // 2 + used + (512 << 20)
     check_space(found['kind'], found['size'], have)
     step(f'Downloading pb-os {found["version"]}')
     download(found, package)
