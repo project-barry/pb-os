@@ -21,6 +21,11 @@ Rules:
     the bootloader menu.
   - The result is checked twice: the table on disk and the kernel's view
     (/sys/class/block) must both match the plan.
+  - Android's user data is then erased the way a factory reset does it:
+    the head and tail of the new userdata are zeroed (no filesystem left
+    to mount) and the metadata-encryption key in the "metadata" partition
+    is removed, so the old encrypted blocks can never be read again.
+    Android makes a new key and formats userdata on its next boot.
 
 detect prints KEY=VALUE lines for the shell installer and the GUI.
 """
@@ -31,8 +36,10 @@ import datetime
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -179,6 +186,58 @@ def blank_head(disk: str, node: str) -> None:
         f.write(b"\0" * (8 * MIB))
         f.flush()
         os.fsync(f.fileno())
+
+
+def blank_tail(disk: str, node: str, size_bytes: int) -> None:
+    """Zero the last 8 MiB of the (resized) userdata as well: nothing of the
+    old filesystem's end survives inside the new partition."""
+    n = min(8 * MIB, size_bytes)
+    with open(partition_node(disk, part_num(disk, node)), "r+b") as f:
+        f.seek(size_bytes - n)
+        f.write(b"\0" * n)
+        f.flush()
+        os.fsync(f.fileno())
+
+
+def metadata_node(t: dict) -> str | None:
+    """Android's "metadata" partition: on the same disk if the table has it,
+    else by partition label (it may sit on another UFS LUN)."""
+    for p in t["partitions"]:
+        if p["name"] == "metadata":
+            return p["node"]
+    link = Path("/dev/disk/by-partlabel/metadata")
+    return str(link.resolve()) if link.exists() else None
+
+
+def drop_metadata_key(t: dict) -> None:
+    """Remove /metadata/vold/metadata_encryption, the key userdata was
+    encrypted with (what a factory reset does by wiping /metadata). Without
+    it the old blocks are unreadable, and Android creates a new key when it
+    formats userdata on its next boot. Best effort: a device without the
+    partition or key just keeps today's behaviour."""
+    node = metadata_node(t)
+    if node is None:
+        print("METADATA_KEY=no-metadata-partition")
+        return
+    mnt = tempfile.mkdtemp(prefix="ufs-metadata.")
+    try:
+        r = subprocess.run(["mount", "-o", "rw,noatime", node, mnt],
+                           capture_output=True, text=True)
+        if r.returncode != 0:
+            print(f"METADATA_KEY=mount-failed ({r.stderr.strip()})")
+            return
+        try:
+            key = Path(mnt) / "vold" / "metadata_encryption"
+            if key.is_dir():
+                shutil.rmtree(key)
+                os.sync()
+                print("METADATA_KEY=removed")
+            else:
+                print("METADATA_KEY=absent")
+        finally:
+            subprocess.run(["umount", mnt], capture_output=True)
+    finally:
+        os.rmdir(mnt)
 
 
 def ensure_idle(disk: str) -> None:
@@ -340,6 +399,8 @@ def cmd_apply(a) -> None:
     reread(a.disk)
     verify(a.disk, t, p)
     blank_head(a.disk, ud["node"])
+    blank_tail(a.disk, ud["node"], p["userdata_size"] * p["sector_size"])
+    drop_metadata_key(t)
     print("OK")
 
 

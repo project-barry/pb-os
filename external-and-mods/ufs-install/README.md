@@ -7,7 +7,9 @@ handhelds (Retroid Pocket 6; AYN Thor untested) with ROCKNIX ABL. The Retroid
 Pocket 6 and the KONKR Pocket FIT have been running from internal storage for
 several days.
 
-> **This erases Android's user data** (apps, photos, accounts) and changes the
+> **This erases Android's user data** (apps, photos, accounts), the way a
+> factory reset does: the old data's encryption key is removed too, so it
+> cannot be read again. It changes the
 > internal partition table. Android itself stays and sets itself up again.
 > Read [DISCLAIMER.md](DISCLAIMER.md) first.
 
