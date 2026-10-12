@@ -49,9 +49,10 @@ DRIVER = "files/lib/wine/aarch64-unix/winex11.so"
 
 def stable_name(ver: str) -> str:
     """'Proton 11.0-2 PB-OS (ARM)' for proton-11.0-2e-arm64 (Valve's own name
-    drops the hotfix letter too: 'Proton 11.0-2 (ARM64)')."""
+    drops the hotfix letter too: 'Proton 11.0-2 (ARM64)'); "" while the
+    version can't be read, so the tool keeps the name it has."""
     m = re.match(r"proton-(\d+\.\d+-\d+)[a-z]*-arm64$", ver)
-    return f"Proton {m.group(1)} PB-OS (ARM)" if m else "Proton PB-OS (ARM)"
+    return f"Proton {m.group(1)} PB-OS (ARM)" if m else ""
 
 
 # name = Steam's internal tool name (games point at it; never change it),
@@ -199,9 +200,14 @@ def sync_tool(tool: dict) -> dict:
     os.makedirs(tdir, exist_ok=True)
     valve = valve_tool(tool["appid"])
     ver = version(valve) if valve else ""
-    # Steam reads the name when it starts.
-    write(os.path.join(tdir, "compatibilitytool.vdf"),
-          COMPATIBILITYTOOL_VDF.replace("{name}", tool["name"]).replace("{display}", tool["display"](ver)))
+    # Steam reads the name when it starts. One name per Valve version: while
+    # Valve's tool can't be read (Steam installing or updating it), the tool
+    # keeps the name it has, and a new one waits for Valve's (pbos-proton.path
+    # runs this again then).
+    display = tool["display"](ver)
+    if display:
+        write(os.path.join(tdir, "compatibilitytool.vdf"),
+              COMPATIBILITYTOOL_VDF.replace("{name}", tool["name"]).replace("{display}", display))
     write(os.path.join(tdir, "toolmanifest.vdf"), TOOLMANIFEST_VDF)
     with open(LAUNCHER, encoding="utf-8") as f:
         write(os.path.join(tdir, "proton"), f.read(), 0o755)
