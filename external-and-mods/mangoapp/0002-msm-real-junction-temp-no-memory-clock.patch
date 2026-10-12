@@ -1,0 +1,43 @@
+diff --git a/mangohud-next/server/metrics/gpu/msm/dpu.cpp b/mangohud-next/server/metrics/gpu/msm/dpu.cpp
+index 1fb1ed6..eaffc5c 100644
+--- a/mangohud-next/server/metrics/gpu/msm/dpu.cpp
++++ b/mangohud-next/server/metrics/gpu/msm/dpu.cpp
+@@ -127,6 +127,9 @@ MSM_DPU::MSM_DPU(
+     hwmon.base_dir = hwmon.find_hwmon_dir_by_name("gpu");
+     hwmon.setup(sensors, drm_node);
+     junction_temp_file = open_thermal_zone("gpuss-0-thermal");
++    // PB-OS: mainline kernels name the same zone without the dash.
++    if (!junction_temp_file.is_open())
++        junction_temp_file = open_thermal_zone("gpuss0-thermal");
+     memory_temp_file = open_thermal_zone("ddr-thermal");
+     core_clock_file = open_core_clock();
+     load_file = open_load();
+@@ -246,6 +249,9 @@ int MSM_DPU::read_thermal_zone(std::ifstream& file) {
+ }
+ 
+ int MSM_DPU::get_junction_temperature() {
++    // PB-OS: -1 hides the row when there is no zone, instead of 0 °C.
++    if (!junction_temp_file.is_open())
++        return -1;
+     return read_thermal_zone(junction_temp_file);
+ }
+ 
+diff --git a/src/overlay_params.cpp b/src/overlay_params.cpp
+index 2c0546a..150466e 100644
+--- a/src/overlay_params.cpp
++++ b/src/overlay_params.cpp
+@@ -1430,10 +1430,11 @@ void presets(int preset, struct overlay_params *params, bool inherit) {
+       // either, so trying only fills the log).
+       if (!file_exists("/run/power-monitor/power/cores_total"))
+          add_to_options(params, "cpu_power", "0");
++      // The memory clock is a Frame constant (4200 MHz for any SM8650), not
++      // a reading, and PB-OS never runs on a Frame.
++      add_to_options(params, "gpu_mem_clock", "0");
+       if (!gpu->is_steam_frame()) {
+-         // The memory clock is a Frame constant and there is no
+-         // ddr-thermal zone.
+-         add_to_options(params, "gpu_mem_clock", "0");
++         // There is no ddr-thermal zone.
+          add_to_options(params, "gpu_mem_temp", "0");
+       }
+       break;
