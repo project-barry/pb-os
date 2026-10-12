@@ -136,6 +136,17 @@ its shorter typical half-travel, and `sm8550-fixpad` leaves that range alone.
 Retroid's Android use (10,4 instead of the driver's 40,7; kernel patch 0548):
 the MCU then reports a stick once it has moved 11 counts instead of 41.
 
+### Desktop Mode: no "requested access to input devices" prompt
+
+Steam moves the pointer through X11 XTest. The Frame base ships KWin 6.2.5,
+which sends that through the RemoteDesktop portal, so KDE asks for permission
+at every Desktop Mode login. The Steam Deck runs KWin 6.4, where Valve's
+kwinrc setting `XwaylandEisNoPrompt=true` makes KWin hand Xwayland its own
+input socket instead. PB-OS rebuilds KWin 6.2.5 with the three patches
+Valve used for the same thing on the Deck before 6.4
+(`scripts/build-kwin-6.2.5.sh`, `external-and-mods/kwin-pbos/`). The script
+stops itself once the base ships KWin 6.4 or newer.
+
 ## Compared with the SM8550 setup, in short
 
 | Area | SM8550 (MaSi) | Pocket FIT (this project) |

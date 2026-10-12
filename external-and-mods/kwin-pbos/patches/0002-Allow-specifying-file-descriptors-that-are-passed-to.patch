@@ -1,0 +1,134 @@
+From 17c5543d423a28c423a12895eef6327283d5da03 Mon Sep 17 00:00:00 2001
+From: David Redondo <kde@david-redondo.de>
+Date: Tue, 30 Jul 2024 14:35:30 +0200
+Subject: [PATCH 2/5] Allow specifying file descriptors that are passed to
+ Xwayland
+
+---
+ src/main_wayland.cpp              |  1 +
+ src/main_wayland.h                |  9 +++++++++
+ src/xwayland/xwaylandlauncher.cpp | 17 +++++++++++++++++
+ src/xwayland/xwaylandlauncher.h   |  5 +++++
+ 4 files changed, 32 insertions(+)
+
+diff --git a/src/main_wayland.cpp b/src/main_wayland.cpp
+index 71b515b1d6..9d115ae6bd 100644
+--- a/src/main_wayland.cpp
++++ b/src/main_wayland.cpp
+@@ -170,6 +170,7 @@ void ApplicationWayland::continueStartupWithScene()
+         m_xwayland->xwaylandLauncher()->setDisplayName(m_xwaylandDisplay);
+         m_xwayland->xwaylandLauncher()->setXauthority(m_xwaylandXauthority);
+         m_xwayland->xwaylandLauncher()->addEnvironmentVariables(m_xwaylandExtraEnvironment);
++        m_xwayland->xwaylandLauncher()->passFileDescriptors(std::move(m_xwaylandFds));
+         m_xwayland->init();
+         connect(m_xwayland.get(), &Xwl::Xwayland::started, this, &ApplicationWayland::applyXwaylandScale);
+     }
+diff --git a/src/main_wayland.h b/src/main_wayland.h
+index 23752d5184..5bcd64e9af 100644
+--- a/src/main_wayland.h
++++ b/src/main_wayland.h
+@@ -11,6 +11,10 @@
+ #include <KConfigWatcher>
+ #include <QTimer>
+ 
++#include "utils/filedescriptor.h"
++
++#include <vector>
++
+ namespace KWin
+ {
+ namespace Xwl
+@@ -46,6 +50,10 @@ public:
+     {
+         m_xwaylandExtraEnvironment.insert(variable, value);
+     }
++    void passFdToXwayland(FileDescriptor &&fd)
++    {
++        m_xwaylandFds.push_back(std::move(fd));
++    }
+     XwaylandInterface *xwayland() const override;
+ #endif
+     void setApplicationsToStart(const QStringList &applications)
+@@ -80,6 +88,7 @@ private:
+     QString m_xwaylandDisplay;
+     QString m_xwaylandXauthority;
+     QMap<QString, QString> m_xwaylandExtraEnvironment;
++    std::vector<FileDescriptor> m_xwaylandFds;
+ #endif
+     KConfigWatcher::Ptr m_settingsWatcher;
+ };
+diff --git a/src/xwayland/xwaylandlauncher.cpp b/src/xwayland/xwaylandlauncher.cpp
+index 1fdbe8f8e9..7ec501dd7c 100644
+--- a/src/xwayland/xwaylandlauncher.cpp
++++ b/src/xwayland/xwaylandlauncher.cpp
+@@ -34,6 +34,8 @@
+ // system
+ #include <cerrno>
+ #include <cstring>
++#include <fcntl.h>
++#include <ranges>
+ #include <sys/socket.h>
+ #include <unistd.h>
+ 
+@@ -74,6 +76,14 @@ void XwaylandLauncher::addEnvironmentVariables(const QMap<QString, QString> &ext
+     m_extraEnvironment.insert(extraEnvironment);
+ }
+ 
++void XwaylandLauncher::passFileDescriptors(std::vector<FileDescriptor> &&fds)
++{
++    m_fdsToPreserve.reserve(m_fdsToPreserve.size() + fds.size());
++    for (auto & fd : fds) {
++        m_fdsToPreserve.emplace_back(std::move(fd));
++    }
++}
++
+ void XwaylandLauncher::enable()
+ {
+     if (m_enabled) {
+@@ -214,6 +224,13 @@ bool XwaylandLauncher::start()
+     }
+     m_xwaylandProcess->setProcessEnvironment(env);
+     m_xwaylandProcess->setArguments(arguments);
++    m_xwaylandProcess->setChildProcessModifier([this] {
++        for (const auto &fd : m_fdsToPreserve) {
++            int flags = fcntl(fd.get(), F_GETFD);
++            fcntl(fd.get(), F_SETFD, flags & ~FD_CLOEXEC);
++        }
++    });
++
+     connect(m_xwaylandProcess, &QProcess::errorOccurred, this, &XwaylandLauncher::handleXwaylandError);
+     connect(m_xwaylandProcess, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+             this, &XwaylandLauncher::handleXwaylandFinished);
+diff --git a/src/xwayland/xwaylandlauncher.h b/src/xwayland/xwaylandlauncher.h
+index 7791419939..07d338d793 100644
+--- a/src/xwayland/xwaylandlauncher.h
++++ b/src/xwayland/xwaylandlauncher.h
+@@ -10,6 +10,8 @@
+ 
+ #pragma once
+ 
++#include "utils/filedescriptor.h"
++
+ #include <QList>
+ #include <QMap>
+ #include <QObject>
+@@ -59,6 +61,8 @@ public:
+ 
+     void addEnvironmentVariables(const QMap<QString, QString> &extraEnvironment);
+ 
++    void passFileDescriptors(std::vector<FileDescriptor> &&fds);
++
+     void enable();
+     void disable();
+     bool start();
+@@ -106,6 +110,7 @@ private:
+     QString m_displayName;
+     QString m_xAuthority;
+     QMap<QString, QString> m_extraEnvironment;
++    std::vector<FileDescriptor> m_fdsToPreserve;
+ 
+     bool m_enabled = false;
+     int m_crashCount = 0;
+-- 
+2.43.0
+

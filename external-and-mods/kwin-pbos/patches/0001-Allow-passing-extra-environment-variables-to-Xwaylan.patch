@@ -1,0 +1,105 @@
+From 5cf4e5338fb72807dd2efc5ad4fe3efb66707004 Mon Sep 17 00:00:00 2001
+From: David Redondo <kde@david-redondo.de>
+Date: Fri, 12 Jul 2024 11:11:34 +0200
+Subject: [PATCH 1/5] Allow passing extra environment variables to Xwayland
+
+---
+ src/main_wayland.cpp              | 1 +
+ src/main_wayland.h                | 5 +++++
+ src/xwayland/xwaylandlauncher.cpp | 8 ++++++++
+ src/xwayland/xwaylandlauncher.h   | 4 ++++
+ 4 files changed, 18 insertions(+)
+
+diff --git a/src/main_wayland.cpp b/src/main_wayland.cpp
+index 4be3b6f1b4..71b515b1d6 100644
+--- a/src/main_wayland.cpp
++++ b/src/main_wayland.cpp
+@@ -169,6 +169,7 @@ void ApplicationWayland::continueStartupWithScene()
+         m_xwayland->xwaylandLauncher()->setListenFDs(m_xwaylandListenFds);
+         m_xwayland->xwaylandLauncher()->setDisplayName(m_xwaylandDisplay);
+         m_xwayland->xwaylandLauncher()->setXauthority(m_xwaylandXauthority);
++        m_xwayland->xwaylandLauncher()->addEnvironmentVariables(m_xwaylandExtraEnvironment);
+         m_xwayland->init();
+         connect(m_xwayland.get(), &Xwl::Xwayland::started, this, &ApplicationWayland::applyXwaylandScale);
+     }
+diff --git a/src/main_wayland.h b/src/main_wayland.h
+index deb9ec7057..23752d5184 100644
+--- a/src/main_wayland.h
++++ b/src/main_wayland.h
+@@ -42,6 +42,10 @@ public:
+     {
+         m_xwaylandXauthority = xauthority;
+     }
++    void addExtraXWaylandEnvrionmentVariable(const QString &variable, const QString &value)
++    {
++        m_xwaylandExtraEnvironment.insert(variable, value);
++    }
+     XwaylandInterface *xwayland() const override;
+ #endif
+     void setApplicationsToStart(const QStringList &applications)
+@@ -75,6 +79,7 @@ private:
+     QList<int> m_xwaylandListenFds;
+     QString m_xwaylandDisplay;
+     QString m_xwaylandXauthority;
++    QMap<QString, QString> m_xwaylandExtraEnvironment;
+ #endif
+     KConfigWatcher::Ptr m_settingsWatcher;
+ };
+diff --git a/src/xwayland/xwaylandlauncher.cpp b/src/xwayland/xwaylandlauncher.cpp
+index e24cd5fe4e..1fdbe8f8e9 100644
+--- a/src/xwayland/xwaylandlauncher.cpp
++++ b/src/xwayland/xwaylandlauncher.cpp
+@@ -69,6 +69,11 @@ void XwaylandLauncher::setXauthority(const QString &xauthority)
+     m_xAuthority = xauthority;
+ }
+ 
++void XwaylandLauncher::addEnvironmentVariables(const QMap<QString, QString> &extraEnvironment)
++{
++    m_extraEnvironment.insert(extraEnvironment);
++}
++
+ void XwaylandLauncher::enable()
+ {
+     if (m_enabled) {
+@@ -204,6 +209,9 @@ bool XwaylandLauncher::start()
+     if (qEnvironmentVariableIntValue("KWIN_XWAYLAND_DEBUG") == 1) {
+         env.insert("WAYLAND_DEBUG", QByteArrayLiteral("1"));
+     }
++    for (const auto &[variable, value] : m_extraEnvironment.asKeyValueRange()) {
++        env.insert(variable, value);
++    }
+     m_xwaylandProcess->setProcessEnvironment(env);
+     m_xwaylandProcess->setArguments(arguments);
+     connect(m_xwaylandProcess, &QProcess::errorOccurred, this, &XwaylandLauncher::handleXwaylandError);
+diff --git a/src/xwayland/xwaylandlauncher.h b/src/xwayland/xwaylandlauncher.h
+index 3c58e81696..7791419939 100644
+--- a/src/xwayland/xwaylandlauncher.h
++++ b/src/xwayland/xwaylandlauncher.h
+@@ -11,6 +11,7 @@
+ #pragma once
+ 
+ #include <QList>
++#include <QMap>
+ #include <QObject>
+ #include <QProcess>
+ #include <QSocketNotifier>
+@@ -56,6 +57,8 @@ public:
+      */
+     void setXauthority(const QString &xauthority);
+ 
++    void addEnvironmentVariables(const QMap<QString, QString> &extraEnvironment);
++
+     void enable();
+     void disable();
+     bool start();
+@@ -102,6 +105,7 @@ private:
+     QList<int> m_listenFds;
+     QString m_displayName;
+     QString m_xAuthority;
++    QMap<QString, QString> m_extraEnvironment;
+ 
+     bool m_enabled = false;
+     int m_crashCount = 0;
+-- 
+2.43.0
+

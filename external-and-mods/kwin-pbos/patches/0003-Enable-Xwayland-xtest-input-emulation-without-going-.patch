@@ -1,0 +1,239 @@
+From cabe29b6a72bccc7be2e6f58d550cd2617641ff0 Mon Sep 17 00:00:00 2001
+From: David Redondo <kde@david-redondo.de>
+Date: Fri, 12 Jul 2024 14:58:34 +0200
+Subject: [PATCH 3/5] Enable Xwayland xtest input emulation without going
+ through the portal
+
+Due to the limited libei(s) API a trick is used. Let it create
+a socket with an absolute path, open that path again to get a fd
+referring to the socket, unlink the file and specify the socket
+that Xwayland should use in the form of /proc/self/fd/$fd.
+---
+ src/plugins/eis/eisbackend.cpp    | 34 +++++++++++++++++++++++++++----
+ src/plugins/eis/eisbackend.h      |  6 ++++--
+ src/plugins/eis/eiscontext.cpp    | 30 +++++++++++++++++++--------
+ src/plugins/eis/eiscontext.h      | 26 ++++++++++++++++++-----
+ src/xwayland/xwaylandlauncher.cpp |  3 ---
+ 5 files changed, 76 insertions(+), 23 deletions(-)
+
+diff --git a/src/plugins/eis/eisbackend.cpp b/src/plugins/eis/eisbackend.cpp
+index 43eca32d4b..e1c2547644 100644
+--- a/src/plugins/eis/eisbackend.cpp
++++ b/src/plugins/eis/eisbackend.cpp
+@@ -14,7 +14,7 @@
+ #include "input.h"
+ #include "keyboard_input.h"
+ #include "keyboard_layout.h"
+-#include "main.h"
++#include "main_wayland.h"
+ #include "workspace.h"
+ #include "xkb.h"
+ 
+@@ -26,19 +26,45 @@
+ 
+ #include <libeis.h>
+ 
++#include <fcntl.h>
++
+ #include <ranges>
+ 
+ namespace KWin
+ {
+ 
++#define typeName(T)                                       \
++    [] {                                                  \
++        static_assert(                                    \
++            requires { typename T; }, "T is not a type"); \
++        return #T;                                        \
++        }()
++
+ EisBackend::EisBackend(QObject *parent)
+     : KWin::InputBackend(parent)
+     , m_serviceWatcher(new QDBusServiceWatcher(this))
++
+ {
++#if HAVE_XWAYLAND_ENABLE_EI_PORTAL
++    if (kwinApp()->operationMode() == Application::OperationModeXwayland) {
++        // Unfortunately there is no way to pass a connected socket fd to libei like WAYLAND_SOCKET
++        // in libwayland so we are resorting to this hack
++        // https://gitlab.freedesktop.org/libinput/libei/-/issues/63
++        m_xWaylandContext = std::make_unique<XWaylandEisContext>(this);
++        FileDescriptor fd(open(m_xWaylandContext->socketName.constData(), O_PATH | O_CLOEXEC));
++        unlink(m_xWaylandContext->socketName.constData());
++        if (QByteArray(kwinApp()->metaObject()->className()) == typeName(KWin::ApplicationWayland)) {
++            auto appWayland = static_cast<ApplicationWayland *>(kwinApp());
++            appWayland->addExtraXWaylandEnvrionmentVariable(QStringLiteral("LIBEI_SOCKET"), QStringLiteral("/proc/self/fd/%1").arg(fd.get()));
++            appWayland->passFdToXwayland(std::move(fd));
++        }
++    }
++#endif
++
+     m_serviceWatcher->setConnection(QDBusConnection::sessionBus());
+     m_serviceWatcher->setWatchMode(QDBusServiceWatcher::WatchForUnregistration);
+     connect(m_serviceWatcher, &QDBusServiceWatcher::serviceUnregistered, this, [this](const QString &service) {
+-        std::erase_if(m_contexts, [&service](const std::unique_ptr<EisContext> &context) {
++        std::erase_if(m_contexts, [&service](const std::unique_ptr<DbusEisContext> &context) {
+             return context->dbusService == service;
+         });
+         m_serviceWatcher->removeWatchedService(service);
+@@ -92,14 +118,14 @@ QDBusUnixFileDescriptor EisBackend::connectToEIS(const int &capabilities, int &c
+     const QString dbusService = message().service();
+     static int s_cookie = 0;
+     cookie = ++s_cookie;
+-    m_contexts.push_back(std::make_unique<EisContext>(this, eisCapabilities, cookie, dbusService));
++    m_contexts.push_back(std::make_unique<DbusEisContext>(this, eisCapabilities, cookie, dbusService));
+     m_serviceWatcher->addWatchedService(dbusService);
+     return QDBusUnixFileDescriptor(m_contexts.back()->addClient());
+ }
+ 
+ void EisBackend::disconnect(int cookie)
+ {
+-    auto it = std::ranges::find(m_contexts, cookie, [](const std::unique_ptr<EisContext> &context) {
++    auto it = std::ranges::find(m_contexts, cookie, [](const std::unique_ptr<DbusEisContext> &context) {
+         return context->cookie;
+     });
+     if (it != std::ranges::end(m_contexts)) {
+diff --git a/src/plugins/eis/eisbackend.h b/src/plugins/eis/eisbackend.h
+index a34d40369b..f04282e58c 100644
+--- a/src/plugins/eis/eisbackend.h
++++ b/src/plugins/eis/eisbackend.h
+@@ -24,7 +24,8 @@ class QDBusServiceWatcher;
+ 
+ namespace KWin
+ {
+-class EisContext;
++class DbusEisContext;
++class XWaylandEisContext;
+ 
+ class EisBackend : public KWin::InputBackend, public QDBusContext
+ {
+@@ -46,7 +47,8 @@ public:
+ private:
+     QDBusServiceWatcher *m_serviceWatcher;
+     RamFile m_keymapFile;
+-    std::vector<std::unique_ptr<EisContext>> m_contexts;
++    std::unique_ptr<XWaylandEisContext> m_xWaylandContext;
++    std::vector<std::unique_ptr<DbusEisContext>> m_contexts;
+ };
+ 
+ }
+diff --git a/src/plugins/eis/eiscontext.cpp b/src/plugins/eis/eiscontext.cpp
+index 577fe8b050..5a1239718a 100644
+--- a/src/plugins/eis/eiscontext.cpp
++++ b/src/plugins/eis/eiscontext.cpp
+@@ -52,15 +52,32 @@ public:
+     std::unique_ptr<EisDevice> keyboard;
+ };
+ 
+-EisContext::EisContext(KWin::EisBackend *backend, QFlags<eis_device_capability> allowedCapabilities, int cookie, const QString &dbusService)
+-    : cookie(cookie)
++DbusEisContext::DbusEisContext(KWin::EisBackend *backend, QFlags<eis_device_capability> allowedCapabilities, int cookie, const QString &dbusService)
++    : EisContext(backend, allowedCapabilities)
++    , cookie(cookie)
+     , dbusService(dbusService)
++{
++    eis_setup_backend_fd(m_eisContext);
++}
++
++int DbusEisContext::addClient()
++{
++    return eis_backend_fd_add_client(m_eisContext);
++}
++
++XWaylandEisContext::XWaylandEisContext(KWin::EisBackend *backend)
++    : EisContext(backend, {EIS_DEVICE_CAP_POINTER | EIS_DEVICE_CAP_POINTER_ABSOLUTE | EIS_DEVICE_CAP_KEYBOARD | EIS_DEVICE_CAP_TOUCH | EIS_DEVICE_CAP_SCROLL | EIS_DEVICE_CAP_BUTTON})
++    , socketName(qgetenv("XDG_RUNTIME_DIR") + QByteArrayLiteral("/kwin-xwayland-eis-socket.") + QByteArray::number(getpid()))
++{
++    eis_setup_backend_socket(m_eisContext, socketName.constData());
++}
++
++EisContext::EisContext(KWin::EisBackend *backend, QFlags<eis_device_capability> allowedCapabilities)
++    : m_eisContext(eis_new(this))
+     , m_backend(backend)
+-    , m_eisContext(eis_new(this))
+     , m_allowedCapabilities(allowedCapabilities)
+     , m_socketNotifier(eis_get_fd(m_eisContext), QSocketNotifier::Read)
+ {
+-    eis_setup_backend_fd(m_eisContext);
+     eis_log_set_priority(m_eisContext, EIS_LOG_PRIORITY_DEBUG);
+     eis_log_set_handler(m_eisContext, eis_log_handler);
+     QObject::connect(&m_socketNotifier, &QSocketNotifier::activated, [this] {
+@@ -101,11 +118,6 @@ void EisContext::updateKeymap()
+     }
+ }
+ 
+-int EisContext::addClient()
+-{
+-    return eis_backend_fd_add_client(m_eisContext);
+-}
+-
+ static std::chrono::microseconds currentTime()
+ {
+     return std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch());
+diff --git a/src/plugins/eis/eiscontext.h b/src/plugins/eis/eiscontext.h
+index fd8f676a4f..50de947a85 100644
+--- a/src/plugins/eis/eiscontext.h
++++ b/src/plugins/eis/eiscontext.h
+@@ -24,24 +24,40 @@ struct EisClient;
+ class EisContext
+ {
+ public:
+-    EisContext(EisBackend *backend, QFlags<eis_device_capability> allowedCapabilities, int cookie, const QString &dbusService);
++    EisContext(EisBackend *backend, QFlags<eis_device_capability> allowedCapabilities);
+     ~EisContext();
+ 
+-    int addClient();
+     void updateScreens();
+     void updateKeymap();
+ 
+-    const int cookie;
+-    const QString dbusService;
++protected:
++    eis *m_eisContext;
+ 
+ private:
+     void handleEvents();
+ 
+     EisBackend *m_backend;
+-    eis *m_eisContext;
+     QFlags<eis_device_capability> m_allowedCapabilities;
+     QSocketNotifier m_socketNotifier;
+     std::vector<std::unique_ptr<EisClient>> m_clients;
+ };
+ 
++class DbusEisContext : public EisContext
++{
++public:
++    DbusEisContext(EisBackend *backend, QFlags<eis_device_capability> allowedCapabilities, int cookie, const QString &dbusService);
++
++    int addClient();
++
++    const int cookie;
++    const QString dbusService;
++};
++
++class XWaylandEisContext : public EisContext
++{
++public:
++    XWaylandEisContext(EisBackend *backend);
++
++    const QByteArray socketName;
++};
+ }
+diff --git a/src/xwayland/xwaylandlauncher.cpp b/src/xwayland/xwaylandlauncher.cpp
+index 7ec501dd7c..afc1bce91c 100644
+--- a/src/xwayland/xwaylandlauncher.cpp
++++ b/src/xwayland/xwaylandlauncher.cpp
+@@ -207,9 +207,6 @@ bool XwaylandLauncher::start()
+     arguments << QStringLiteral("-displayfd") << QString::number(pipeFds[1]);
+     arguments << QStringLiteral("-rootless");
+     arguments << QStringLiteral("-wm") << QString::number(fd);
+-#if HAVE_XWAYLAND_ENABLE_EI_PORTAL
+-    arguments << QStringLiteral("-enable-ei-portal");
+-#endif
+ 
+     m_xwaylandProcess = new QProcess(this);
+     m_xwaylandProcess->setProcessChannelMode(QProcess::ForwardedErrorChannel);
+-- 
+2.43.0
+
