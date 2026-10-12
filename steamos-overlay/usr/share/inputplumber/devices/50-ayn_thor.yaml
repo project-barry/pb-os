@@ -3,6 +3,10 @@
 # Same as 02-ayn-odin.yaml but with the Thor's Nintendo face buttons
 # (ayn_mcu_nintendo: the printed A is Steam's A).
 #
+# Installed over InputPlumber's own 50-ayn_thor.yaml so the Thor has one
+# config. It leaves out the AYN key (gpio-keys-ayn): no config claims it,
+# and sm8550-thor-backlightd uses it for the bottom-screen dashboard.
+#
 # Do not list USB/BT as ignore sources: deck-uhid is USB (VID 28de) and
 # matching it as a source restarts the composite in a loop (cursor, no Steam).
 # External HID is handled by sm8550-inputplumber-ext-hid (drop keyboard target).
@@ -26,17 +30,6 @@ source_devices:
       handler: event*
     capability_map_id: ayn_mcu_nintendo
     passthrough: false
-
-  # The AYN key: listed (and ignored) so this config claims it before the
-  # stock 50-ayn_thor.yaml does. Otherwise that file builds the composite
-  # from it, pulls the gamepad in with its own map, and grabs the key away
-  # from sm8550-thor-backlightd.
-  - group: keyboard
-    evdev:
-      name: gpio-keys-ayn
-      phys_path: gpio-keys/input0
-      handler: event*
-    ignore: true
 
 options:
   auto_manage: true

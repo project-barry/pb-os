@@ -691,8 +691,6 @@ remove_thor_bottom_screen() {
     "$R/usr/lib/steamos-sm8550/sm8550-thor-backlightd" \
     "$R/usr/lib/systemd/user/barry_launcher.service" \
     "$R/usr/lib/systemd/user/gamescope-session.target.wants/barry_launcher.service" \
-    "$R/etc/inputplumber/devices.d/50-ayn_thor.yaml" \
-    "$R/var/lib/overlays/etc/upper/inputplumber/devices.d/50-ayn_thor.yaml" \
     "$R/usr/lib/systemd/system/sm8550-thor-backlightd.service" \
     "$R/usr/lib/systemd/system/multi-user.target.wants/sm8550-thor-backlightd.service" \
     "$R/usr/lib/steamos-sm8550/sm8550-thor-controlsd" \
@@ -780,17 +778,6 @@ if [[ "$SOC" != sm8650 ]]; then
     "$R/usr/lib/systemd/user/plasma-workspace.target.wants/barry_launcher_desktop.service"
   install_file "$SM8550_OVL/usr/share/applications/org.barry_launcher.keyboard.desktop" \
     "$R/usr/share/applications/org.barry_launcher.keyboard.desktop" 0644
-  # AYN Thor: InputPlumber leaves the AYN button to sm8550-thor-backlightd,
-  # which uses it to show the bottom-screen dashboard.
-  ip_thor="$R/usr/share/inputplumber/devices/50-ayn_thor.yaml"
-  if [[ -f "$ip_thor" ]]; then
-    for etc in "$R/etc" "$R/var/lib/overlays/etc/upper"; do
-      [[ "$etc" == "$R/etc" || -d "$etc" ]] || continue
-      mkdir -p "$etc/inputplumber/devices.d"
-      python3 "$SM8550_OVL/usr/share/steamos-sm8550/ip-thor-without-ayn-key.py" \
-        "$ip_thor" "$etc/inputplumber/devices.d/50-ayn_thor.yaml"
-    done
-  fi
   # Steer Steam's brightness writes to the Thor's top panel (see the .inc).
   if [[ -f "$R/usr/bin/steamos-polkit-helpers/steamos-priv-write" ]]; then
     python3 "$SM8550_OVL/usr/share/steamos-sm8550/insert-priv-write-backlight.py" \
@@ -875,8 +862,6 @@ else
     "$R/usr/lib/systemd/system/systemd-suspend.service.d/20-sm8550-charge-rest.conf" \
     "$R/usr/lib/systemd/user/barry_launcher.service" \
     "$R/usr/lib/systemd/user/gamescope-session.target.wants/barry_launcher.service" \
-    "$R/etc/inputplumber/devices.d/50-ayn_thor.yaml" \
-    "$R/var/lib/overlays/etc/upper/inputplumber/devices.d/50-ayn_thor.yaml" \
     "$R/usr/lib/systemd/system/sm8550-thor-backlightd.service" \
     "$R/usr/lib/systemd/system/multi-user.target.wants/sm8550-thor-backlightd.service" \
     "$R/usr/lib/systemd/system/sm8550-boostd.service" \
@@ -1286,8 +1271,8 @@ log "== summary"
   echo "fixpad:    $(ls -l "$R/usr/lib/steamos/sm8550-fixpad" 2>/dev/null || echo missing)"
   echo "inputplumber: $(ls -l "$R/usr/bin/inputplumber" 2>/dev/null || echo missing)"
   echo "deck-uhid: $(grep -A2 target_devices "$R/etc/inputplumber/devices.d/02-ayn-odin.yaml" 2>/dev/null || echo missing)"
-  echo "Thor pad map: $(grep capability_map_id "$R/etc/inputplumber/devices.d/02-ayn-thor.yaml" 2>/dev/null || echo missing)"
-  echo "Retroid pad maps: $(grep -h capability_map_id "$R"/etc/inputplumber/devices.d/50-retroid_pocket*.yaml 2>/dev/null | sort -u | tr -s ' \n' ' ' || echo missing)"
+  echo "Thor pad map: $(grep capability_map_id "$R/usr/share/inputplumber/devices/50-ayn_thor.yaml" 2>/dev/null || echo missing)"
+  echo "Retroid pad maps: $(grep -h capability_map_id "$R"/usr/share/inputplumber/devices/50-retroid_pocket{6,_nova}.yaml 2>/dev/null | sort -u | tr -s ' \n' ' ' || echo missing)"
   echo "pbos-hostname: $(readlink "$R/usr/lib/systemd/system/sysinit.target.wants/pbos-hostname.service" 2>/dev/null || echo missing), $(stat -c %a "$R/usr/lib/konkr/pbos-hostname" 2>/dev/null || echo missing)"
   echo "home:      $(find "$HOME_DST" -maxdepth 3 -printf '%p\n' | head -40)"
 } | tee -a "$LOG"

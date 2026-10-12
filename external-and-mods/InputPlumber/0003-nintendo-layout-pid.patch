@@ -1,0 +1,55 @@
+diff --git a/src/drivers/steam_deck/mod.rs b/src/drivers/steam_deck/mod.rs
+index ef5606c..7c9c7bc 100644
+--- a/src/drivers/steam_deck/mod.rs
++++ b/src/drivers/steam_deck/mod.rs
+@@ -8,6 +8,8 @@ pub mod report_descriptor;
+ pub enum ProductId {
+     SteamDeck = 0x1205,
+     Generic = 0x12f0,
++    /// Same Steam type as Generic; its own Steam settings file (Nintendo A/B/X/Y).
++    NintendoLayout = 0x12f1,
+     MsiClaw = 0x12fa,
+     LenovoLegionGo2 = 0x12fb,
+     ZotacZone = 0x12fc,
+@@ -24,6 +26,7 @@ impl ProductId {
+         match self {
+             ProductId::SteamDeck => ProductId::SteamDeck as u16,
+             ProductId::Generic => ProductId::Generic as u16,
++            ProductId::NintendoLayout => ProductId::NintendoLayout as u16,
+             ProductId::MsiClaw => ProductId::MsiClaw as u16,
+             ProductId::LenovoLegionGo2 => ProductId::LenovoLegionGo2 as u16,
+             ProductId::ZotacZone => ProductId::ZotacZone as u16,
+@@ -37,6 +40,7 @@ impl ProductId {
+         match self {
+             ProductId::SteamDeck => ProductId::SteamDeck as u32,
+             ProductId::Generic => ProductId::Generic as u32,
++            ProductId::NintendoLayout => ProductId::NintendoLayout as u32,
+             ProductId::MsiClaw => ProductId::MsiClaw as u32,
+             ProductId::LenovoLegionGo2 => ProductId::LenovoLegionGo2 as u32,
+             ProductId::ZotacZone => ProductId::ZotacZone as u32,
+diff --git a/src/input/target/steam_deck_uhid.rs b/src/input/target/steam_deck_uhid.rs
+index 786f205..efbbc53 100644
+--- a/src/input/target/steam_deck_uhid.rs
++++ b/src/input/target/steam_deck_uhid.rs
+@@ -702,6 +702,21 @@ impl TargetInputDevice for SteamDeckUhidDevice {
+                     device_config.name = "Claw Controller".to_string();
+                     device_config.product_id = ProductId::MsiClaw;
+                 }
++                // Nintendo-labelled face buttons (A on the right, B at the
++                // bottom): the pad reports positions and Steam's "Use
++                // Nintendo Button Layout" switch gives the printed letters.
++                // Steam keeps that switch per VID-PID, so these get their
++                // own PID (same "SteamOS Handheld" type as 28de:12f0) and
++                // their own settings file, apart from Xbox-labelled devices.
++                "AYN Thor" => {
++                    device_config.product_id = ProductId::NintendoLayout;
++                }
++                "Retroid Pocket 6" => {
++                    device_config.product_id = ProductId::NintendoLayout;
++                }
++                "Retroid Pocket Nova" => {
++                    device_config.product_id = ProductId::NintendoLayout;
++                }
+                 _ => {}
+             };
+ 

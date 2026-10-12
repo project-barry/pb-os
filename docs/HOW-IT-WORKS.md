@@ -38,7 +38,7 @@ off; `pbosctl monitor` shows which button sends what. Button actions live in
 
 The Deck controller has no spare buttons, but the Pocket FIT has no
 trackpads, so by default Custom Function and K send trackpad clicks that Steam
-can bind per game. PB-OS Utils → Hardware → Buttons → **Steam Remap** off (or
+can bind per game. PB-OS Tools → Hardware → Buttons → **Steam Remap** off (or
 `pbosctl buttons system`) makes them run pbosd's actions instead; pbosd then
 installs the other InputPlumber map from `/usr/share/pbosd/inputplumber/`
 and restarts InputPlumber, so the controller reconnects once.
@@ -97,13 +97,13 @@ konkr-game compat %command%    # strict TSO / split locks for crashing games
 
 ### Quick Access panels (Decky)
 
-**PB-OS Utils**, on the Pocket FIT: the **Performance** tab has the profile,
+**PB-OS Tools**, on the Pocket FIT: the **Performance** tab has the profile,
 live temperature, fan and GPU clock; the **Hardware** tab has Steam Remap, the
 Custom Function / K actions and the MCU link toggle (until alpha v0.5.2 these
 were the PB-OS Control plugin). They replace the SM8550-Power and SM8550-LED
 plugins, which would fight `pbosd` over the fan and drive AYN-only LEDs.
 
-**PB-OS Utils** (every device): tabs for pb-os updates, moving SteamOS
+**PB-OS Tools** (every device): tabs for pb-os updates, moving SteamOS
 between the microSD card and internal storage, and the stick lights (here
 written to `pbosd`'s state like the K button). On SM8550 (Retroid Pocket 6 /
 Nova, AYN Thor) a Power tab sets the charging indicator: sleeping on the
@@ -125,8 +125,9 @@ using Retroid's own battery firmware (kernel patch 0545,
 a level, and Run from USB (charge separation: the device runs from USB power
 and the battery is left alone).
 
-**Stick Calibration** (AYN Thor, Retroid Pocket 6 and Nova, EXPERIMENTAL):
-two switches for the `rsinput` pad, kept across restarts
+**Sticks** (PB-OS Tools → Hardware on the AYN Thor, Retroid Pocket 6 and
+Nova, EXPERIMENTAL; was the Stick Calibration plugin): two switches for the
+`rsinput` pad, kept across restarts
 (`/var/lib/sm8550-stickcal`, set again at boot by `sm8550-stickcal.service`
 before InputPlumber opens the pad). **Use my calibration** is AYN's Android
 stick calibration in Game Mode: let go of the sticks, rotate them round the

@@ -27,8 +27,8 @@ touchscreen is inhibited. Both are enforced on every pass, because the panel
 driver powers the backlight up again on each modeset and wake, and the Game
 Mode / Desktop start scripts re-enable the touchscreen.
 
-AYN button: InputPlumber leaves gpio-keys-ayn alone on the Thor (see the
-devices.d override written by apply-overlays.sh); this grabs it. A short
+AYN button: InputPlumber leaves gpio-keys-ayn alone on the Thor (no device
+config lists it, see 50-ayn_thor.yaml); this grabs it. A short
 press of KEY_F24 toggles OVERLAY; holding it LONG_PRESS_S writes HOME, which
 Barry Launcher watches to bring its home screen forward (and hides the
 dashboard). Barry Launcher's dashboard shows itself

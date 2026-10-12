@@ -12,7 +12,6 @@ set -euo pipefail
 
 declare -A DEVICE_ONLY=(
   [dual-screen]="ayn,thor"
-  [stick-calibration]="qcom,sm8550"  # the rsinput pad: RP6, Nova, Thor
 )
 
 STEAM_USER="${STEAM_USER:-steamos}"

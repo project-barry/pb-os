@@ -1,0 +1,97 @@
+#!/bin/bash
+# Face buttons: which InputPlumber map Steam sees A/B/X/Y through, for people
+# who physically moved the button caps on their device.
+#
+#   nintendo   A on the right, B at the bottom, X on top, Y on the left: the
+#              button in each place is Steam's button of that letter. The
+#              default on the AYN Thor and Retroid Pocket 6 / Nova, which are
+#              printed that way.
+#   xbox       A at the bottom, B on the right, Y on top, X on the left. The
+#              default on the KONKR Pocket FIT.
+#
+# The choice lives in STATE and is written into the device's InputPlumber
+# config as the capability map id(s). sm8550-face-buttons.service writes it
+# again at boot, before InputPlumber, because an update puts the stock file
+# back. PB-OS Utils (Hardware tab) calls get and set.
+#
+#   get           {"supported": true, "layout": "nintendo", "default": "nintendo"}
+#   set <layout>  save, apply, restart InputPlumber (the pad reconnects once)
+#   apply         write the saved choice into the config
+set -euo pipefail
+
+STATE=/var/lib/pbos-utils/face-buttons
+DEV=/usr/share/inputplumber/devices
+
+compat=$(tr '\0' ' ' < /sys/firmware/devicetree/base/compatible 2>/dev/null || true)
+model=$(tr -d '\0' < /sys/firmware/devicetree/base/model 2>/dev/null || true)
+# PAIRS: nintendo_map:xbox_map, one per source entry that has face buttons.
+FILE= PAIRS= DEFAULT=
+case " $compat " in
+  *"ayn,thor"*)
+    FILE=$DEV/50-ayn_thor.yaml; PAIRS="ayn_mcu_nintendo:ayn_mcu_thor"; DEFAULT=nintendo ;;
+  *"retroidpocket,rpnova"*)
+    FILE=$DEV/50-retroid_pocket_nova.yaml; PAIRS="rsinput_nintendo:rsinput1"; DEFAULT=nintendo ;;
+  *"retroidpocket,rp6"*)
+    FILE=$DEV/50-retroid_pocket6.yaml; PAIRS="rsinput_nintendo:rsinput1"; DEFAULT=nintendo ;;
+esac
+if [[ -z $FILE && $model == "KONKR Pocket FIT" ]]; then
+  FILE=/etc/inputplumber/devices.d/02-konkr-pocketfit.yaml
+  PAIRS="konkr_pocketfit_deck_nintendo:konkr_pocketfit_deck konkr_pocketfit_dinput_nintendo:konkr_pocketfit_dinput"
+  DEFAULT=xbox
+fi
+
+saved() {
+  local l
+  l=$(cat "$STATE" 2>/dev/null || true)
+  case "$l" in nintendo|xbox) echo "$l" ;; *) echo "$DEFAULT" ;; esac
+}
+
+# The map of the first pair, for the given layout.
+side() {
+  local pair=${PAIRS%% *}
+  [[ $1 == nintendo ]] && echo "${pair%%:*}" || echo "${pair##*:}"
+}
+
+current() {
+  local first=${PAIRS%% *} cur
+  cur=$(grep -m1 -E "^[[:space:]]*capability_map_id: (${first%%:*}|${first##*:})$" "$FILE" | awk '{print $2}')
+  [[ $cur == "${first%%:*}" ]] && echo nintendo || echo xbox
+}
+
+case "${1:-get}" in
+  get)
+    if [[ -z $FILE || ! -f $FILE ]]; then
+      echo '{"supported": false}'
+      exit 0
+    fi
+    printf '{"supported": true, "layout": "%s", "saved": "%s", "default": "%s"}\n' \
+      "$(current)" "$(saved)" "$DEFAULT"
+    ;;
+  set)
+    [[ -n $FILE && -f $FILE ]] || { echo "no face-button choice on this device" >&2; exit 1; }
+    case "${2:-}" in
+      nintendo|xbox) ;;
+      *) echo "usage: $0 set nintendo|xbox" >&2; exit 2 ;;
+    esac
+    mkdir -p "$(dirname "$STATE")"
+    printf '%s\n' "$2" > "$STATE"
+    "$0" apply
+    systemctl restart inputplumber.service
+    "$0" get
+    ;;
+  apply)
+    [[ -n $FILE && -f $FILE ]] || exit 0
+    want=$(saved)
+    for pair in $PAIRS; do
+      n=${pair%%:*}; x=${pair##*:}
+      [[ $want == nintendo ]] && to=$n || to=$x
+      sed -i -E "s/^([[:space:]]*capability_map_id: )($n|$x)$/\1$to/" "$FILE"
+      grep -qE "^[[:space:]]*capability_map_id: $to$" "$FILE" \
+        || { echo "$FILE: capability map $to not set" >&2; exit 1; }
+    done
+    ;;
+  *)
+    echo "usage: $0 get | set nintendo|xbox | apply" >&2
+    exit 2
+    ;;
+esac

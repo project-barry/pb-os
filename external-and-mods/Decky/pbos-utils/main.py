@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Decky backend — PB-OS Utils: pb-os tools for Game Mode, in tabs.
+"""Decky backend — PB-OS Tools (plugin pbos-utils): pb-os tools for Game Mode, in tabs.
 
 Update   pb-os updates (was the PB-OS Update plugin). Front for
          /usr/share/konkr-update/konkr-update.py (the SteamOS Update app's
@@ -19,7 +19,7 @@ Install  moves SteamOS between the microSD card and internal storage, with
          Either runs as the transient unit pbos-utils-move, with sleep held
          off, and writes its log to MOVE_LOG.
 
-Lights   stick lighting: on/off, a colour, brightness and effects. On the
+Lights   stick lighting: on/off, a color, brightness and effects. On the
          KONKR Pocket FIT pbosd owns it (its state file, applied on SIGHUP,
          shared with the K button and pbosctl) and the stick MCU renders the
          effects; on the Retroid Pocket 6 and Nova the light engine
@@ -51,6 +51,24 @@ Proton   follows Valve's Proton pick per game: Valve's Proton 11.0 (ARM64)
          ("global_set") and the global default is never touched again, so
          whatever the user picks later stays. Event-driven, from the
          frontend: Steam start, game installs/updates, Play. /usr/lib/steamos/pbos-proton builds the tools.
+
+Face buttons (Hardware tab), for people who physically moved the button
+         caps: Nintendo positions (A on the right; the default on the Retroid
+         Pocket 6 / Nova and AYN Thor, printed that way) or Xbox positions
+         (A at the bottom; the default on the KONKR Pocket FIT). A front for
+         /usr/lib/steamos/sm8550-face-buttons, which swaps the InputPlumber
+         map and restarts InputPlumber; its unit re-applies the choice at
+         boot.
+
+Sticks    (Hardware tab on the Retroid Pocket 6 / Nova and AYN Thor; was the
+         Stick Calibration plugin): "Use my calibration" (AYN's Android stick
+         calibration in Game Mode: let go of the sticks, push them round the
+         edge, save; each stick's center and range are set from that) and
+         "Fine stick steps" (the controller's finer reporting), both kept
+         across restarts. The work is done by
+         /usr/lib/steamos-sm8550/sm8550-stickcal on the system's native
+         Python, which also keeps the switches and sets them again at boot
+         (sm8550-stickcal.service).
 """
 from __future__ import annotations
 
@@ -442,6 +460,48 @@ def charge_rest(*args: str) -> dict[str, Any]:
     return {"supported": bool(out.get("lights")), **out}
 
 
+FACE_BUTTONS = "/usr/lib/steamos/sm8550-face-buttons"
+
+
+def face_buttons(*args: str) -> dict[str, Any]:
+    """sm8550-face-buttons get / set nintendo|xbox: {"supported", "layout", "saved", "default"}."""
+    if not os.access(FACE_BUTTONS, os.X_OK):
+        return {"supported": False}
+    r = subprocess.run([FACE_BUTTONS, *args], capture_output=True, text=True, env=CLEAN_ENV, timeout=30)
+    try:
+        return json.loads(r.stdout.strip().splitlines()[-1])
+    except (ValueError, IndexError):
+        decky.logger.info(f"face buttons {args[:1]}: {r.stderr.strip()}")
+        return {"supported": False}
+
+
+# Sticks: sm8550-stickcal (SM8550 only; absent elsewhere).
+STICKCAL = "/usr/lib/steamos-sm8550/sm8550-stickcal"
+STICK_AXES = ("left_x", "left_y", "right_x", "right_y")
+STICK_REST_S = 1.5
+STICK_REST_SPREAD = 80    # a resting stick moving more than this was touched
+STICK_EDGES_MAX_S = 180
+
+
+def stickcal(*args: str, stdin: str | None = None, timeout: float = 30) -> dict[str, Any]:
+    if not os.access(STICKCAL, os.R_OK):
+        return {"ok": False, "supported": False, "error": "not on this device"}
+    try:
+        r = subprocess.run(["/usr/bin/python3", STICKCAL, *args], input=stdin, capture_output=True,
+                           text=True, timeout=timeout)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {"ok": False, "error": str(exc)}
+    lines = r.stdout.strip().splitlines()
+    try:
+        res = json.loads(lines[-1]) if lines else {}
+    except ValueError:
+        res = {}
+    if r.returncode != 0 or not res:
+        res.setdefault("ok", False)
+        res.setdefault("error", r.stderr.strip() or f"exit {r.returncode}")
+    return res
+
+
 def charge_preview() -> bool:
     subprocess.run(["systemctl", "stop", f"{PREVIEW_UNIT}.service"], capture_output=True)
     subprocess.run(["systemctl", "reset-failed", f"{PREVIEW_UNIT}.service"], capture_output=True)
@@ -535,6 +595,11 @@ class Plugin:
         self.movelog = MoveLog()
         self.move_was_running = await asyncio.to_thread(active, MOVE_UNIT)
         self.lights = await asyncio.to_thread(lights_kind)
+        self.stick_edges: subprocess.Popen | None = None
+        self.stick_reader: threading.Thread | None = None
+        self.stick_live: dict[str, Any] | None = None
+        self.stick_rest: dict[str, Any] | None = None
+        self.stick_lock = threading.Lock()
         if self.lights == "multicolor":
             await asyncio.to_thread(start_engine)
         watchers = [self._watch(), self._watch_drives(), self._cleanup(), self._watch_move()]
@@ -545,6 +610,7 @@ class Plugin:
     async def _unload(self) -> None:
         for t in self.tasks:
             t.cancel()
+        self._stick_stop()
         if self.lights == "multicolor":
             await asyncio.to_thread(stop_engine)
 
@@ -741,7 +807,7 @@ class Plugin:
         # The log goes to HOME afterwards too, for a report; sleep, the power
         # button and the lid are held off until the script ends.
         wrapper = ('systemd-inhibit --what=sleep:idle:shutdown:handle-power-key:handle-suspend-key:handle-lid-switch '
-                   '--who="PB-OS Utils" --why="Copying SteamOS" --mode=block "$@"; rc=$?; '
+                   '--who="PB-OS Tools" --why="Copying SteamOS" --mode=block "$@"; rc=$?; '
                    'echo "PBOS_EXIT=$rc"; '
                    f'install -o 1000 -g 1000 -m 0644 {MOVE_LOG} /home/steamos/pbos-move-{stamp}.log 2>/dev/null; '
                    'exit $rc')
@@ -795,7 +861,7 @@ class Plugin:
             st.update({"on": bool(on), "effect": effect, "color": color, "brightness": brightness, "speed": speed,
                        "reverse_left": bool(reverse_left), "reverse_right": bool(reverse_right)})
             if color2:
-                st["color2"] = clean_color(color2)     # the audio effects' intensity colour
+                st["color2"] = clean_color(color2)     # the audio effects' intensity color
             st.pop("mode", None)
             await asyncio.to_thread(write_json, LIGHTS_STATE, st)
             await asyncio.to_thread(nudge_engine)
@@ -913,6 +979,109 @@ class Plugin:
         if self.lights == "pbosd":
             await asyncio.to_thread(set_mcu_link, bool(enabled))
         return await self.get_control()
+
+    # -------------------------------------------------------- face buttons --
+    async def get_face_buttons(self, **_: Any) -> dict[str, Any]:
+        return await asyncio.to_thread(face_buttons, "get")
+
+    async def set_face_buttons(self, layout: str = "nintendo", **_: Any) -> dict[str, Any]:
+        if layout not in ("nintendo", "xbox"):
+            return await self.get_face_buttons()
+        decky.logger.info(f"face buttons -> {layout}")
+        return await asyncio.to_thread(face_buttons, "set", layout)
+
+    # --------------------------------------------------------------- sticks --
+    async def stick_state(self, **_: Any) -> dict[str, Any]:
+        if not os.access(STICKCAL, os.R_OK):
+            return {"supported": False}
+        return {"supported": True, **await asyncio.to_thread(stickcal, "status")}
+
+    async def stick_rest(self, **_: Any) -> dict[str, Any]:
+        """The sticks at rest; refuses if one was touched."""
+        res = await asyncio.to_thread(stickcal, "rest", str(STICK_REST_S))
+        if not res.get("ok"):
+            return res
+        moved = [n for n, a in res["axes"].items() if a["hi"] - a["lo"] > STICK_REST_SPREAD]
+        if moved:
+            return {"ok": False, "error": "A stick moved. Let go of both sticks and try again."}
+        self.stick_rest = {n: a["mean"] for n, a in res["axes"].items()}
+        decky.logger.info("sticks rest: " + ", ".join(f"{n} {v:+.1f}" for n, v in self.stick_rest.items()))
+        return {"ok": True, "rest": self.stick_rest}
+
+    async def stick_edges(self, **_: Any) -> dict[str, Any]:
+        self._stick_stop()
+        with self.stick_lock:
+            self.stick_live = None
+        try:
+            self.stick_edges = subprocess.Popen(["/usr/bin/python3", STICKCAL, "edges", str(STICK_EDGES_MAX_S)],
+                                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+        except OSError as exc:
+            return {"ok": False, "error": str(exc)}
+        self.stick_reader = threading.Thread(target=self._stick_read, args=(self.stick_edges,), daemon=True)
+        self.stick_reader.start()
+        return {"ok": True}
+
+    def _stick_read(self, proc: subprocess.Popen) -> None:
+        for line in proc.stdout:
+            try:
+                data = json.loads(line)
+            except ValueError:
+                continue
+            with self.stick_lock:
+                self.stick_live = data
+
+    def _stick_stop(self) -> None:
+        proc, self.stick_edges = getattr(self, "stick_edges", None), None
+        if proc and proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+        # Its last line (the typical reach) is read before anything uses it.
+        if getattr(self, "stick_reader", None):
+            self.stick_reader.join(timeout=3)
+            self.stick_reader = None
+
+    async def stick_live_values(self, **_: Any) -> dict[str, Any] | None:
+        with self.stick_lock:
+            return self.stick_live
+
+    async def stick_cancel(self, **_: Any) -> None:
+        self._stick_stop()
+        self.stick_rest = None
+
+    async def stick_save(self, **_: Any) -> dict[str, Any]:
+        """Stop measuring, keep the result and turn it on."""
+        self._stick_stop()
+        with self.stick_lock:
+            live = self.stick_live
+        if not live or not self.stick_rest:
+            return {"ok": False, "error": "Nothing measured yet."}
+        # The typical reach of each direction (the helper's last line); the
+        # furthest values only if the helper died before writing it.
+        reach = live.get("reach") or {n: {"lo": live["lo"][n], "hi": live["hi"][n]} for n in STICK_AXES}
+        cal = {n: {"rest": self.stick_rest[n], "lo": reach[n]["lo"], "hi": reach[n]["hi"],
+                   "furthest": [live["lo"][n], live["hi"][n]]} for n in STICK_AXES}
+        res = await asyncio.to_thread(stickcal, "save", stdin=json.dumps(cal))
+        if not res.get("ok"):
+            res["error"] = f"Not saved: {res.get('error')}. Push each stick all the way round the edge."
+            return res
+        self.stick_rest = None
+        decky.logger.info(f"sticks saved and on: {json.dumps(res.get('plan'))}")
+        return res
+
+    async def stick_switch(self, which: str = "", on: bool = False, **_: Any) -> dict[str, Any]:
+        if which not in ("calibration", "fine"):
+            return {"ok": False, "error": f"unknown switch {which}"}
+        res = await asyncio.to_thread(stickcal, "set", which, "on" if on else "off")
+        decky.logger.info(f"sticks {which} {'on' if on else 'off'}: {json.dumps(res)}")
+        return res
+
+    async def stick_delete(self, **_: Any) -> dict[str, Any]:
+        res = await asyncio.to_thread(stickcal, "delete")
+        decky.logger.info(f"stick calibration deleted: {json.dumps(res)}")
+        return res
 
     # -------------------------------------------------------------- proton --
     async def get_proton(self, **_: Any) -> dict[str, Any]:

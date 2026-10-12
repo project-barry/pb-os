@@ -80,7 +80,7 @@ def read_json(path: str) -> dict[str, Any]:
 # Effects, named like the RGB apps gamers know (Armoury Crate, Synapse,
 # iCUE). On the KONKR Pocket FIT the stick MCU renders them itself; on the
 # Retroid Pocket 6 and Nova, Animator does, here. "color": the effect uses
-# the picked colour; "speed": it has a speed; "turns": it goes round the
+# the picked color; "speed": it has a speed; "turns": it goes round the
 # sticks, and each stick's direction can be reversed.
 EFFECTS = {
     "pbosd": [
@@ -101,10 +101,10 @@ EFFECTS = {
 PBOSD_MODES = {"static": "static", "breathing": "breath", "rainbow": "rainbow"}
 # Out of the box (no saved settings yet) on the Pocket FIT, Retroid Pocket 6
 # and Nova: purple breathing, as tuned on a Nova (2026-10-08). pbosd and the
-# AYN Thor's controls daemon start the same colour.
+# AYN Thor's controls daemon start the same color.
 DEFAULT_EFFECT = "breathing"
 DEFAULT_COLOR = "8c00ff"
-DEFAULT_COLOR2 = "ffffff"        # the audio effects' intensity colour
+DEFAULT_COLOR2 = "ffffff"        # the audio effects' intensity color
 
 
 def lights_kind() -> str:
@@ -237,7 +237,7 @@ def lights_signature() -> tuple[int, ...]:
 
 
 GAMMA = 2.2
-# Audio effects, as the eye sees it: the base colour rests at a dim
+# Audio effects, as the eye sees it: the base color rests at a dim
 # background (or its dimmest true level, if higher); loudness lifts a zone
 # AUDIO_LEVEL_SHARE of the way from there to the brightness setting, and
 # only hits go all the way, so they stand out over loud sound.
@@ -253,7 +253,7 @@ SPECTRUM_PLACES = ((3, 2, 0, 1), (3, 1, 0, 2))
 
 
 def even_hue(h: float) -> tuple[float, float, float]:
-    """A full colour of hue h (0-1) at the same total power for every hue:
+    """A full color of hue h (0-1) at the same total power for every hue:
     red to green to blue and back, each pair crossing over linearly. The
     usual rainbow lights two channels fully for yellow, cyan and magenta,
     twice the power of red, green or blue, and looked brighter there."""
@@ -266,7 +266,7 @@ def even_hue(h: float) -> tuple[float, float, float]:
 # Seconds the stick lights take to come back after a sleep: the sleep hook's
 # fade-out (sm8550-sleep), the other way round.
 FADE_IN = 0.3
-# A colour's main channels: those at least this share of its strongest one.
+# A color's main channels: those at least this share of its strongest one.
 MAIN = 0.25
 # How much light each channel gives the eye (Rec. 709 luma: red, green, blue).
 LUMA = (0.2126, 0.7152, 0.0722)
@@ -282,7 +282,7 @@ def frame(effect: str, t: float, rgb: tuple[int, int, int], speed: int, n: int,
           stars: list[float], floor: float = 0.0,
           reverse: tuple[bool, bool] = (False, False), level: Any = 0.0,
           rgb2: tuple[int, int, int] | None = None) -> list[tuple[int, int, int]]:
-    """Each zone's colour at time t (seconds). Zones go round each ring of
+    """Each zone's color at time t (seconds). Zones go round each ring of
     n // 2; both sticks show the same."""
     ring = max(1, n // 2)
     fast = (speed - 1) / 9
@@ -302,7 +302,7 @@ def frame(effect: str, t: float, rgb: tuple[int, int, int], speed: int, n: int,
 
     if effect == "breathing":
         # Breathes between floor (Animator.floor(): the dimmest level that
-        # still shows the colour) and full.
+        # still shows the color) and full.
         # Steady through the dim end and slowing only towards full: a sine
         # lingered at the bottom, where one power step is a visible jump, so
         # it held there and then jumped (Nova, brightness 70).
@@ -334,9 +334,9 @@ def frame(effect: str, t: float, rgb: tuple[int, int, int], speed: int, n: int,
         return out
     if effect in ("audio", "spectrum"):
         # level (AudioMeter.current()): (levels, accents), 0-1 per channel.
-        # The zone rests at the background in the base colour; loudness
+        # The zone rests at the background in the base color; loudness
         # lifts it, a hit (accent) takes it towards rgb2, the intensity
-        # colour, and up to full: the brightness setting is the peak.
+        # color, and up to full: the brightness setting is the peak.
         if isinstance(level, tuple) and len(level) == 2 and isinstance(level[0], (list, tuple)):
             lv, ac = list(level[0]), list(level[1])
         else:
@@ -349,8 +349,8 @@ def frame(effect: str, t: float, rgb: tuple[int, int, int], speed: int, n: int,
             if effect == "audio":
                 # Audio Meter: each stick its side, filling its ring like a
                 # VU meter, bottom, then both sides, then the top (the peak,
-                # in the intensity colour); a beat kicks it up and turns the
-                # lit LEDs towards the intensity colour.
+                # in the intensity color); a beat kicks it up and turns the
+                # lit LEDs towards the intensity color.
                 c = side if len(lv) > side else 0
                 lvl = max(lv[c], ac[c])
                 place = i % ring
@@ -715,7 +715,7 @@ class AudioMeter:
 class Animator:
     """Drives the Retroid Pocket 6 / Nova stick LEDs. Static and off are
     written once; effects run in a thread at FPS, writing only zones whose
-    colour changed (each write is an I2C transfer to the LED driver)."""
+    color changed (each write is an I2C transfer to the LED driver)."""
 
     # Measured on the Nova (Spin, 20 s each): 20 and 30 fps both cost ~1.7 %
     # of one core, 60 fps 3.7 %; a frame's writes take under 1 ms. Battery
@@ -753,7 +753,7 @@ class Animator:
                     self._write(led, "brightness", 0)
             return
         effect = st.get("effect", "static")
-        # The colour first, then the brightness: LEDs made again (after a
+        # The color first, then the brightness: LEDs made again (after a
         # sleep) start at full white, and brightness first flashed it.
         for i, led in enumerate(leds):
             first = [0, 0, 0] if fade else frame(effect, 0.0, rgb, int(st.get("speed", 5)), len(leds), [-100.0] * len(leds),
@@ -835,7 +835,7 @@ class Animator:
     def floor(self, led: str, rgb) -> float:
         """The dimmest level (as it looks, 0-1) at which rgb at the set
         brightness still has FLOOR_STEPS power steps in its weakest main
-        channel. Below that the few whole steps left can't hold the colour
+        channel. Below that the few whole steps left can't hold the color
         (a pink at brightness 70 turned red: blue 1, red 3) and every step is
         a visible jump."""
         top = self.top(led)
@@ -873,7 +873,7 @@ class Animator:
     def power(self, led: str, rgb) -> str:
         """multi_intensity for rgb (0-255, may be fractional) at the set
         brightness: each channel's final power, rounded once. Near the end of
-        a fade a main channel of the colour (MAIN of the strongest or more)
+        a fade a main channel of the color (MAIN of the strongest or more)
         would round to 0 while another is still lit, tinting the zone, so the
         zone is off from there."""
         top = self.top(led)

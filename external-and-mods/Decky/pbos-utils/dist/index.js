@@ -1,4 +1,4 @@
-const manifest = {"name":"PB-OS Utils"};
+const manifest = {"name":"PB-OS Tools"};
 const API_VERSION = 2;
 const internalAPIConnection = window.__DECKY_SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED_deckyLoaderAPIInit;
 if (!internalAPIConnection) {
@@ -45,6 +45,18 @@ const setFan = callable("set_fan");
 const setButton = callable("set_button");
 const setButtonsMode = callable("set_buttons_mode");
 const setMcu = callable("set_mcu");
+// Face buttons by printed letter or by position (Retroid Pocket 6 / Nova, AYN Thor).
+const getFaceButtons = callable("get_face_buttons");
+const setFaceButtons = callable("set_face_buttons");
+// Sticks (Retroid Pocket 6 / Nova, AYN Thor; was the Stick Calibration plugin).
+const stickState = callable("stick_state");
+const stickRest = callable("stick_rest");
+const stickEdges = callable("stick_edges");
+const stickLive = callable("stick_live_values");
+const stickCancel = callable("stick_cancel");
+const stickSave = callable("stick_save");
+const stickSwitch = callable("stick_switch");
+const stickDelete = callable("stick_delete");
 const getCharging = callable("get_charging");
 const setCharging = callable("set_charging");
 const previewCharging = callable("preview_charging");
@@ -656,7 +668,7 @@ function LightsTab() {
         }
         const audioFx = effect.id === "audio" || effect.id === "spectrum";
         if (audioFx) {
-            // The audio effects' second colour: what a hit turns a zone towards.
+            // The audio effects' second color: what a hit turns a zone towards.
             const c2 = st.color2 || "ffffff";
             const swatch2 = jsx("span", { style: { display: "inline-block", width: "14px", height: "14px", borderRadius: "7px",
                 marginLeft: "8px", verticalAlign: "middle", border: "1px solid rgba(255,255,255,0.5)", background: `#${c2}` } });
@@ -726,7 +738,7 @@ function LightsTab() {
                     value: rgb[i], min: 0, max: 255, step: 1, showValue: true, editableValue: true,
                     onChange: (v) => { const c = rgb.slice(); c[i] = v; change({ color: toColor(c) }); },
                 }))));
-                items.push(note(`#${st.color.toUpperCase()}. The Color slider picks full colours; white and pastels are set here.`));
+                items.push(note(`#${st.color.toUpperCase()}. The Color slider picks full colors; white and pastels are set here.`));
                 if (effect.id === "audio" || effect.id === "spectrum") {
                     const rgb2 = toRgb(st.color2 || "ffffff");
                     ["Intensity Red", "Intensity Green", "Intensity Blue"].forEach((name, i) => items.push(row(jsx(DFL.SliderField, {
@@ -840,14 +852,268 @@ function PerformanceTab() {
     ] });
 }
 
+// Face buttons, for people who physically moved the button caps: which
+// InputPlumber map Steam sees A/B/X/Y through. Nintendo positions (A on the
+// right) is the default on the Retroid Pocket 6 / Nova and AYN Thor, printed
+// that way; Xbox positions (A at the bottom) on the KONKR Pocket FIT.
+// sm8550-face-buttons swaps the map and restarts InputPlumber, so the pad
+// reconnects once.
+const FACE_LAYOUTS = [
+    { data: "nintendo", label: "Nintendo Positions" },
+    { data: "xbox", label: "XBox Positions" },
+];
+const FACE_DESC = "Use this option only if you have physically modified the button placement on your device.";
+
+// The "Buttons" section's rows: its own section, or (inline, on the KONKR
+// Pocket FIT) the top of pbosd's Buttons section.
+function FaceButtons({ inline }) {
+    const [st, setSt] = useState(null);
+    useEffect(() => { getFaceButtons().then(setSt).catch(() => setSt({ supported: false })); }, []);
+    if (!st) return inline ? null : jsx(DFL.PanelSection, { children: note("Loading…") });
+    if (!st.supported) return inline ? null : jsx(DFL.PanelSection, { children: note("This device has no hardware settings here.") });
+    const layout = FACE_LAYOUTS.find((l) => l.data === st.layout) || FACE_LAYOUTS[0];
+    const rows = [
+        row(jsx(DFL.DropdownItem, {
+            label: "Button layout",
+            layout: "below",
+            rgOptions: FACE_LAYOUTS.map((l) => ({ data: l.data, label: l.label })),
+            selectedOption: layout.data,
+            onChange: (o) => {
+                if (o.data === layout.data) return;
+                setSt({ ...st, layout: o.data });
+                setFaceButtons(o.data).then((r) => {
+                    setSt(r);
+                    toaster.toast({ title: "PB-OS Tools", body: "Face buttons switched, controller reconnects" });
+                }).catch(() => getFaceButtons().then(setSt).catch(() => {}));
+            },
+        })),
+        note(FACE_DESC),
+    ];
+    return inline ? jsx(SP_JSX.Fragment, { children: rows }) : jsx(DFL.PanelSection, { title: "Buttons", children: rows });
+}
+
+// ---------------------------------------------------------------- sticks ---
+// Stick calibration (AYN's Android tool, in Game Mode) and fine stick steps
+// for the rsinput pad; sm8550-stickcal does the work and keeps both switches.
+const STICK_EXPERIMENTAL = "Experimental, for testing.";
+// Each direction of each axis has to reach this far (the helper's MIN_HALF)
+// before Save is offered.
+const STICK_MIN_HALF = 600;
+const STICKS = [
+    { label: "Left stick", x: "left_x", y: "left_y" },
+    { label: "Right stick", x: "right_x", y: "right_y" },
+];
+
+function stickReached(live, rest, axis) {
+    if (!live || !rest) return [0, 0];
+    return [rest[axis] - live.lo[axis], live.hi[axis] - rest[axis]];
+}
+
+function stickReady(live, rest) {
+    return ["left_x", "left_y", "right_x", "right_y"].every((a) => {
+        const [neg, pos] = stickReached(live, rest, a);
+        return neg >= STICK_MIN_HALF && pos >= STICK_MIN_HALF;
+    });
+}
+
+// One stick: the square of the values reached so far, the dot where it is
+// now, the centre cross at rest. The scale fits the default ±1408.
+function StickView({ label, live, rest, x, y }) {
+    const S = 120, H = S / 2, SCALE = 1408;
+    const px = (v) => H + Math.max(-1, Math.min(1, v / SCALE)) * (H - 6);
+    const r = rest || {};
+    const at = (axis, v) => v - (r[axis] || 0);
+    const items = [
+        jsx("circle", { cx: H, cy: H, r: H - 6, fill: "none", stroke: "rgba(255,255,255,0.25)", strokeWidth: 1 }, "gate"),
+        jsx("path", { d: `M${H - 6} ${H}h12M${H} ${H - 6}v12`, stroke: "rgba(255,255,255,0.4)", strokeWidth: 1 }, "c"),
+    ];
+    if (live) {
+        const x0 = px(at(x, live.lo[x])), x1 = px(at(x, live.hi[x]));
+        const y0 = px(at(y, live.lo[y])), y1 = px(at(y, live.hi[y]));
+        items.push(jsx("rect", { x: x0, y: y0, width: Math.max(0, x1 - x0), height: Math.max(0, y1 - y0),
+            fill: "rgba(26,159,255,0.15)", stroke: "#1a9fff", strokeWidth: 1 }, "seen"));
+        items.push(jsx("circle", { cx: px(at(x, live.now[x])), cy: px(at(y, live.now[y])), r: 5, fill: "#fff" }, "dot"));
+    }
+    const nums = (axis) => {
+        const [neg, pos] = stickReached(live, rest, axis);
+        const ok = neg >= STICK_MIN_HALF && pos >= STICK_MIN_HALF;
+        return jsx("div", { style: { color: ok ? "#8fe08f" : undefined }, children:
+            `${axis.endsWith("x") ? "X" : "Y"}  −${Math.round(neg)} … +${Math.round(pos)}` });
+    };
+    return jsxs("div", { style: { display: "flex", flexDirection: "column", alignItems: "center", gap: "4px", fontSize: "12px" }, children: [
+        jsx("div", { style: { fontWeight: 600 }, children: label }),
+        jsx("svg", { width: S, height: S, viewBox: `0 0 ${S} ${S}`, children: items }),
+        nums(x),
+        nums(y),
+    ] });
+}
+
+// The calibration screen. Steps: rest (let go, Start) → edges (round the
+// edge until the numbers stop changing, Save) → done or error.
+function CalibrateModal({ closeModal, onDone }) {
+    const [step, setStep] = useState("rest");
+    const [busy, setBusy] = useState(false);
+    const [error, setError] = useState("");
+    const [rest, setRest] = useState(null);
+    const [live, setLive] = useState(null);
+    const finished = useRef(false);
+
+    useEffect(() => {
+        if (step !== "edges") return undefined;
+        const t = setInterval(() => stickLive().then((l) => { if (l) setLive(l); }).catch(() => {}), 100);
+        return () => clearInterval(t);
+    }, [step]);
+
+    useEffect(() => () => { if (!finished.current) stickCancel().catch(() => {}); }, []);
+
+    const close = () => { closeModal(); };
+    const begin = async () => {
+        setBusy(true);
+        setError("");
+        try {
+            const r = await stickRest();
+            if (!r.ok) { setError(r.error); return; }
+            setRest(r.rest);
+            setLive(null);
+            const s = await stickEdges();
+            if (!s.ok) { setError(s.error); return; }
+            setStep("edges");
+        } catch (e) {
+            setError(String(e));
+        } finally {
+            setBusy(false);
+        }
+    };
+    const finish = async () => {
+        setBusy(true);
+        try {
+            const r = await stickSave();
+            if (!r.ok) { setError(r.error); setStep("rest"); return; }
+            finished.current = true;
+            setStep("done");
+            onDone();
+        } catch (e) {
+            setError(String(e));
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    const button = (text, onClick, disabled) => jsx(DFL.DialogButton, {
+        style: { flex: 1 }, disabled: busy || !!disabled, onClick, children: text });
+    const buttons = (...children) => jsx(DFL.Focusable, {
+        style: { display: "flex", gap: "8px", marginTop: "16px" }, children });
+    const text = (t) => jsx("div", { style: { marginBottom: "8px" }, children: t });
+
+    let body;
+    if (step === "rest") {
+        body = [
+            text("Let go of both sticks, then press Start."),
+            error && jsx("div", { style: { color: "#ff8080", marginBottom: "8px" }, children: error }),
+            buttons(button(busy ? "Measuring…" : "Start", begin), button("Cancel", close)),
+        ];
+    } else if (step === "edges") {
+        const ok = stickReady(live, rest);
+        body = [
+            text("Rotate each stick slowly around the edge 3–4 times, then press Save."),
+            jsx("div", { style: { display: "flex", justifyContent: "space-around", margin: "8px 0" },
+                children: STICKS.map((s) => jsx(StickView, { ...s, live, rest }, s.label)) }),
+            !ok && jsx("div", { style: { fontSize: "12px", opacity: 0.75 },
+                children: "Save works once every number is green." }),
+            error && jsx("div", { style: { color: "#ff8080" }, children: error }),
+            buttons(button(busy ? "Saving…" : "Save", finish, !ok), button("Cancel", close)),
+        ];
+    } else {
+        body = [
+            text("Saved and turned on."),
+            buttons(button("Close", close)),
+        ];
+    }
+    return jsx(DFL.ModalRoot, { onCancel: close, closeModal, children: jsxs("div", { children: [
+        jsx("div", { style: { fontSize: "20px", fontWeight: 600, marginBottom: "12px" }, children: "Calibrate sticks" }),
+        ...body.filter(Boolean),
+    ] }) });
+}
+
+// The "Analog Sticks" section; nothing where sm8550-stickcal isn't (Pocket FIT).
+function Sticks() {
+    const [st, setSt] = useState(null);
+    const [busy, setBusy] = useState(false);
+    const [error, setError] = useState("");
+
+    const refresh = useCallback(() => stickState().then(setSt).catch((e) => setError(String(e))), []);
+    useEffect(() => { refresh(); }, [refresh]);
+
+    const run = async (fn) => {
+        setBusy(true);
+        setError("");
+        try {
+            const r = await fn();
+            if (r && r.ok === false) setError(r.error);
+            else if (r && r.restart_error) setError(`InputPlumber didn't restart: ${r.restart_error}`);
+        } catch (e) {
+            setError(String(e));
+        } finally {
+            setBusy(false);
+            refresh();
+        }
+    };
+
+    if (!st || !st.supported) return null;
+    const items = [warn(STICK_EXPERIMENTAL)];
+    if (!st.pad) {
+        items.push(failure(st.error || "No controller found."));
+        return jsx(DFL.PanelSection, { title: "Analog Sticks", children: items });
+    }
+    items.push(row(jsx(DFL.ToggleField, {
+        label: "Use my calibration",
+        description: st.has_calibration ? "Centers the sticks and gives them their full reach."
+            : "Calibrate the sticks first.",
+        checked: st.use_calibration,
+        disabled: busy || !st.has_calibration,
+        onChange: (on) => run(() => stickSwitch("calibration", on)),
+    })));
+    if (st.fine_supported) {
+        items.push(row(jsx(DFL.ToggleField, {
+            label: "Fine stick steps",
+            description: "Smaller steps for more precise movement.",
+            checked: st.fine,
+            disabled: busy,
+            onChange: (on) => run(() => stickSwitch("fine", on)),
+        })));
+    }
+    items.push(row(jsx(DFL.ButtonItem, {
+        layout: "below",
+        disabled: busy,
+        onClick: () => DFL.showModal(jsx(CalibrateModal, { onDone: refresh })),
+        children: st.has_calibration ? "Calibrate again" : "Calibrate sticks",
+    })));
+    if (st.has_calibration) {
+        items.push(row(jsx(DFL.ButtonItem, {
+            layout: "below",
+            disabled: busy,
+            onClick: () => DFL.showModal(jsx(DFL.ConfirmModal, {
+                strTitle: "Delete calibration?",
+                strDescription: "Your sticks go back to the default settings.",
+                strOKButtonText: "Delete",
+                onOK: () => run(stickDelete),
+            })),
+            children: "Delete calibration",
+        })));
+    }
+    if (error) items.push(failure(error));
+    return jsx(DFL.PanelSection, { title: "Analog Sticks", children: items });
+}
+
 function HardwareTab() {
     const { st, apply } = useControl();
     if (!st) return jsx(DFL.PanelSection, { children: note("Loading…") });
-    if (!st.available) return jsx(DFL.PanelSection, { children: note("This device has no hardware settings here.") });
+    if (!st.available) return jsxs(SP_JSX.Fragment, { children: [jsx(FaceButtons, {}), jsx(Sticks, {})] });
     const buttons = st.buttons || {};
     const steamButtons = (st.buttons_mode || "steam") === "steam";
     return jsxs(SP_JSX.Fragment, { children: [
         jsxs(DFL.PanelSection, { title: "Buttons", children: [
+            jsx(FaceButtons, { inline: true }),
             row(jsx(DFL.ToggleField, {
                 label: "Steam Remap",
                 description: steamButtons
@@ -855,7 +1121,7 @@ function HardwareTab() {
                     : "Off: buttons map to actions selected below",
                 checked: steamButtons,
                 onChange: (v) => apply(setButtonsMode(v ? "steam" : "system")).then(() => {
-                    toaster.toast({ title: "PB-OS Utils", body: "Buttons switched, controller reconnects" });
+                    toaster.toast({ title: "PB-OS Tools", body: "Buttons switched, controller reconnects" });
                 }),
             })),
             row(jsx(DFL.DropdownItem, {
@@ -880,7 +1146,7 @@ function HardwareTab() {
                 description: "Needed for the KONKR, Performance and Quick Access buttons and stick lighting (Lighting tab)",
                 checked: st.mcu_enabled,
                 onChange: (v) => apply(setMcu(v)).then(() => {
-                    toaster.toast({ title: "PB-OS Utils", body: v ? "MCU link enabled" : "MCU link disabled" });
+                    toaster.toast({ title: "PB-OS Tools", body: v ? "MCU link enabled" : "MCU link disabled" });
                 }),
             })),
         ] }),
@@ -1028,19 +1294,24 @@ function Content() {
     const [tab, setTab] = useState(lastTab);
     const [lights, setLightsKind] = useState(null);
     const [power, setPower] = useState(null);
+    const [face, setFace] = useState(null);
     const pick = (id) => { lastTab = id; setTab(id); };
     useEffect(() => {
         getLights().then((s) => setLightsKind(s.kind || "")).catch(() => setLightsKind(""));
+        Promise.all([getFaceButtons().catch(() => ({})), stickState().catch(() => ({}))])
+            .then(([f, s]) => setFace(!!f.supported || !!s.supported));
         Promise.all([getCharging().catch(() => ({})), getChargeControl().catch(() => ({}))])
             .then(([rest, cc]) => setPower(!!rest.supported || !!cc.supported));
     }, []);
     // Until it's known whether there are lights: Lighting comes first where
     // there are, and the panel shouldn't open on Update and then jump.
-    if (lights === null || power === null) return jsx(DFL.PanelSection, { children: note("Loading…") });
+    if (lights === null || power === null || face === null) return jsx(DFL.PanelSection, { children: note("Loading…") });
     const tabs = [
         ...(lights ? [{ id: "lights", icon: LightsIcon }] : []),
         // pbosd's settings: KONKR Pocket FIT / AYANEO Pocket S2.
         ...(lights === "pbosd" ? [{ id: "performance", icon: PerformanceIcon }, { id: "hardware", icon: HardwareIcon }] : []),
+        // Face buttons and sticks: Retroid Pocket 6 / Nova, AYN Thor.
+        ...(lights !== "pbosd" && face ? [{ id: "hardware", icon: HardwareIcon }] : []),
         ...(power ? [{ id: "power", icon: PowerIcon }] : []),
         { id: "update", icon: UpdateIcon },
         { id: "install", icon: InstallIcon },
@@ -1069,16 +1340,16 @@ function Content() {
 }
 
 function onAvailable(title) {
-    toaster.toast({ title: "pb-os update", body: `${title} is available. Open PB-OS Utils in Quick Access.`, duration: 6000 });
+    toaster.toast({ title: "pb-os update", body: `${title} is available. Open PB-OS Tools in Quick Access.`, duration: 6000 });
 }
 
 function onLocal(version, place) {
-    toaster.toast({ title: "pb-os update", body: `pb-os ${version} is ${place}. Open PB-OS Utils in Quick Access to install it.`, duration: 6000 });
+    toaster.toast({ title: "pb-os update", body: `pb-os ${version} is ${place}. Open PB-OS Tools in Quick Access to install it.`, duration: 6000 });
 }
 
 function onMoveDone(direction, ok) {
     const what = direction === "sd" ? "Copy to microSD" : "Install to internal storage";
-    toaster.toast({ title: "PB-OS Utils", body: ok ? `${what} finished. Open PB-OS Utils for the next steps.` : `${what} failed. Open PB-OS Utils for details.`, duration: 8000 });
+    toaster.toast({ title: "PB-OS Tools", body: ok ? `${what} finished. Open PB-OS Tools for the next steps.` : `${what} failed. Open PB-OS Tools for details.`, duration: 8000 });
 }
 
 // Toast whenever the profile changes (Performance button, pbosctl or the
@@ -1196,7 +1467,7 @@ var index = definePlugin(() => {
     api.addEventListener("pbos_local_available", onLocal);
     api.addEventListener("pbos_move_done", onMoveDone);
     return {
-        name: "PB-OS Utils",
+        name: "PB-OS Tools",
         content: jsx(Content, {}),
         // A wrench.
         icon: jsx("svg", { viewBox: "0 0 24 24", width: "1em", height: "1em", fill: "currentColor",

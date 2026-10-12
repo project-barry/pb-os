@@ -1,0 +1,14 @@
+[Unit]
+Description=Face buttons map (AYN Thor, Retroid Pocket 6 / Nova)
+# Writes the saved choice (printed letters or Xbox positions) into the
+# device's InputPlumber config before InputPlumber reads it; an update puts
+# the stock file back. Only once someone has made a choice.
+Before=inputplumber.service
+ConditionPathExists=/var/lib/pbos-utils/face-buttons
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/steamos/sm8550-face-buttons apply
+
+[Install]
+WantedBy=multi-user.target
