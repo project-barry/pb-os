@@ -12,7 +12,7 @@ This is **not** a supported manufacturer procedure. It is an **experimental comm
 
 Running `install-masios-to-internal.sh` (unless using `--resume` / `--deploy-only` on **existing** SteamOS 3-partition layouts only):
 
-- **Wipes Android `userdata`** — all apps, photos, game saves, accounts, and settings on internal Android storage are **permanently erased** (equivalent to repartition + factory reset).
+- **Wipes Android `userdata`** — all apps, photos, game saves, accounts, and settings on internal Android storage are **permanently erased** (equivalent to repartition + factory reset: the metadata-encryption key is removed, so the old data is unrecoverable).
 - **May destroy other data** on internal UFS if the partition table is modified incorrectly.
 - **Does not automatically back up** your microSD Linux system before copying it to UFS.
 
