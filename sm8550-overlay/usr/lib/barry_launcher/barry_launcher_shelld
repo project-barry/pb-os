@@ -1338,6 +1338,9 @@ class Handler(BaseHTTPRequestHandler):
             self._json(*set_game_links(body))
         elif path == "/game-event":
             self._json(*game_event(body))
+        elif path == "/desktop" and DESKTOP:
+            # barry_launcher_desktop_switch, before it stops Barry.
+            self._json(200, {"ok": barry_desktop.set_enabled(bool(body.get("enabled", True)))})
         else:
             self._json(404, {"error": "not found"})
 

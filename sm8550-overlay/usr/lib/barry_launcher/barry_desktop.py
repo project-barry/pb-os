@@ -42,6 +42,9 @@ function ours(w) {
         CLASSES.indexOf(lower(w.resourceClass)) >= 0 || CLASSES.indexOf(lower(w.resourceName)) >= 0;
 }
 function barry(w) { return w.normalWindow && ours(w); }
+// Off while Barry is turned off in Desktop Mode (barry_launcher_desktop_switch):
+// the bottom screen is then the desktop's, like any other.
+var barryOn = true;
 """
 
 PLACE_JS = _COMMON + """
@@ -92,7 +95,7 @@ function keepOff(w, o) {
 }
 function place(w) {
     const o = bottom();
-    if (!o) return;
+    if (!o || !barryOn) return;
     if (!barry(w)) {
         const app = w.normalWindow || w.dialog || w.utility;
         const owned = w.transient && w.transientFor && ours(w.transientFor);
@@ -183,6 +186,10 @@ registerShortcut(%(shortcut)s, "Barry Launcher: run queued requests", "", functi
         for (const r of JSON.parse(queued)) {
             if (r.activate) activate(r.activate);
             else if ("inset" in r) inset(r.inset);
+            else if ("enabled" in r) {
+                barryOn = r.enabled;
+                if (barryOn) for (const w of workspace.windowList()) place(w);
+            }
         }
     });
 });
@@ -240,6 +247,9 @@ def place_windows() -> bool:
         loaded = _kwin(bus, "/Scripting", "org.kde.kwin.Scripting", "isScriptLoaded",
                        GLib.Variant("(s)", (SCRIPT_NAME,)), GLib.VariantType("(b)")).unpack()[0]
         if loaded:
+            # Loaded by an earlier barry_launcher_shelld, which may have
+            # turned it off.
+            _request({"enabled": True})
             return True
         with open(path, "w", encoding="utf-8") as fh:
             fh.write(_js(PLACE_JS + REQUESTS_JS))
@@ -266,6 +276,21 @@ def _request(request: dict) -> bool:
         print(f"kwin request {request}: {err.message}", flush=True)
         return False
     return True
+
+
+def set_enabled(enabled: bool, wait: float = 2.0) -> bool:
+    """Barry on or off in Desktop Mode: off, the script leaves every window
+    alone. Waits until the script has taken the request, so that Barry can
+    stop right after."""
+    if not _request({"enabled": enabled}):
+        return False
+    end = time.monotonic() + wait
+    while time.monotonic() < end:
+        with _QUEUE_LOCK:
+            if not _QUEUE:
+                return True
+        time.sleep(0.05)
+    return False
 
 
 def activate(caption: str | None = None, classes: list[str] | None = None, pid: int | None = None) -> bool:

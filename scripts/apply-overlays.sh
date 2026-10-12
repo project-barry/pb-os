@@ -702,6 +702,7 @@ remove_thor_bottom_screen() {
     "$R/usr/lib/systemd/user/barry_launcher_inputd.service" \
     "$R/usr/lib/systemd/user/default.target.wants/barry_launcher_inputd.service" \
     "$R/usr/share/applications/barry_launcher_desktop.desktop" \
+    "$R/usr/share/applications/barry_launcher_desktop_switch.desktop" \
     "$R/usr/lib/systemd/user/barry_launcher_desktop.service" \
     "$R/usr/lib/systemd/user/plasma-workspace.target.wants/barry_launcher_desktop.service" \
     "$R/usr/share/applications/org.barry_launcher.keyboard.desktop"
@@ -742,7 +743,7 @@ if [[ "$SOC" != sm8650 ]]; then
   rm -rf "$R/usr/lib/barry_launcher" "$R/usr/share/barry_launcher"
   mkdir -p "$R/usr/lib/barry_launcher" "$R/usr/share"
   for f in barry_launcher_session barry_launcher_dashboard barry_launcher_statsd barry_launcher_shelld \
-    barry_launcher_inputd barry_launcher_desktop barry-app; do
+    barry_launcher_inputd barry_launcher_desktop barry_launcher_desktop_switch barry-app; do
     install_file "$SM8550_OVL/usr/lib/barry_launcher/$f" "$R/usr/lib/barry_launcher/$f" 0755
   done
   # Glide typing's decoder, the Desktop Mode (KWin) side and user apps
@@ -772,6 +773,9 @@ if [[ "$SOC" != sm8650 ]]; then
     "$R/usr/lib/systemd/user/default.target.wants/barry_launcher_inputd.service"
   install_file "$SM8550_OVL/usr/share/applications/barry_launcher_desktop.desktop" \
     "$R/usr/share/applications/barry_launcher_desktop.desktop" 0644
+  # Barry on or off in Desktop Mode (also in PB-OS Tools, Hardware tab).
+  install_file "$SM8550_OVL/usr/share/applications/barry_launcher_desktop_switch.desktop" \
+    "$R/usr/share/applications/barry_launcher_desktop_switch.desktop" 0644
   # Desktop Mode: Barry on the bottom screen with the Plasma session, and
   # its keyboard registered as a virtual keyboard KWin can use.
   install_file "$SM8550_OVL/usr/lib/systemd/user/barry_launcher_desktop.service" \

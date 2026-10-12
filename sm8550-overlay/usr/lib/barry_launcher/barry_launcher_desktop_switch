@@ -1,0 +1,111 @@
+#!/bin/bash
+# barry_launcher_desktop_switch: Barry Launcher on or off in Desktop Mode
+# (AYN Thor). Off, the bottom screen is a plain second screen of the desktop:
+# it sits right under the top one, windows and the pointer go there, the
+# taskbar there can be tapped, and Plasma's own keyboard is back. Game Mode
+# keeps Barry either way.
+#   get | on | off | toggle   prints {"supported", "enabled", "live"}
+#   settle                    (barry_launcher_desktop at login, while off)
+# The setting is barry_launcherrc [Desktop] Enabled. In a running Plasma
+# session it takes effect at once ("live"), otherwise at the next Desktop
+# start. Run as the desktop user (PB-OS Tools runs it with runuser); the
+# menu entry "Barry Launcher On/Off" runs "toggle".
+if ! grep -qa "ayn,thor" /sys/firmware/devicetree/base/compatible 2>/dev/null; then
+  echo '{"supported": false}'
+  exit 0
+fi
+api=http://127.0.0.1:47824
+unit=barry_launcher_desktop.service
+plasma_im=/usr/share/applications/org.kde.plasma.keyboard.desktop
+
+enabled() {
+  [[ "$(kreadconfig6 --file barry_launcherrc --group Desktop --key Enabled --default true)" != false ]]
+}
+# A Plasma session runs: KWin is on the session bus (Game Mode is gamescope).
+live() {
+  busctl --user status org.kde.KWin >/dev/null 2>&1
+}
+state() {
+  local on=false now=false
+  enabled && on=true
+  live && now=true
+  printf '{"supported": true, "enabled": %s, "live": %s}\n' "$on" "$now"
+}
+notify() {
+  live && notify-send -a "Barry Launcher" -i input-touchpad "Barry Launcher" "$1" >/dev/null 2>&1 &
+}
+
+# The output's position and size: "x y w h".
+geometry() {
+  kscreen-doctor -o 2>/dev/null | sed -E 's/\x1b\[[0-9;]*m//g' \
+    | awk -v o="$1" '$1 == "Output:" { n = $3 } n == o && $1 == "Geometry:" { print $2, $3; exit }' \
+    | sed -E 's/^(-?[0-9]+),(-?[0-9]+) ([0-9]+)x([0-9]+)$/\1 \2 \3 \4/'
+}
+# Barry's layout puts the bottom screen at the top one's bottom-right corner
+# (barry_launcher_desktop): from there it moves under the top screen,
+# centered. A layout set in Display Settings meanwhile is kept.
+layout_under() {
+  local tx ty tw th bx by bw bh
+  read -r tx ty tw th <<<"$(geometry DSI-2)"
+  read -r bx by bw bh <<<"$(geometry DSI-1)"
+  [[ -n "$th" && -n "$bh" ]] || return 0
+  if (( bx == tx + tw && by == ty + th )); then
+    kscreen-doctor "output.DSI-1.position.$((tx + (tw - bw) / 2)),$((ty + th))" >/dev/null 2>&1
+  fi
+}
+# Barry's trackpad takes the bottom touchscreen from KWin while open: KWin
+# gets it back, or the plain desktop there would ignore touch.
+touch_back() {
+  local name ev
+  for name in /sys/class/input/event*/device/name; do
+    if [[ "$(cat "$name" 2>/dev/null)" == bottom_touchscreen ]]; then
+      ev="${name#/sys/class/input/}"
+      busctl --user set-property org.kde.KWin "/org/kde/KWin/InputDevice/${ev%%/*}" \
+        org.kde.KWin.InputDevice enabled b true >/dev/null 2>&1 || true
+    fi
+  done
+}
+plasma_keyboard() {
+  local notify=()
+  live && notify=(--notify)
+  if [[ "$(kreadconfig6 --file kwinrc --group Wayland --key InputMethod)" != "$plasma_im" ]]; then
+    kwriteconfig6 "${notify[@]}" --file kwinrc --group Wayland --key InputMethod "$plasma_im"
+  fi
+}
+
+turn_off() {
+  kwriteconfig6 --file barry_launcherrc --group Desktop --key Enabled false
+  plasma_keyboard
+  live || return 0
+  # KWin's script for Barry's windows stays loaded (unloading one crashed
+  # KWin): it stops keeping other windows off the bottom screen.
+  curl -fs -m 3 -X POST -H "Content-Type: application/json" -d '{"enabled": false}' \
+    "$api/desktop" >/dev/null 2>&1 || true
+  systemctl --user stop "$unit"
+  touch_back
+  layout_under
+  notify "Off in Desktop Mode: the bottom screen is part of the desktop. Turn it on again from the menu (Barry Launcher On/Off) or in PB-OS Tools."
+}
+turn_on() {
+  kwriteconfig6 --file barry_launcherrc --group Desktop --key Enabled true
+  live || return 0
+  # barry_launcher_desktop takes the keyboard, the corner layout and the
+  # bottom screen back.
+  systemctl --user start "$unit"
+  notify "On in Desktop Mode."
+}
+
+case "${1:-get}" in
+  get) ;;
+  on) turn_on ;;
+  off) turn_off ;;
+  toggle) if enabled; then turn_off; else turn_on; fi ;;
+  settle)
+    enabled && exit 0
+    plasma_keyboard
+    touch_back
+    layout_under
+    exit 0 ;;
+  *) echo "usage: ${0##*/} get|on|off|toggle" >&2; exit 2 ;;
+esac
+state

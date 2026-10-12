@@ -172,7 +172,8 @@ seed_thor_layout
 # Keyboard) are hidden by a user copy marked Hidden, removed again on a Thor.
 hide_thor_entries() {
   local apps="${XDG_DATA_HOME:-$HOME/.local/share}/applications" f
-  for f in barry_launcher_desktop.desktop org.barry_launcher.keyboard.desktop; do
+  for f in barry_launcher_desktop.desktop barry_launcher_desktop_switch.desktop \
+    org.barry_launcher.keyboard.desktop; do
     [[ -f "/usr/share/applications/$f" ]] || continue
     if grep -qa 'ayn,thor' /sys/firmware/devicetree/base/compatible 2>/dev/null; then
       grep -qsx 'X-PBOS-Hidden=true' "$apps/$f" && rm -f "$apps/$f"

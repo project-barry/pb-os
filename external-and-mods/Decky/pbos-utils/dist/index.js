@@ -48,6 +48,9 @@ const setMcu = callable("set_mcu");
 // Face buttons by printed letter or by position (Retroid Pocket 6 / Nova, AYN Thor).
 const getFaceButtons = callable("get_face_buttons");
 const setFaceButtons = callable("set_face_buttons");
+// Barry Launcher in Desktop Mode (AYN Thor).
+const getBarryDesktop = callable("get_barry_desktop");
+const setBarryDesktop = callable("set_barry_desktop");
 // Sticks (Retroid Pocket 6 / Nova, AYN Thor; was the Stick Calibration plugin).
 const stickState = callable("stick_state");
 const stickRest = callable("stick_rest");
@@ -1105,10 +1108,36 @@ function Sticks() {
     return jsx(DFL.PanelSection, { title: "Analog Sticks", children: items });
 }
 
+// The "Desktop Mode" section (AYN Thor): Barry Launcher on the bottom screen
+// in Desktop Mode, or a plain desktop screen there; Game Mode keeps Barry.
+function BarryDesktop() {
+    const [st, setSt] = useState(null);
+    const [busy, setBusy] = useState(false);
+    useEffect(() => { getBarryDesktop().then(setSt).catch(() => setSt({ supported: false })); }, []);
+    if (!st || !st.supported) return null;
+    return jsx(DFL.PanelSection, { title: "Desktop Mode", children: [
+        row(jsx(DFL.ToggleField, {
+            label: "Barry Launcher",
+            description: st.enabled
+                ? "Barry Launcher on the bottom screen."
+                : "The bottom screen is part of the desktop, with the taskbar and Plasma's keyboard.",
+            checked: st.enabled,
+            disabled: busy,
+            onChange: (on) => {
+                setBusy(true);
+                setSt({ ...st, enabled: on });
+                setBarryDesktop(on).then(setSt).catch(() => getBarryDesktop().then(setSt).catch(() => {}))
+                    .finally(() => setBusy(false));
+            },
+        })),
+        note("Takes effect the next time Desktop Mode starts. In Desktop Mode, use Barry Launcher On/Off in the applications menu."),
+    ] });
+}
+
 function HardwareTab() {
     const { st, apply } = useControl();
     if (!st) return jsx(DFL.PanelSection, { children: note("Loading…") });
-    if (!st.available) return jsxs(SP_JSX.Fragment, { children: [jsx(FaceButtons, {}), jsx(Sticks, {})] });
+    if (!st.available) return jsxs(SP_JSX.Fragment, { children: [jsx(FaceButtons, {}), jsx(Sticks, {}), jsx(BarryDesktop, {})] });
     const buttons = st.buttons || {};
     const steamButtons = (st.buttons_mode || "steam") === "steam";
     return jsxs(SP_JSX.Fragment, { children: [

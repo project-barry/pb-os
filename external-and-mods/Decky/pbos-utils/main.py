@@ -69,6 +69,13 @@ Sticks    (Hardware tab on the Retroid Pocket 6 / Nova and AYN Thor; was the
          /usr/lib/steamos-sm8550/sm8550-stickcal on the system's native
          Python, which also keeps the switches and sets them again at boot
          (sm8550-stickcal.service).
+
+Desktop  (Hardware tab on the AYN Thor): Barry Launcher on the bottom
+         screen in Desktop Mode, or off, which makes the bottom screen a
+         plain desktop screen (the taskbar, Plasma's keyboard). Game Mode
+         keeps Barry. /usr/lib/barry_launcher/barry_launcher_desktop_switch
+         keeps the setting and applies it; Desktop Mode has the same switch
+         as "Barry Launcher On/Off" in its applications menu.
 """
 from __future__ import annotations
 
@@ -76,6 +83,7 @@ import asyncio
 import glob
 import json
 import os
+import pwd
 import re
 import subprocess
 import sys
@@ -524,6 +532,32 @@ def charge_control(*args: str) -> dict[str, Any]:
         return json.loads(r.stdout)
     except ValueError:
         decky.logger.info(f"charge control {args[:1]}: {r.stderr.strip()}")
+        return {"supported": False}
+
+
+# Barry Launcher in Desktop Mode (Hardware tab, AYN Thor): its own switch,
+# barry_launcher_desktop_switch, run as the desktop user; it applies at
+# once in a running Desktop session, else at the next Desktop start.
+BARRY_SWITCH = "/usr/lib/barry_launcher/barry_launcher_desktop_switch"
+
+
+def barry_desktop(*args: str) -> dict[str, Any]:
+    if not os.access(BARRY_SWITCH, os.X_OK):
+        return {"supported": False}
+    user = getattr(decky, "DECKY_USER", "steamos")
+    home = getattr(decky, "DECKY_USER_HOME", f"/home/{user}")
+    try:
+        uid = pwd.getpwnam(user).pw_uid
+    except KeyError:
+        return {"supported": False}
+    run = f"/run/user/{uid}"
+    env = {**CLEAN_ENV, "HOME": home, "XDG_RUNTIME_DIR": run, "DBUS_SESSION_BUS_ADDRESS": f"unix:path={run}/bus"}
+    try:
+        r = subprocess.run(["runuser", "-u", user, "--", BARRY_SWITCH, *args], capture_output=True, text=True,
+                           env=env, timeout=30)
+        return json.loads(r.stdout.strip().splitlines()[-1])
+    except (OSError, subprocess.TimeoutExpired, ValueError, IndexError):
+        decky.logger.info(f"barry desktop {args[:1]} failed")
         return {"supported": False}
 
 
@@ -989,6 +1023,14 @@ class Plugin:
             return await self.get_face_buttons()
         decky.logger.info(f"face buttons -> {layout}")
         return await asyncio.to_thread(face_buttons, "set", layout)
+
+    # ------------------------------------------------- barry desktop mode --
+    async def get_barry_desktop(self, **_: Any) -> dict[str, Any]:
+        return await asyncio.to_thread(barry_desktop, "get")
+
+    async def set_barry_desktop(self, enabled: bool = True, **_: Any) -> dict[str, Any]:
+        decky.logger.info(f"barry launcher in desktop mode -> {'on' if enabled else 'off'}")
+        return await asyncio.to_thread(barry_desktop, "on" if enabled else "off")
 
     # --------------------------------------------------------------- sticks --
     async def stick_state(self, **_: Any) -> dict[str, Any]:

@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Barry Launcher On/Off
+Comment=Turn Barry Launcher on or off on the AYN Thor's bottom screen in Desktop Mode (Game Mode keeps it)
+Exec=/usr/lib/barry_launcher/barry_launcher_desktop_switch toggle
+Icon=input-touchpad
+Categories=Utility;
+OnlyShowIn=KDE;

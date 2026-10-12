@@ -5,11 +5,26 @@
 # (barry_desktop.py). Barry's keyboard is KWin's input method
 # (barry_launcher_imd) instead of Plasma's own.
 # Started with the Plasma session (barry_launcher_desktop.service); from the
-# applications menu, with Barry already running, it goes Home.
+# applications menu, with Barry already running, it goes Home, and with
+# Barry turned off in Desktop Mode (barry_launcher_desktop_switch, PB-OS
+# Tools) it turns it on again.
 grep -qa "ayn,thor" /sys/firmware/devicetree/base/compatible 2>/dev/null || exit 0
+switch=/usr/lib/barry_launcher/barry_launcher_desktop_switch
+# Run by its unit or from the menu: the cgroup says which (a menu start may
+# carry plasmashell's unit environment).
+in_unit=false
+[[ "$(cat /proc/self/cgroup 2>/dev/null)" == */barry_launcher_desktop.service ]] && in_unit=true
+if [[ "$(kreadconfig6 --file barry_launcherrc --group Desktop --key Enabled --default true)" == false ]]; then
+  $in_unit && exec "$switch" settle
+  exec "$switch" on >/dev/null
+fi
 api=http://127.0.0.1:47824
 if curl -fs -X POST -H "Content-Type: application/json" -d "{}" "$api/home" >/dev/null 2>&1; then
   exit 0
+fi
+# Barry runs in its unit, so that turning it off stops all of it.
+if ! $in_unit; then
+  exec systemctl --user start barry_launcher_desktop.service
 fi
 systemctl --user start barry_launcher_inputd.service
 # The bottom touchscreen is KWin's: Barry's trackpad takes it while open and
