@@ -1159,6 +1159,13 @@ if [[ ! -f "$R/usr/lib/qt6/plugins/plasma/kcms/systemsettings/kcm_kscreen.so" ]]
   "${SCRIPT_DIR}/build-kscreen-6.2.5.sh" "$R" \
     || die "kscreen 6.2.5 is required (Display Configuration)"
 fi
+# KWin 6.2.5 + Valve's Xwayland libei-socket patches: no "requested access to
+# input devices" prompt in Desktop Mode (pb-os #6). Cached in $WORK/kwin-pbos;
+# skips itself once the base ships KWin >= 6.4 (external-and-mods/kwin-pbos).
+# The script is cheap when its cache and the rootfs stamp are current.
+log "== KWin 6.2.5 without the Xwayland input prompt"
+"${SCRIPT_DIR}/build-kwin-6.2.5.sh" "$R" \
+  || die "kwin 6.2.5 rebuild failed (Desktop Mode input prompt)"
 if [[ ! -f "$R/usr/lib/qt6/plugins/plasma/kcms/systemsettings_qwidgets/kcm_networkmanagement.so" ]]; then
   log "== KF6 NetworkManagerQt 6.14 (plasma-nm needs >= 6.5)"
   "${SCRIPT_DIR}/build-kf6-nm-qt-6.14.sh" "$R" \
