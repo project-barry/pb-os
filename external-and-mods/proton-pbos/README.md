@@ -49,7 +49,9 @@ user's pick. Linux ports (Valve picks the Steam Linux Runtime), games the user
 set, and games whose Valve pick is just "the default" stay as they are; a game
 the user changes after PB-OS switched it is left alone from then on
 (`~/.config/pb-os/proton-games.json`). The global default becomes Proton
-11.0-2 PB-OS (ARM) while it is still Valve's own (`proton-stable`). All of it
+11.0-2 PB-OS (ARM) once, if it is still Valve's own (`proton-stable`) at the
+first check; that check is recorded in the same file and the global default
+is never changed again, so a default the user picks later stays. All of it
 is event-driven: Steam start, Steam's app changes (installs, updates), Play.
 
 ## Build

@@ -46,9 +46,11 @@ Proton   follows Valve's Proton pick per game: Valve's Proton 11.0 (ARM64)
          Proton Experimental PB-OS (ARM); set per game like a user's pick,
          since Valve's pick outranks Steam's global default. Games on the
          Steam Linux Runtime (Linux ports) and games the user set stay as they
-         are. The global default becomes Proton 11.0-2 PB-OS (ARM) while it
-         is still Valve's. Event-driven, from the frontend: Steam start, game
-         installs/updates, Play. /usr/lib/steamos/pbos-proton builds the tools.
+         are. The global default becomes Proton 11.0-2 PB-OS (ARM) once, if
+         it is still Valve's at the first check; that decision is recorded
+         ("global_set") and the global default is never touched again, so
+         whatever the user picks later stays. Event-driven, from the
+         frontend: Steam start, game installs/updates, Play. /usr/lib/steamos/pbos-proton builds the tools.
 """
 from __future__ import annotations
 
@@ -489,15 +491,27 @@ def proton_state() -> dict[str, Any]:
                       if isinstance(s, dict) and s.get("tool") and s.get("patched") and s.get("valve_name")}}
 
 
-# Games PB-OS switched to a twin ({appid: {"twin", "valve"}}), and games it
-# keeps its hands off because the user changed them since ("hands_off").
+# Games PB-OS switched to a twin ({appid: {"twin", "valve"}}), games it
+# keeps its hands off because the user changed them since ("hands_off"),
+# and "global_set": the global default PB-OS found at its one global check
+# (the twin when PB-OS set it). Once recorded, PB-OS never changes Steam's
+# global default again; it is never cleared.
 def proton_games_path() -> str:
     return os.path.join(getattr(decky, "DECKY_USER_HOME", "/home/steamos"), ".config/pb-os/proton-games.json")
 
 
 def proton_games_read() -> dict[str, Any]:
     st = read_json(proton_games_path())
-    return {"switched": st.get("switched", {}), "hands_off": st.get("hands_off", [])}
+    return {"switched": st.get("switched", {}), "hands_off": st.get("hands_off", []),
+            "global_set": st.get("global_set") or ""}
+
+
+def proton_games_save(state: dict[str, Any]) -> None:
+    # A recorded global check stays recorded, whatever the frontend sends.
+    old = proton_games_read()
+    proton_games_write({"switched": state.get("switched", {}),
+                        "hands_off": state.get("hands_off", []),
+                        "global_set": old["global_set"] or str(state.get("global_set") or "")})
 
 
 def proton_games_write(st: dict[str, Any]) -> None:
@@ -904,8 +918,7 @@ class Plugin:
 
     async def set_proton_games(self, state: dict[str, Any] | None = None, note: str = "", **_: Any) -> bool:
         if isinstance(state, dict):
-            await asyncio.to_thread(proton_games_write, {"switched": state.get("switched", {}),
-                                                         "hands_off": state.get("hands_off", [])})
+            await asyncio.to_thread(proton_games_save, state)
         if note:
             decky.logger.info(f"Proton PB-OS: {note}")
         return True
