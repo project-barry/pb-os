@@ -9,7 +9,22 @@ export PATH="/usr/sbin:/usr/bin:/sbin:/bin${PATH:+:$PATH}"
 # SM8650 (KONKR Pocket FIT / AYANEO Pocket S2) uses UCM HiFi via WirePlumber
 # (53-konkr-audio.conf). The pro-audio + MI2S policy below is Odin 2 only and
 # breaks the SM8650-APS2 DSP graph.
+# A card that booted on an SM8550 device first carries that device's saved
+# pro-audio choice (persist() below); the card is alsa_card.platform-sound on
+# both SoCs, so WirePlumber restores it here and the speakers go silent. Drop
+# that state and switch back to HiFi.
 if grep -qaE "KONKR Pocket FIT|AYANEO Pocket S2" /sys/firmware/devicetree/base/model 2>/dev/null; then
+  state="${XDG_STATE_HOME:-$HOME/.local/state}/wireplumber"
+  if grep -qs '=pro-audio$' "$state/default-profile"; then
+    echo "sm8550-audio-pipewire: SM8650 with saved pro-audio state → HiFi" >&2
+    rm -f "$state/default-profile" "$state/default-nodes"
+    for i in $(seq 1 80); do
+      timeout 8 pactl list short cards 2>/dev/null | grep -q platform-sound && break
+      sleep 0.25
+    done
+    timeout 8 pactl set-card-profile alsa_card.platform-sound 'HiFi (Headphones, Speaker)' 2>/dev/null \
+      || timeout 8 pactl set-card-profile alsa_card.platform-sound HiFi 2>/dev/null
+  fi
   exit 0
 fi
 
