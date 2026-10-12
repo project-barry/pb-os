@@ -864,7 +864,8 @@ def install_kernel(src, boot):
 
 # Plugins one device of a shared image uses (sync-decky-bundled-plugins.sh's
 # DEVICE_ONLY, by DTB model here); other devices get them removed.
-DEVICE_PLUGINS = {'dual-screen': ('AYN Thor',)}
+DEVICE_PLUGINS = {'dual-screen': ('AYN Thor',),
+                  'stick-calibration': ('Retroid Pocket 6', 'Retroid Pocket 6 TOP-DPAD', 'Retroid Pocket Nova', 'AYN Thor')}
 
 
 def plugin_dirs(work, manifest):
