@@ -40,7 +40,9 @@ GIB = 1 << 30
 MIB = 1 << 20
 BOOT_GIB = 2
 DEFAULT_STORAGE_GIB = 20
-MIN_ANDROID_GIB = 8
+# Android stayed black at 8 GiB on the Pocket FIT (2026-10-11); 16 GiB is the
+# smallest size Android has booted with (Nova).
+MIN_ANDROID_GIB = 16
 MIN_HOME_GIB = 16
 OURS = ("ROCKNIX", "STORAGE", "HOME")
 # ROCKNIX: FAT32 as "basic data", the type the ABL boots from on the

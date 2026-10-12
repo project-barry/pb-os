@@ -180,10 +180,11 @@ decky_plugins=()
 if [[ -n "${DECKY_PLUGINS:-}" ]]; then
   IFS=: read -ra decky_plugins <<<"${DECKY_PLUGINS}"
 elif [[ "$SOC" != sm8650 ]]; then
-  # Dual Screen: AYN Thor bottom screen on/off (SM8550 and the one image);
-  # on other devices sync-decky-bundled-plugins.sh --prune and the updater
-  # remove it.
-  decky_plugins=("${MOD}/Decky/sm8550/dual-screen")
+  # SM8550 and the one image. Dual Screen: AYN Thor bottom screen on/off.
+  # Stick Calibration (experimental): every SM8550 device (the rsinput pad).
+  # On other devices sync-decky-bundled-plugins.sh --prune and the updater
+  # remove them.
+  decky_plugins=("${MOD}/Decky/sm8550/dual-screen" "${MOD}/Decky/sm8550/stick-calibration")
 fi
 # PB-OS Utils (updates, moving SteamOS between the card and internal
 # storage, stick lights; performance and hardware on the Pocket FIT) on every
@@ -201,8 +202,10 @@ rm -rf "${BUNDLE}/thor-screens" "${HOME_DST}/homebrew/plugins/thor-screens"
 rm -rf "${BUNDLE}/konkr-control" "${HOME_DST}/homebrew/plugins/konkr-control"
 # PB-OS Update became PB-OS Utils' Update tab.
 rm -rf "${BUNDLE}/pbos-update" "${HOME_DST}/homebrew/plugins/pbos-update"
+# The Thor-only test build of Stick Calibration (alpha v0.5.2.9).
+rm -rf "${BUNDLE}/thor-stick-calibration" "${HOME_DST}/homebrew/plugins/thor-stick-calibration"
 if [[ "$SOC" == sm8650 ]]; then
-  rm -rf "${HOME_DST}/homebrew/plugins/dual-screen"
+  rm -rf "${HOME_DST}/homebrew/plugins/dual-screen" "${HOME_DST}/homebrew/plugins/stick-calibration"
 fi
 for src in ${decky_plugins[@]+"${decky_plugins[@]}"}; do
   [[ -f "${src}/plugin.json" && -f "${src}/dist/index.js" ]] || {

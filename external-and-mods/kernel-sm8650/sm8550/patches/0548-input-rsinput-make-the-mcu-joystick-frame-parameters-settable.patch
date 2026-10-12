@@ -1,0 +1,147 @@
+From: lavachemist <48248311+lavachemist@users.noreply.github.com>
+Subject: [PATCH] input: rsinput: make the MCU joystick frame parameters settable
+
+rsinput sends the controller MCU SET_PAR 0x01 with 40,7 at every init.
+AYN's Android library (librsinput.so, mcu_init_data/set_joystick_frame)
+sends the same command with 10,4 on the Thor and Thor Lite and 12,4 on the
+Odin 3; it calls the second value the "rate". The MCU's meaning for either
+value isn't documented, and the Thor's sticks feel coarse under PB-OS.
+
+Add an mcu_frame=A,B parameter (default 40,7, so nothing changes unless it
+is set). A write is sent to the MCU straight away and again on every
+re-init (probe, resume). It can also be set on the kernel command line as
+rsinput.mcu_frame=A,B.
+---
+--- a/drivers/input/joystick/rsinput.c
++++ b/drivers/input/joystick/rsinput.c
+@@ -13,6 +13,7 @@
+ #include <linux/kernel.h>
+ #include <linux/module.h>
+ #include <linux/minmax.h>
++#include <linux/mutex.h>
+ #include <linux/of.h>
+ #include <linux/regulator/consumer.h>
+ #include <linux/suspend.h>
+@@ -20,6 +21,7 @@
+ #include <linux/slab.h>
+ #include <linux/platform_device.h>
+ #include <uapi/linux/sched/types.h>
++#include <linux/unaligned.h>
+ 
+ static int update_params=0;
+ 
+@@ -151,6 +153,22 @@
+ static bool rumble_enable = true;
+ module_param(rumble_enable, bool, 0660);
+ 
++/*
++ * SET_PAR 0x01 ("joystick frame") takes two big-endian u32 values. AYN's
++ * Android library (librsinput.so, set_joystick_frame/mcu_init_data) sends
++ * 10,4 on the Thor and Thor Lite, 12,4 on the Odin 3; the second value is
++ * its "rate" (persist.mapping.gamepad.frame, default 4). This driver has
++ * always sent 40,7. What the MCU does with them isn't documented, so they
++ * stay 40,7 by default and can be changed for testing:
++ *   echo 10,4 > /sys/module/rsinput/parameters/mcu_frame
++ * A write is sent to the MCU at once and again on every MCU re-init.
++ */
++static unsigned int mcu_frame[2] = { 0x28, 0x07 };
++static struct rsinput_driver *rsinput_drv;
++static DEFINE_MUTEX(rsinput_lock);
++
++static int rsinput_send_frame_par(struct rsinput_driver *drv);
++
+ static const unsigned int keymap[] = {
+     BTN_DPAD_UP, BTN_DPAD_DOWN, BTN_DPAD_LEFT, BTN_DPAD_RIGHT,
+     BTN_NORTH,   BTN_WEST,	    BTN_EAST,	   BTN_SOUTH,
+@@ -223,13 +241,7 @@
+     }
+ 
+     msleep(100);
+-    uint8_t mcu_params[] = {
+-        DATA_COMMOD_SET_PAR,
+-        0x01,
+-        0x00, 0x00, 0x00, 0x28,
+-        0x00, 0x00, 0x00, 0x07
+-    };
+-    error = rsinput_send_command(drv, CMD_COMMOD, mcu_params, sizeof(mcu_params));
++    error = rsinput_send_frame_par(drv);
+     if (error < 0) {
+         dev_err(&drv->serdev->dev, "Failed to set MCU parameters: %d\n", error);
+         return error;
+@@ -238,6 +250,44 @@
+     return 0;
+ }
+ 
++static int rsinput_send_frame_par(struct rsinput_driver *drv) {
++    uint8_t mcu_params[10] = { DATA_COMMOD_SET_PAR, 0x01 };
++
++    put_unaligned_be32(mcu_frame[0], &mcu_params[2]);
++    put_unaligned_be32(mcu_frame[1], &mcu_params[6]);
++    dev_info(&drv->serdev->dev, "MCU joystick frame %u,%u\n",
++             mcu_frame[0], mcu_frame[1]);
++    return rsinput_send_command(drv, CMD_COMMOD, mcu_params, sizeof(mcu_params));
++}
++
++static int mcu_frame_set(const char *val, const struct kernel_param *kp) {
++    unsigned int a, b;
++    int error = 0;
++
++    if (sscanf(val, "%u,%u", &a, &b) != 2)
++        return -EINVAL;
++
++    mutex_lock(&rsinput_lock);
++    mcu_frame[0] = a;
++    mcu_frame[1] = b;
++    if (rsinput_drv && !rsinput_drv->uart_closed && !rsinput_drv->vdd_off)
++        error = rsinput_send_frame_par(rsinput_drv);
++    mutex_unlock(&rsinput_lock);
++
++    return error < 0 ? error : 0;
++}
++
++static int mcu_frame_get(char *buf, const struct kernel_param *kp) {
++    return sysfs_emit(buf, "%u,%u\n", mcu_frame[0], mcu_frame[1]);
++}
++
++static const struct kernel_param_ops mcu_frame_ops = {
++    .set = mcu_frame_set,
++    .get = mcu_frame_get,
++};
++module_param_cb(mcu_frame, &mcu_frame_ops, NULL, 0660);
++MODULE_PARM_DESC(mcu_frame, "MCU joystick frame parameters A,B (SET_PAR 0x01)");
++
+ static void handle_cmd_commod(struct rsinput_driver *drv, const uint8_t *data, size_t payload_length) {
+     switch (data[FRAME_POS_DATA_1]) {
+         case DATA_COMMOD_VERSION:
+@@ -654,6 +704,10 @@
+ 
+     drv->pm_nb.notifier_call = rsinput_pm_notify;
+     register_pm_notifier(&drv->pm_nb);
++
++    mutex_lock(&rsinput_lock);
++    rsinput_drv = drv;
++    mutex_unlock(&rsinput_lock);
+ 
+     return 0;
+ }
+@@ -661,6 +715,11 @@
+ static void rsinput_remove(struct serdev_device *serdev) {
+     struct rsinput_driver *drv = serdev_device_get_drvdata(serdev);
+ 
++    mutex_lock(&rsinput_lock);
++    if (rsinput_drv == drv)
++        rsinput_drv = NULL;
++    mutex_unlock(&rsinput_lock);
++
+     unregister_pm_notifier(&drv->pm_nb);
+     if (!drv->uart_closed)
+         serdev_device_close(serdev);
+@@ -689,6 +748,8 @@
+     struct rsinput_driver *drv = container_of(nb, struct rsinput_driver, pm_nb);
+     int error;
+ 
++    guard(mutex)(&rsinput_lock);
++
+     switch (action) {
+     case PM_SUSPEND_PREPARE:
+         /* Stop the MCU reports first (see rsinput_suspend()). */

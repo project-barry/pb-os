@@ -125,6 +125,17 @@ using Retroid's own battery firmware (kernel patch 0545,
 a level, and Run from USB (charge separation: the device runs from USB power
 and the battery is left alone).
 
+**Stick Calibration** (AYN Thor, Retroid Pocket 6 and Nova, EXPERIMENTAL):
+two switches for the `rsinput` pad, kept across restarts
+(`/var/lib/sm8550-stickcal`, set again at boot by `sm8550-stickcal.service`
+before InputPlumber opens the pad). **Use my calibration** is AYN's Android
+stick calibration in Game Mode: let go of the sticks, rotate them round the
+edge, save; it sets each stick's centre (`axis_*_center`) and a range of ±
+its shorter typical half-travel, and `sm8550-fixpad` leaves that range alone.
+**Fine stick steps** sends the controller MCU the joystick frame AYN's and
+Retroid's Android use (10,4 instead of the driver's 40,7; kernel patch 0548):
+the MCU then reports a stick once it has moved 11 counts instead of 41.
+
 ## Compared with the SM8550 setup, in short
 
 | Area | SM8550 (MaSi) | Pocket FIT (this project) |
