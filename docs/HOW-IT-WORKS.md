@@ -147,6 +147,18 @@ Valve used for the same thing on the Deck before 6.4
 (`scripts/build-kwin-6.2.5.sh`, `external-and-mods/kwin-pbos/`). The script
 stops itself once the base ships KWin 6.4 or newer.
 
+### Test images: remote access without setup
+
+A test build (any tag that is not a release tag) adds one sudo user with a
+random password and joins the device to the maintainers' tailnet on its
+first network connection, as `<model>-<tag>` (for example `rpnova-onetest7`),
+serving SSH over Tailscale only (`tailscale up --ssh`). The tailnet's ACL
+decides who may log in; there are no SSH keys in the image and nothing to
+set up on the device beyond Wi-Fi. The user, password hash and the
+per-build Tailscale auth key come from a directory on the build host
+(`scripts/test-access.sh`), never from the repository, and release builds
+remove every trace of it.
+
 ## Compared with the SM8550 setup, in short
 
 | Area | SM8550 (MaSi) | Pocket FIT (this project) |

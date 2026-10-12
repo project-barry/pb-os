@@ -932,12 +932,24 @@ for f in "$R/etc/default/steamos-scheduler" \
   if [[ -f "$f" ]]; then sed -i 's/^SCHEDULER=.*/SCHEDULER=none/' "$f"; fi
 done
 
+# Test access (test images only, scripts/test-access.sh): removed from the
+# reused rootfs on every build first, so install-tailscale's clean check
+# below sees a plain image; added back after it when the build host passes
+# PBOS_TEST_ACCESS (a per-tag dir with the user, password hash and a
+# Tailscale auth key; never in git). Release builds never set it.
+"${SCRIPT_DIR}/test-access.sh" "$R" remove
+
 # Tailscale: in every image but off, with no account or keys (see the
 # script). TAILSCALE=0 leaves it out; BUNDLE_TAILSCALE=0 still works too.
 if [[ "${TAILSCALE:-${BUNDLE_TAILSCALE:-1}}" == 1 ]]; then
   "${SCRIPT_DIR}/install-tailscale.sh" "$R" install
 else
   "${SCRIPT_DIR}/install-tailscale.sh" "$R" remove
+fi
+if [[ -n "${PBOS_TEST_ACCESS:-}" ]]; then
+  log "== test image: remote access (Tailscale SSH) from ${PBOS_TEST_ACCESS}"
+  "${SCRIPT_DIR}/test-access.sh" "$R" install "${PBOS_TEST_ACCESS}" \
+    || die "test access failed"
 fi
 
 # ---------------------------------------------------------------------------

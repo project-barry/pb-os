@@ -25,6 +25,9 @@ for c in $(tr '\0' '\n' </proc/device-tree/compatible 2>/dev/null); do
   break
 done
 [ -n "$name" ] || exit 0
+# A test image carries its build tag (scripts/test-access.sh): rpnova-onetest7.
+tag=$(cat /etc/pbos-test/tag 2>/dev/null)
+[ -z "$tag" ] || name="$name-$tag"
 
 printf '%s\n' "$name" >/etc/hostname
 hostname "$name"
