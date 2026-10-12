@@ -1,4 +1,7 @@
 #!/bin/bash
 # Official startplasma-wayland, after clearing Game Mode Qt/X11 leftovers.
 /usr/lib/steamos/sm8550-prepare-plasma
+# The boot splash lets go of the panel before KWin needs it (no-op when no
+# splash is running).
+systemctl start --no-ask-password pbos-splash-handoff.service >/dev/null 2>&1 || true
 exec /usr/bin/startplasma-wayland "$@"

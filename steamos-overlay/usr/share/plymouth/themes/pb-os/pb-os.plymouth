@@ -1,0 +1,9 @@
+# Drawn by external-and-mods/plymouth/theme-src/make-theme.py
+[Plymouth Theme]
+Name=PB-OS
+Description=Barry on his red square, wagging his tail
+ModuleName=script
+
+[script]
+ImageDir=/usr/share/plymouth/themes/pb-os
+ScriptFile=/usr/share/plymouth/themes/pb-os/pb-os.script

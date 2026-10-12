@@ -1,0 +1,30 @@
+From 6d49e923ccb2a55e23c879867bde25838afed245 Mon Sep 17 00:00:00 2001
+From: lavachemist <lavachemist@users.noreply.github.com>
+Date: Mon, 12 Oct 2026 19:01:02 -0400
+Subject: [PATCH] main: leave systemd status messages off (PB-OS boots quiet)
+
+---
+ src/main.c | 7 ++++---
+ 1 file changed, 4 insertions(+), 3 deletions(-)
+
+diff --git a/src/main.c b/src/main.c
+index aac5125d..c1c99c9e 100644
+--- a/src/main.c
++++ b/src/main.c
+@@ -1798,9 +1798,10 @@ attach_splash_to_devices (state_t           *state,
+ static void
+ tell_systemd_to_print_details (state_t *state)
+ {
+-        ply_trace ("telling systemd to start printing details");
+-        if (kill (1, SIGRTMIN + 20) < 0)
+-                ply_trace ("could not tell systemd to print details: %m");
++        /* PB-OS boots quiet: systemd keeps systemd.show_status=0. Turning its
++         * status lines on here leaves them on the console whenever Plymouth
++         * does not detach normally (a crash, a theme that fails to load). */
++        ply_trace ("not telling systemd to print details (PB-OS boots quiet)");
+ }
+ 
+ static void
+-- 
+2.43.0
+

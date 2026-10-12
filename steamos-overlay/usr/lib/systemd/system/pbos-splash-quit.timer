@@ -1,0 +1,9 @@
+[Unit]
+Description=End the boot splash if no session ever took the screen
+
+[Timer]
+OnBootSec=90
+Unit=pbos-splash-quit.service
+
+[Install]
+WantedBy=timers.target

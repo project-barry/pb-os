@@ -291,4 +291,8 @@ env | grep -E '^(STEAM_DISPLAY_REFRESH_LIMITS|STEAM_USE_MANGOAPP|STEAM_MANGOAPP_
 
 echo >&2 "gamescope-session: output=$OUTPUT panel=${PANEL_W}x${PANEL_H} nested=${W}x${H}@${REFRESH_HZ} mangoapp=${MANGOAPP} kms_rotation=${KMS_ROTATION}"
 
+# The boot splash lets go of the panel now (it keeps its last frame up until
+# gamescope draws); no-op when no splash is running.
+systemctl start --no-ask-password pbos-splash-handoff.service >/dev/null 2>&1 || true
+
 exec gamescope "${GAMESCOPE_ARGS[@]}" -- /usr/lib/steamos/gamescope-onready ${WATCH_SERVICE:-}

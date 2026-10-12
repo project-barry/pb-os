@@ -1,0 +1,10 @@
+# Barry waves before the loop. Shares pb-os's pictures; PB-OS alternates the
+# two themes from boot to boot (/usr/lib/steamos/pbos-splash-next).
+[Plymouth Theme]
+Name=PB-OS (wave)
+Description=Barry on his red square waves, then wags his tail
+ModuleName=script
+
+[script]
+ImageDir=/usr/share/plymouth/themes/pb-os
+ScriptFile=/usr/share/plymouth/themes/pb-os/pb-os-wave.script

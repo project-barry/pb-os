@@ -1,0 +1,11 @@
+[Unit]
+Description=Hand the screen from the boot splash to the session
+After=plymouth-start.service
+
+[Service]
+Type=oneshot
+# Plymouth lets go of the panel but keeps the device open, so its last frame
+# stays on screen until gamescope (or KWin) draws. Started by the session
+# scripts right before they launch the compositor (polkit rule
+# 50-pbos-splash.rules); pbos-splash-quit.path ends Plymouth afterwards.
+ExecStart=-/usr/bin/plymouth deactivate

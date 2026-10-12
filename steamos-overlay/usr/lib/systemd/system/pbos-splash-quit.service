@@ -1,0 +1,13 @@
+[Unit]
+Description=End the boot splash
+After=plymouth-quit.service
+
+[Service]
+Type=oneshot
+# Stays "active", so the path unit does not start it again while the socket
+# exists.
+RemainAfterExit=yes
+# --retain-splash: the session draws over the last frame.
+ExecStart=-/usr/bin/plymouth quit --retain-splash
+# The other animation next boot.
+ExecStartPost=-/usr/lib/steamos/pbos-splash-next

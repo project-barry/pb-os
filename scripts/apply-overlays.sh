@@ -964,6 +964,37 @@ MANGOAPP_BUILD="${MANGOAPP_BUILD:-${WORKDIR}/mangoapp-build}"
 install_file "$MANGOAPP_BUILD/mangoapp" "$R/usr/bin/mangoapp" 0755
 
 # ---------------------------------------------------------------------------
+# Boot splash: Plymouth (built in the rootfs) with the PB-OS theme (script
+# engine, drawn by external-and-mods/plymouth/theme-src/make-theme.py). It shows
+# once the panel is up and animates until the session's compositor starts
+# (the session scripts start pbos-splash-handoff.service, which deactivates
+# Plymouth; pbos-splash-quit.path ends it). Needs
+# `splash` on the cmdline (cmdline.sh adds it to quiet boots).
+# ---------------------------------------------------------------------------
+log "== boot splash (Plymouth + PB-OS theme)"
+PLYMOUTH_BUILD="${PLYMOUTH_BUILD:-${WORKDIR}/plymouth-build}"
+"${SCRIPT_DIR}/build-plymouth-in-rootfs.sh" "$R" "$PLYMOUTH_BUILD"
+cp -a "$PLYMOUTH_BUILD/dest/usr/." "$R/usr/"
+install_file "$OVL/usr/share/plymouth/plymouthd.defaults" "$R/usr/share/plymouth/plymouthd.defaults" 0644
+for t in pb-os pb-os-wave; do
+  rm -rf "$R/usr/share/plymouth/themes/$t"
+  cp -a "$OVL/usr/share/plymouth/themes/$t" "$R/usr/share/plymouth/themes/$t"
+done
+install_file "$OVL/usr/lib/steamos/pbos-splash-next" "$R/usr/lib/steamos/pbos-splash-next" 0755
+install_file "$OVL/usr/share/polkit-1/rules.d/50-pbos-splash.rules" \
+  "$R/usr/share/polkit-1/rules.d/50-pbos-splash.rules" 0644
+for u in plymouth-start plymouth-quit; do
+  install_file "$OVL/usr/lib/systemd/system/$u.service.d/pb-os.conf" \
+    "$R/usr/lib/systemd/system/$u.service.d/pb-os.conf" 0644
+done
+for u in pbos-splash-quit.service pbos-splash-quit.path pbos-splash-quit.timer pbos-splash-handoff.service; do
+  install_file "$OVL/usr/lib/systemd/system/$u" "$R/usr/lib/systemd/system/$u" 0644
+done
+mkdir -p "$R/usr/lib/systemd/system/multi-user.target.wants" "$R/usr/lib/systemd/system/timers.target.wants"
+ln -sfn ../pbos-splash-quit.path "$R/usr/lib/systemd/system/multi-user.target.wants/pbos-splash-quit.path"
+ln -sfn ../pbos-splash-quit.timer "$R/usr/lib/systemd/system/timers.target.wants/pbos-splash-quit.timer"
+
+# ---------------------------------------------------------------------------
 # lsfg-vk
 # ---------------------------------------------------------------------------
 log "== lsfg-vk 1.x (unmodified aarch64 layer, see liblsfg-vk-arm64.so.README)"

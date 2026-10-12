@@ -1,0 +1,127 @@
+# PB-OS boot splash. Written by external-and-mods/plymouth/theme-src/
+# make-theme.py: edit that, not this.
+Window.SetBackgroundTopColor(0, 0, 0);
+Window.SetBackgroundBottomColor(0, 0, 0);
+Plymouth.SetRefreshRate(30);
+
+tiles[0] = Image("tile-00.png");
+tiles[1] = Image("tile-01.png");
+tiles[2] = Image("tile-02.png");
+tiles[3] = Image("tile-03.png");
+tiles[4] = Image("tile-04.png");
+tiles[5] = Image("tile-05.png");
+tiles[6] = Image("tile-06.png");
+tiles[7] = Image("tile-07.png");
+loop[0] = 0;
+loop[1] = 0;
+loop[2] = 0;
+loop[3] = 0;
+loop[4] = 0;
+loop[5] = 0;
+loop[6] = 0;
+loop[7] = 0;
+loop[8] = 0;
+loop[9] = 0;
+loop[10] = 0;
+loop[11] = 0;
+loop[12] = 0;
+loop[13] = 0;
+loop[14] = 0;
+loop[15] = 0;
+loop[16] = 0;
+loop[17] = 0;
+loop[18] = 0;
+loop[19] = 1;
+loop[20] = 2;
+loop[21] = 2;
+loop[22] = 3;
+loop[23] = 3;
+loop[24] = 3;
+loop[25] = 4;
+loop[26] = 4;
+loop[27] = 4;
+loop[28] = 4;
+loop[29] = 5;
+loop[30] = 5;
+loop[31] = 5;
+loop[32] = 5;
+loop[33] = 5;
+loop[34] = 5;
+loop[35] = 5;
+loop[36] = 5;
+loop[37] = 5;
+loop[38] = 5;
+loop[39] = 6;
+loop[40] = 6;
+loop[41] = 6;
+loop[42] = 6;
+loop[43] = 6;
+loop[44] = 6;
+loop[45] = 7;
+loop[46] = 7;
+loop[47] = 7;
+loop[48] = 7;
+loop[49] = 7;
+loop[50] = 6;
+loop[51] = 6;
+loop[52] = 5;
+loop[53] = 5;
+loop[54] = 5;
+loop[55] = 5;
+loop[56] = 5;
+loop[57] = 5;
+loop[58] = 5;
+loop[59] = 5;
+loop[60] = 5;
+loop[61] = 5;
+loop[62] = 4;
+loop[63] = 4;
+loop[64] = 4;
+loop[65] = 4;
+loop[66] = 3;
+loop[67] = 3;
+loop[68] = 3;
+loop[69] = 2;
+loop[70] = 2;
+loop[71] = 1;
+loop[72] = 0;
+loop[73] = 0;
+loop[74] = 0;
+loop[75] = 0;
+loop[76] = 0;
+loop[77] = 0;
+loop[78] = 0;
+loop[79] = 0;
+loop[80] = 0;
+loop[81] = 0;
+loop[82] = 0;
+loop[83] = 0;
+loop[84] = 0;
+loop[85] = 0;
+loop[86] = 0;
+loop[87] = 0;
+loop[88] = 0;
+loop[89] = 0;
+
+top = Math.Int(Window.GetY() + Window.GetHeight() / 2 - 256);
+cat = Sprite(tiles[0]);
+cat.SetPosition(Math.Int(Window.GetX() + Window.GetWidth() / 2 - 195), top, 1);
+words = Sprite(Image("words.png"));
+words.SetPosition(Math.Int(Window.GetX() + Window.GetWidth() / 2 - 135), top + 442, 1);
+
+tick = 0;
+shown = 0;
+fun refresh_callback ()
+  {
+    if (tick < 0)
+      i = intro[tick];
+    else
+      i = loop[(tick - 0) % 90];
+    if (i != shown)
+      {
+        cat.SetImage(tiles[i]);
+        global.shown = i;
+      }
+    global.tick = tick + 1;
+  }
+Plymouth.SetRefreshFunction(refresh_callback);

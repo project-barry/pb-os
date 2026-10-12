@@ -1,0 +1,12 @@
+[Unit]
+Description=End the boot splash once the session has the screen
+
+[Path]
+# gamescope creates its socket after it has opened the display (steamos is
+# uid 1000); wayland-0 is Desktop Mode (KWin).
+PathExists=/run/user/1000/gamescope-0
+PathExists=/run/user/1000/wayland-0
+Unit=pbos-splash-quit.service
+
+[Install]
+WantedBy=multi-user.target

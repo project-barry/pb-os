@@ -4,8 +4,9 @@
 # the kernel cannot resolve root=UUID= on its own.
 #
 # Quiet by default: no kernel text, penguin logo or blinking cursor on the
-# panel before Steam (the journal still has everything). CMDLINE_QUIET=0 gives
-# the verbose console back (scripts/sd-debug-boot.sh sets it).
+# panel before Steam (the journal still has everything); `splash` shows the
+# PB-OS boot splash (Plymouth) instead. CMDLINE_QUIET=0 gives the verbose
+# console back without the splash (scripts/sd-debug-boot.sh sets it).
 
 build_cmdline() {
   local partuuid="$1"
@@ -30,7 +31,7 @@ build_cmdline() {
   parts+=(mem_sleep_default=deep console=tty0)
   if [[ "${CMDLINE_QUIET:-1}" == 1 ]]; then
     parts+=(quiet loglevel=0 systemd.show_status=0 rd.udev.log_level=0
-            logo.nologo vt.global_cursor_default=0)
+            logo.nologo vt.global_cursor_default=0 splash)
   else
     parts+=(console=tty0 loglevel=4)
   fi

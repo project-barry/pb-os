@@ -1,0 +1,7 @@
+# PB-OS boot splash. DeviceScale=1: the theme's frames are drawn at the
+# panel's own pixel size.
+[Daemon]
+Theme=pb-os
+ShowDelay=0
+DeviceTimeout=8
+DeviceScale=1

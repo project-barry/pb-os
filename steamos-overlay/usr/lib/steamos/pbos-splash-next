@@ -1,0 +1,13 @@
+#!/bin/sh
+# Alternate the boot splash: Barry just wags his tail on one boot (pb-os, the
+# default in /usr/share/plymouth/plymouthd.defaults) and waves first on the
+# next (pb-os-wave). Run once the splash has ended; picks the next boot's.
+conf=/etc/plymouth/plymouthd.conf
+if grep -qx 'Theme=pb-os-wave' "$conf" 2>/dev/null; then
+  next=pb-os
+else
+  next=pb-os-wave
+fi
+mkdir -p /etc/plymouth
+printf '# Written by pbos-splash-next at every boot.\n[Daemon]\nTheme=%s\n' "$next" >"$conf.tmp" &&
+  mv -f "$conf.tmp" "$conf"
