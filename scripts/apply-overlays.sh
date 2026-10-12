@@ -290,7 +290,7 @@ for u in steamvr-program-ble.service steamvr-v4l2loopback.service \
          adbd.service adbd-post.service usb-gadget.service usb-gadget.target \
          usb-ncm-gadget@.service usb-ncm-dnsmasq@.service \
          steamos-boot.service efi.mount esp.mount systemd-repart.service \
-         firewalld.service atomupd.service; do
+         firewalld.service atomupd.service steamos-log-submitter.service; do
   # Frame USB-gadget/ADB/power-monitor: no such hardware here. They crash-loop
   # (1000+ restarts/night) and adbd-post polls ffs.adb/ready at 10 Hz forever,
   # which keeps the SoC out of deep idle and burned battery in standby.
@@ -307,6 +307,9 @@ for u in steamvr-program-ble.service steamvr-v4l2loopback.service \
   # atomupd: Steam Deck A/B update daemon with no RAUC slots to act on (our
   # steamos-update hooks bypass it); it spent up to ~20 s at every boot
   # competing with Steam's startup.
+  # steamos-log-submitter: uploads crash dumps, journals and GPU reports to
+  # Valve's telemetry. PB-OS sends nothing to Valve; the dumps it would queue
+  # stay local in /var/lib/steamos-log-submitter/pending.
   ln -sfn /dev/null "$R/etc/systemd/system/${u}"
 done
 
