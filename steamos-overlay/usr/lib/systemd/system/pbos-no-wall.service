@@ -1,0 +1,16 @@
+[Unit]
+Description=No "The system will reboot now!" broadcast on the screen
+# logind writes that broadcast to every logged-in terminal, and the console
+# shows it once gamescope has closed at reboot or power-off. Steam asks
+# logind directly, so turning logind's wall messages off once per boot
+# covers Steam's power menu. (`systemctl reboot` in a terminal turns them on
+# again for that call.)
+After=systemd-logind.service
+Wants=systemd-logind.service
+
+[Service]
+Type=oneshot
+ExecStart=-/usr/bin/busctl call org.freedesktop.login1 /org/freedesktop/login1 org.freedesktop.login1.Manager SetWallMessage sb "" false
+
+[Install]
+WantedBy=multi-user.target

@@ -993,6 +993,9 @@ done
 mkdir -p "$R/usr/lib/systemd/system/multi-user.target.wants" "$R/usr/lib/systemd/system/timers.target.wants"
 ln -sfn ../pbos-splash-quit.path "$R/usr/lib/systemd/system/multi-user.target.wants/pbos-splash-quit.path"
 ln -sfn ../pbos-splash-quit.timer "$R/usr/lib/systemd/system/timers.target.wants/pbos-splash-quit.timer"
+# No "The system will reboot now!" broadcast on screen at reboot/power-off.
+install_file "$OVL/usr/lib/systemd/system/pbos-no-wall.service" "$R/usr/lib/systemd/system/pbos-no-wall.service" 0644
+ln -sfn ../pbos-no-wall.service "$R/usr/lib/systemd/system/multi-user.target.wants/pbos-no-wall.service"
 
 # ---------------------------------------------------------------------------
 # lsfg-vk
