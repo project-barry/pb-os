@@ -1521,9 +1521,11 @@ function GamesTab() {
         ...(running ? [{ data: running, label: `Now playing: ${label(running)}` }] : []),
         ...ids.map((id) => ({ data: id, label: label(id) })),
     ];
-    const picker = jsx(DFL.PanelSection, { title: "Game", children: [
+    const picker = jsx(DFL.PanelSection, { title: "Performance", children: [
+        // The dropdown under the word, the full width: game names are long.
         row(jsx(DFL.DropdownItem, {
             label: "Game", strDefaultLabel: "Choose a game",
+            layout: "below", childrenContainerWidth: "max",
             rgOptions: gameChoices, selectedOption: pick,
             onChange: (o) => setPick(o.data),
         })),
@@ -1560,14 +1562,15 @@ function GamesTab() {
     const fex = p.fex === "custom" || presets[p.fex] ? p.fex : "default";
     const defaults = Object.fromEntries(options.map((o) => [o.key, o.default]));
     const fexNow = fex === "custom" ? { ...defaults, ...(p.fexConfig || {}) } : { ...defaults, ...((presets[fex] || {}).config || {}) };
+    const fexText = fex === "custom" ? "Your own switches, below." : (presets[fex] || {}).description;
     const fexItems = [
         row(jsx(DFL.DropdownItem, {
-            label: "Preset",
-            description: fex === "custom" ? "Your own switches, below." : (presets[fex] || {}).description,
+            layout: "below", childrenContainerWidth: "max",
             rgOptions: [...Object.entries(presets).map(([id, x]) => ({ data: id, label: x.label })), { data: "custom", label: "Custom" }],
             selectedOption: fex,
             onChange: (o) => save(o.data === "custom" ? { fex: "custom", fexConfig: fexNow } : { fex: o.data, fexConfig: undefined }),
         })),
+        ...(fexText ? [note(fexText)] : []),
     ];
     if (fex === "custom") {
         for (const o of options) {
@@ -1588,8 +1591,7 @@ function GamesTab() {
     const coresError = isCustom && text ? cpulistError(text, count) : "";
     const cpuItems = [
         row(jsx(DFL.DropdownItem, {
-            label: "Cores",
-            description: cores ? undefined : "Steam's choice: all cores.",
+            layout: "below", childrenContainerWidth: "max",
             rgOptions: [
                 { data: "", label: "Default" },
                 ...CORE_CHOICES.filter((c) => groups[c.data]).map((c) => ({ data: c.data, label: `${c.label} (${groups[c.data]})` })),
@@ -1603,6 +1605,7 @@ function GamesTab() {
                 save({ cores: o.data || undefined, wineTopology: o.data ? p.wineTopology : undefined });
             },
         })),
+        ...(cores ? [] : [note("Steam's choice: all cores.")]),
     ];
     if (isCustom) {
         cpuItems.push(row(jsx(DFL.TextField, {
@@ -1681,8 +1684,8 @@ function GamesTab() {
 
     return jsxs(SP_JSX.Fragment, { children: [
         picker,
-        jsx(DFL.PanelSection, { title: "x86 Emulation", children: fexItems }),
-        jsx(DFL.PanelSection, { title: "CPU", children: cpuItems }),
+        jsx(DFL.PanelSection, { title: "FEX Preset", children: fexItems }),
+        jsx(DFL.PanelSection, { title: "CPU Cores", children: cpuItems }),
         jsx(DFL.PanelSection, { title: "Environment", children: envItems }),
         jsx(DFL.PanelSection, { title: "Profile", children: profileItems }),
     ] });
