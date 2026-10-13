@@ -1,0 +1,14 @@
+#!/bin/bash
+# "Add a program to Steam" in the Desktop menu. Steam's own Browse button in
+# Add a Non-Steam Game does nothing on Valve's arm64 client: its steamui.so
+# ships only the fallback file dialog (the x86 client has a GTK/portal one),
+# so System.OpenFileDialog fails at once. This opens the KDE file picker and
+# hands the choice to Valve's steamos-add-to-steam (the Dolphin right-click
+# "Add to Steam"), which accepts programs, scripts, AppImages, .desktop and
+# Windows executables and shows its errors in a dialog with -ui.
+set -u
+start="${1:-$HOME}"
+[[ -d "$start" ]] || start="$HOME"
+file="$(kdialog --title "Add a program to Steam" --getopenfilename "$start" 2>/dev/null)" || exit 0
+[[ -n "$file" ]] || exit 0
+exec /usr/bin/steamos-add-to-steam -ui "$file"

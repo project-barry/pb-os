@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Add a program to Steam
+Comment=Pick a program, script, AppImage or .desktop file and add it to the Steam library (Steam's own Browse button does not work on this Steam client)
+Exec=/usr/lib/steamos/pbos-add-to-steam
+Icon=steam
+Terminal=false
+Categories=Game;Utility;
+Keywords=steam;non-steam;shortcut;add;game;program;browse;
+StartupNotify=false

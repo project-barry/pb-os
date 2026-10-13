@@ -281,6 +281,12 @@ Output: `/work/steamos-sm8650.img`.
   Like the Steam Deck, no KDE on-screen keyboard is set up; plasma-keyboard
   is installed as a choice in Settings > Virtual Keyboard (as the default it
   kept the Nova's launcher menu flashing). The Thor uses Barry's keyboard.
+- Steam's Browse button in Add a Non-Steam Game does nothing on Valve's
+  arm64 Steam client: its steamui.so ships only a fallback file dialog (the
+  x86 client has a GTK/portal one), so the call fails at once. The Desktop
+  menu entry "Add a program to Steam" opens the KDE file picker and adds the
+  choice through Valve's steamos-add-to-steam, the same path as Dolphin's
+  right-click "Add to Steam".
 - Steam gets the refresh rate and overlay settings from a file now, the old
   import raced Steam's startup and lost.
 
