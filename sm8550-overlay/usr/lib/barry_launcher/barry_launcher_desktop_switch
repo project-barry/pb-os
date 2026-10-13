@@ -54,6 +54,15 @@ layout_under() {
     kscreen-doctor "output.DSI-1.position.$((tx + (tw - bw) / 2)),$((ty + th))" >/dev/null 2>&1
   fi
 }
+# Plasma's panel (taskbar) sits on the first screen in KWin's order; keep
+# that the top screen with Barry off too (barry_launcher_desktop does it on).
+top_screen_first() {
+  local prio
+  prio="$(kscreen-doctor -o 2>/dev/null | sed -E 's/\x1b\[[0-9;]*m//g' \
+    | awk '$1 == "Output:" { o = $3 } o == "DSI-2" && $1 == "priority" { print $2; exit }')"
+  [[ -n "$prio" && "$prio" != 1 ]] || return 0
+  kscreen-doctor output.DSI-2.priority.1 output.DSI-1.priority.2 >/dev/null 2>&1
+}
 # Barry's trackpad takes the bottom touchscreen from KWin while open: KWin
 # gets it back, or the plain desktop there would ignore touch.
 touch_back() {
@@ -90,6 +99,7 @@ turn_off() {
   systemctl --user stop "$unit"
   touch_back
   layout_under
+  top_screen_first
   notify "Off in Desktop Mode: the bottom screen is part of the desktop. Turn it on again from the menu (Barry Launcher On/Off) or in PB-OS Tools."
 }
 turn_on() {
@@ -111,6 +121,7 @@ case "${1:-get}" in
     no_barry_keyboard
     touch_back
     layout_under
+    top_screen_first
     exit 0 ;;
   *) echo "usage: ${0##*/} get|on|off|toggle" >&2; exit 2 ;;
 esac
