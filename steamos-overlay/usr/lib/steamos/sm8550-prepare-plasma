@@ -185,6 +185,25 @@ hide_thor_entries() {
 }
 hide_thor_entries
 
+# Images up to 0.5.2 made plasma-keyboard KWin's virtual keyboard; the Steam
+# Deck has none in Desktop Mode (Steam+X is the keyboard) and on the Nova it
+# kept the launcher menu flashing with a dead search field. Updates never
+# touch ~/.config, so drop that one choice once; a keyboard picked later in
+# Settings > Virtual Keyboard stays. The AYN Thor keeps Barry's keyboard
+# (barry_launcher_desktop sets it, its off switch puts plasma-keyboard back).
+seed_desktop_keyboard_off() {
+  local marker="${XDG_STATE_HOME:-$HOME/.local/state}/pbos-desktop-keyboard-off-seeded"
+  local plasma_im=/usr/share/applications/org.kde.plasma.keyboard.desktop
+  [[ -f "$marker" ]] && return 0
+  grep -qa 'ayn,thor' /sys/firmware/devicetree/base/compatible 2>/dev/null && return 0
+  if [[ "$(kreadconfig6 --file kwinrc --group Wayland --key InputMethod 2>/dev/null)" == "$plasma_im" ]]; then
+    kwriteconfig6 --file kwinrc --group Wayland --key InputMethod --delete
+    kwriteconfig6 --file kwinrc --group Wayland --key VirtualKeyboardEnabled --delete
+  fi
+  mkdir -p "$(dirname "$marker")" && : >"$marker"
+}
+seed_desktop_keyboard_off
+
 # AYN Thor: Game Mode silenced the bottom touchscreen; the desktop uses both.
 if [[ -x /usr/lib/steamos-sm8550/sm8550-touch-inhibit ]]; then
   /usr/lib/steamos-sm8550/sm8550-touch-inhibit bottom_touchscreen 0
