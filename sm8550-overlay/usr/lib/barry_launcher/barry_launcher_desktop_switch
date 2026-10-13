@@ -17,6 +17,7 @@ fi
 api=http://127.0.0.1:47824
 unit=barry_launcher_desktop.service
 plasma_im=/usr/share/applications/org.kde.plasma.keyboard.desktop
+barry_im=/usr/share/applications/org.barry_launcher.keyboard.desktop
 
 enabled() {
   [[ "$(kreadconfig6 --file barry_launcherrc --group Desktop --key Enabled --default true)" != false ]]
@@ -65,17 +66,22 @@ touch_back() {
     fi
   done
 }
-plasma_keyboard() {
-  local notify=()
+# Barry off leaves KWin without a virtual keyboard, like the Steam Deck and
+# the single-screen devices (Steam+X is the Desktop keyboard); a keyboard
+# picked in Settings > Virtual Keyboard stays. Only Barry's own entry and the
+# plasma-keyboard this switch used to set are removed.
+no_barry_keyboard() {
+  local notify=() im
   live && notify=(--notify)
-  if [[ "$(kreadconfig6 --file kwinrc --group Wayland --key InputMethod)" != "$plasma_im" ]]; then
-    kwriteconfig6 "${notify[@]}" --file kwinrc --group Wayland --key InputMethod "$plasma_im"
+  im="$(kreadconfig6 --file kwinrc --group Wayland --key InputMethod)"
+  if [[ "$im" == "$barry_im" || "$im" == "$plasma_im" ]]; then
+    kwriteconfig6 "${notify[@]}" --file kwinrc --group Wayland --key InputMethod --delete
   fi
 }
 
 turn_off() {
   kwriteconfig6 --file barry_launcherrc --group Desktop --key Enabled false
-  plasma_keyboard
+  no_barry_keyboard
   live || return 0
   # KWin's script for Barry's windows stays loaded (unloading one crashed
   # KWin): it stops keeping other windows off the bottom screen.
@@ -102,7 +108,7 @@ case "${1:-get}" in
   toggle) if enabled; then turn_off; else turn_on; fi ;;
   settle)
     enabled && exit 0
-    plasma_keyboard
+    no_barry_keyboard
     touch_back
     layout_under
     exit 0 ;;
