@@ -49,7 +49,8 @@ remove_user() {
     [[ -f "$R/etc/$f" ]] && sed -i "/^${u}:/d" "$R/etc/$f"
     [[ -f "$R/var/lib/overlays/etc/upper/$f" ]] && sed -i "/^${u}:/d" "$R/var/lib/overlays/etc/upper/$f"
   done
-  for f in "$R/etc/group" "$R/var/lib/overlays/etc/upper/group"; do
+  for f in "$R/etc/group" "$R/var/lib/overlays/etc/upper/group" \
+    "$R/etc/gshadow" "$R/var/lib/overlays/etc/upper/gshadow"; do
     [[ -f "$f" ]] || continue
     sed -i "/^${u}:/d" "$f"
     # drop the user from any member list (…,user / user,… / :user$)
@@ -90,6 +91,12 @@ do_install() {
   echo "${user}:x:${id}:" >> "$R/etc/group"
   sed -i -E "/^wheel:/{ s/:$/:${user}/; t; s/$/,${user}/ }" "$R/etc/group"
   grep -qE "^wheel:.*[:,]${user}(,|$)" "$R/etc/group" || die "could not add ${user} to wheel"
+  # /etc/gshadow mirrors /etc/group; without these lines grpck (shadow.service)
+  # fails at every boot ("'pbtest' is a member of 'wheel' ... but not in gshadow").
+  if [[ -f "$R/etc/gshadow" ]]; then
+    echo "${user}:!::" >> "$R/etc/gshadow"
+    sed -i -E "/^wheel:/{ s/:$/:${user}/; t; s/$/,${user}/ }" "$R/etc/gshadow"
+  fi
   install -d -m0755 "$(dirname "$R$TMPFILES")"
   printf 'd /home/%s 0700 %s %s -\n' "$user" "$id" "$id" > "$R$TMPFILES"
 
