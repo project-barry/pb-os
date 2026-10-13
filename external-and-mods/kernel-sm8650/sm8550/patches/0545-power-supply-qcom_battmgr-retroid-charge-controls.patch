@@ -10,14 +10,18 @@ instead, sent with BATTMGR_USB_PROPERTY_SET:
   0x10  firmware capacity limit off/on
 
 Expose them as retroid_charge_now and retroid_limit_capacity on the
-battery manager device, only on the Retroid Pocket 6 and Nova (other
-firmware may give these numbers another meaning), and acknowledge the
-USB property-set reply instead of logging it as an unknown message.
+battery manager device, only on the Retroid Pocket 6, the Nova and the
+AYN Thor (other firmware may give these numbers another meaning), and
+acknowledge the USB property-set reply instead of logging it as an
+unknown message.
 
-Only Retroid's own ADSP firmware acts on them: AYN Odin 2's acknowledges
-the request and keeps charging. Tested on a Nova with its own ADSP
-(2026-10-10): retroid_charge_now 0 runs the device from USB with the
-battery current at 0 A, 1 charges again within seconds.
+AYN's stock driver on the Thor sends the same two properties
+(usb_charge_now, limit_capacity_charge), and the Thor's own ADSP (the
+build PB-OS ships) has the code that acts on them. The Odin 2's older
+ADSP acknowledges the request and keeps charging. Tested on a Nova with
+its own ADSP (2026-10-10): retroid_charge_now 0 runs the device from USB
+with the battery current at 0 A, 1 charges again within seconds. Not yet
+tested on the Thor.
 sm8550-charge-control (userspace) applies the user's choice.
 ---
 --- a/drivers/power/supply/qcom_battmgr.c
@@ -56,11 +60,11 @@ sm8550-charge-control (userspace) applies the user's choice.
 +};
 +
 +/*
-+ * Retroid's Android driver (qti_battery_charger) adds OEM properties to the
-+ * USB supply in the battery firmware: 0x0f stops (0) or allows (1) charging
-+ * while on USB power ("charge separation"), 0x10 turns the firmware's capacity
-+ * limit on or off. Exposed only on Retroid handhelds; other firmware may use
-+ * these numbers for something else.
++ * Retroid's and AYN's Android driver (qti_battery_charger) adds OEM properties
++ * to the USB supply in the battery firmware: 0x0f stops (0) or allows (1)
++ * charging while on USB power ("charge separation"), 0x10 turns the firmware's
++ * capacity limit on or off. Exposed only on Retroid handhelds and the AYN Thor;
++ * other firmware may use these numbers for something else.
 + */
 +#define RETROID_USB_CHARGE_NOW		0x0f
 +#define RETROID_USB_LIMIT_CAPACITY	0x10
@@ -140,12 +144,13 @@ sm8550-charge-control (userspace) applies the user's choice.
  static char *qcom_battmgr_battery[] = { "battery" };
  
  static int qcom_battmgr_probe(struct auxiliary_device *adev,
-@@ -1725,6 +1813,16 @@
+@@ -1725,6 +1813,17 @@
  
  	pmic_glink_client_register(battmgr->client);
  
 +	if (of_machine_is_compatible("retroidpocket,rp6") ||
-+	    of_machine_is_compatible("retroidpocket,rpnova")) {
++	    of_machine_is_compatible("retroidpocket,rpnova") ||
++	    of_machine_is_compatible("ayn,thor")) {
 +		battmgr->retroid_charge_now = -1;
 +		battmgr->retroid_limit_capacity = -1;
 +		dev_set_drvdata(dev, battmgr);
