@@ -195,6 +195,13 @@ install_file "$OVL/usr/lib/steamos/sm8550-startplasma" \
 # Desktop Mode starts Steam through sm8550-desktop-steam (Nova X11 font DPI).
 install_file "$OVL/usr/lib/steamos/sm8550-desktop-steam" \
   "$R/usr/lib/steamos/sm8550-desktop-steam" 0755
+# Steam's Browse button (Add a Non-Steam Game) is dead on Valve's arm64 client
+# (no file dialog in its steamui.so); this menu entry opens the KDE picker and
+# adds the choice through steamos-add-to-steam.
+install_file "$OVL/usr/lib/steamos/pbos-add-to-steam" \
+  "$R/usr/lib/steamos/pbos-add-to-steam" 0755
+install_file "$OVL/usr/share/applications/pbos-add-to-steam.desktop" \
+  "$R/usr/share/applications/pbos-add-to-steam.desktop" 0644
 if [[ -f "$R/etc/xdg/autostart/steam.desktop" ]]; then
   sed -i 's|^Exec=/usr/bin/steam |Exec=/usr/lib/steamos/sm8550-desktop-steam |' \
     "$R/etc/xdg/autostart/steam.desktop"
