@@ -1,6 +1,16 @@
 #!/usr/bin/env python3
 """Decky backend — PB-OS Tools (plugin pbos-utils): pb-os tools for Game Mode, in tabs.
 
+Games    per-game profiles (port of Armada's per-game compatibility
+         settings, armada-os/armada, GPL-2.0-or-later): an x86 emulation
+         (FEX) preset or the user's own FEX switches, the CPU cores the game
+         runs on (with Wine's CPU topology to match), and environment
+         variables, from a list of common ones or the user's own. Kept in
+         ~/.config/pb-os/game-profiles.json; /usr/bin/pbos-game-launch applies
+         them when the game starts. The frontend puts the wrapper in a game's
+         launch options when the game gets a profile and takes it out when
+         the profile is reset; games without one are never touched.
+
 Update   pb-os updates (was the PB-OS Update plugin). Front for
          /usr/share/konkr-update/konkr-update.py (the SteamOS Update app's
          helper). The download and staging run as the transient unit
@@ -616,6 +626,82 @@ def proton_games_write(st: dict[str, Any]) -> None:
     subprocess.run(["chown", "-R", f"{user}:{user}", os.path.dirname(path)], capture_output=True)
 
 
+# ---------------------------------------------------------------- games --
+# Per-game profiles, applied at launch by GAME_LAUNCH (see the Games tab).
+GAME_LAUNCH = "/usr/bin/pbos-game-launch"
+ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+CPULIST = re.compile(r"^\d+(-\d+)?(,\d+(-\d+)?)*$")
+
+
+def game_profiles_path() -> str:
+    return os.path.join(getattr(decky, "DECKY_USER_HOME", "/home/steamos"), ".config/pb-os/game-profiles.json")
+
+
+def game_info() -> dict[str, Any]:
+    # The wrapper knows the presets and this device's core groups; it runs on
+    # the system's native Python (this backend is emulated).
+    if not os.access(GAME_LAUNCH, os.X_OK):
+        return {}
+    r = subprocess.run(["/usr/bin/python3", GAME_LAUNCH, "--info"], capture_output=True, text=True,
+                       env=CLEAN_ENV, timeout=15)
+    try:
+        info = json.loads(r.stdout)
+    except ValueError:
+        return {}
+    return info if isinstance(info, dict) else {}
+
+
+def game_profiles() -> dict[str, Any]:
+    info = game_info()
+    games = read_json(game_profiles_path()).get("games", {})
+    return {**info, "available": bool(info), "games": games if isinstance(games, dict) else {}}
+
+
+def clean_game_profile(p: dict[str, Any], info: dict[str, Any]) -> dict[str, Any]:
+    """What is worth keeping of a profile from the frontend: known settings
+    only, and none at their defaults (an empty profile means no profile)."""
+    doc = info.get("presets", {})
+    presets = doc.get("presets", {}) if isinstance(doc, dict) else {}
+    options = {o.get("key") for o in (doc.get("options", []) if isinstance(doc, dict) else []) if isinstance(o, dict)}
+    out: dict[str, Any] = {}
+    fex = p.get("fex")
+    if fex == "custom" and isinstance(p.get("fexConfig"), dict):
+        out["fex"] = "custom"
+        out["fexConfig"] = {k: "1" if str(v) == "1" else "0" for k, v in p["fexConfig"].items() if k in options}
+    elif fex in presets and fex != "default":
+        out["fex"] = fex
+    cores = str(p.get("cores") or "").replace(" ", "")
+    if cores and (cores in info.get("cores", {}) or CPULIST.match(cores)):
+        out["cores"] = cores
+        if p.get("wineTopology") is False:
+            out["wineTopology"] = False
+    env = p.get("env")
+    if isinstance(env, dict):
+        clean = {k: str(v) for k, v in env.items() if isinstance(k, str) and ENV_NAME.match(k) and "\0" not in str(v)}
+        if clean:
+            out["env"] = clean
+    if out:
+        out["name"] = str(p.get("name") or "")[:200]
+    return out
+
+
+def game_profile_save(appid: str, profile: dict[str, Any] | None) -> dict[str, Any]:
+    if not str(appid).isdigit():
+        return {"ok": False, "error": "bad app id"}
+    path = game_profiles_path()
+    st = read_json(path)
+    games = st.get("games") if isinstance(st.get("games"), dict) else {}
+    clean = clean_game_profile(profile, game_info()) if isinstance(profile, dict) else {}
+    if clean:
+        games[str(appid)] = clean
+    else:
+        games.pop(str(appid), None)
+    write_json(path, {"games": games})
+    user = getattr(decky, "DECKY_USER", "steamos")
+    subprocess.run(["chown", "-R", f"{user}:{user}", os.path.dirname(path)], capture_output=True)
+    return {"ok": True, "profile": clean or None}
+
+
 class Plugin:
     async def _main(self) -> None:
         self.last: dict[str, Any] = {}
@@ -1123,6 +1209,15 @@ class Plugin:
     async def stick_delete(self, **_: Any) -> dict[str, Any]:
         res = await asyncio.to_thread(stickcal, "delete")
         decky.logger.info(f"stick calibration deleted: {json.dumps(res)}")
+        return res
+
+    # --------------------------------------------------------------- games --
+    async def get_game_profiles(self, **_: Any) -> dict[str, Any]:
+        return await asyncio.to_thread(game_profiles)
+
+    async def set_game_profile(self, appid: str = "", profile: dict[str, Any] | None = None, **_: Any) -> dict[str, Any]:
+        res = await asyncio.to_thread(game_profile_save, str(appid), profile)
+        decky.logger.info(f"game profile {appid}: {json.dumps(res.get('profile'))}")
         return res
 
     # -------------------------------------------------------------- proton --

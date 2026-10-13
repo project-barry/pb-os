@@ -1,0 +1,242 @@
+#!/usr/bin/python3
+# SPDX-License-Identifier: GPL-2.0-or-later
+"""pbos-game-launch — per-game settings from PB-OS Tools' Games tab.
+
+PB-OS Tools puts this in front of a game's launch options when the game gets
+a profile, and takes it out again when the profile is reset:
+
+    /usr/bin/pbos-game-launch --appid=<appid> %command%
+
+At launch it applies that game's profile from ~/.config/pb-os/game-profiles.json
+and then execs the game:
+
+  x86 emulation  a FEX preset (or the user's own switches) as an app config
+                 file passed in FEX_APP_CONFIG, plus the same options as
+                 FEX_<OPTION> variables. Default changes nothing: FEX's own
+                 settings.
+  CPU cores      the game's CPU affinity (all cores, the big and prime cores,
+                 the big or little cores, or a list), and Wine's CPU topology
+                 to match, so Windows games see that many cores.
+  Environment    variables, set last and as given, so they can override
+                 anything above.
+
+Anything that fails is reported on stderr (Steam's game log) and skipped; the
+game always starts. `pbos-game-launch --info` prints the presets and this
+device's core groups as JSON for PB-OS Tools.
+
+Port of Armada's armada-game-launch and game tweaks (armada-os/armada,
+GPL-2.0-or-later): the FEX_APP_CONFIG profile file in the cache folder that
+pressure-vessel shares into the container, the CPU affinity with the matching
+WINE_CPU_TOPOLOGY / PROTON_CPU_TOPOLOGY, and the environment variables applied
+last. Not ported: Armada's session daemon (negative nice, gamescope and
+scheduler settings), its FEX thunk switches (Steam's FEX has no host thunks)
+and its Proton library fixes.
+"""
+import json
+import os
+import pathlib
+import sys
+
+PRESETS = pathlib.Path("/usr/share/pb-os/game-launch/fex-presets.json")
+ENV_PRESETS = pathlib.Path("/usr/share/pb-os/game-launch/env-presets.json")
+CPUFREQ = pathlib.Path("/sys/devices/system/cpu/cpufreq")
+
+
+def say(msg):
+    print(f"pbos-game-launch: {msg}", file=sys.stderr)
+
+
+def read_json(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def profiles_path():
+    config = os.environ.get("XDG_CONFIG_HOME", "")
+    base = pathlib.Path(config) if config.startswith("/") else pathlib.Path.home() / ".config"
+    return base / "pb-os" / "game-profiles.json"
+
+
+def appid(args):
+    if args and args[0].startswith("--appid="):
+        value = args.pop(0).split("=", 1)[1]
+        if value.isdigit():
+            return value
+    for key in ("STEAM_COMPAT_APP_ID", "SteamAppId", "SteamGameId"):
+        value = os.environ.get(key, "").strip()
+        if value.isdigit() and value != "0":
+            return value
+    return None
+
+
+# --------------------------------------------------------------------- cpus --
+def parse_cpulist(text):
+    # Order kept: WINE_CPU_TOPOLOGY maps Windows CPU i to the i-th listed CPU.
+    cpus = []
+    for part in str(text).split(","):
+        part = part.strip()
+        if not part:
+            continue
+        low, _, high = part.partition("-")
+        if not low.isdigit() or (high and not high.isdigit()):
+            raise ValueError(f"bad cpu list entry {part!r}")
+        first, last = int(low), int(high or low)
+        if last < first:
+            raise ValueError(f"bad cpu list range {part!r}")
+        cpus.extend(range(first, last + 1))
+    if len(set(cpus)) != len(cpus):
+        raise ValueError("a cpu is listed twice")
+    return cpus
+
+
+def format_cpulist(cpus):
+    parts, start, prev = [], None, None
+    for cpu in sorted(cpus) + [None]:
+        if start is not None and cpu == prev + 1:
+            prev = cpu
+            continue
+        if start is not None:
+            parts.append(f"{start}-{prev}" if prev > start else str(start))
+        start = prev = cpu
+    return ",".join(parts)
+
+
+def core_groups():
+    """This device's core groups from its cpufreq policies: the slowest policy
+    is the little cores, the fastest (when there are three or more) the prime
+    cores, the ones between the big cores."""
+    policies = []
+    for policy in sorted(CPUFREQ.glob("policy*")):
+        try:
+            cpus = parse_cpulist((policy / "related_cpus").read_text().replace(" ", ","))
+            top = int((policy / "cpuinfo_max_freq").read_text())
+        except (OSError, ValueError):
+            continue
+        if cpus:
+            policies.append((top, cpus))
+    policies.sort()
+    try:
+        online = parse_cpulist(pathlib.Path("/sys/devices/system/cpu/online").read_text())
+    except (OSError, ValueError):
+        online = sorted(os.sched_getaffinity(0))
+    groups = {"all": online}
+    if len(policies) >= 2:
+        little = policies[0][1]
+        prime = policies[-1][1] if len(policies) >= 3 else []
+        big = [c for _, cpus in policies[1:len(policies) - (1 if prime else 0)] for c in cpus]
+        groups.update({"performance": sorted(big + prime), "big": sorted(big), "little": sorted(little)})
+    return groups
+
+
+def resolve_cores(value, groups):
+    if not value:
+        return None
+    if value in groups:
+        return groups[value] or None
+    return parse_cpulist(value)
+
+
+# ---------------------------------------------------------------------- fex --
+def fex_config(profile, doc):
+    # Only the options PB-OS Tools offers; anything else in the file is ignored.
+    choice = profile.get("fex") or "default"
+    if choice == "custom":
+        config = profile.get("fexConfig") if isinstance(profile.get("fexConfig"), dict) else {}
+    else:
+        config = (doc.get("presets", {}).get(choice) or {}).get("config") or {}
+    known = {k["key"] for k in doc.get("options", []) if isinstance(k, dict) and "key" in k}
+    return {str(k): str(v) for k, v in config.items() if k in known}
+
+
+def apply_fex(config, game):
+    # Armada found FEX_APP_CONFIG is the one knob every compat tool's FEX
+    # reads (Proton's arm64ec FEX too), and that a file outside the cache
+    # folder is invisible inside pressure-vessel's container, so FEX skips it
+    # without a word. The FEX_* variables are set as well, in case.
+    cache = os.environ.get("XDG_CACHE_HOME", "")
+    folder = (pathlib.Path(cache) if cache.startswith("/") else pathlib.Path.home() / ".cache") / "pbos-fex"
+    folder.mkdir(mode=0o700, parents=True, exist_ok=True)
+    target = folder / f"{game}.json"
+    tmp = folder / f".{game}.{os.getpid()}.tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump({"Config": config}, f, indent=2, sort_keys=True)
+            f.write("\n")
+        os.replace(tmp, target)
+    finally:
+        tmp.unlink(missing_ok=True)
+    os.environ["FEX_APP_CONFIG"] = str(target)
+    for key, value in config.items():
+        os.environ[f"FEX_{key.upper()}"] = value
+
+
+# --------------------------------------------------------------------- main --
+def apply(profile, game):
+    done = []
+    try:
+        config = fex_config(profile, read_json(PRESETS))
+        if config:
+            apply_fex(config, game)
+            done.append(f"fex={profile.get('fex')}")
+    except Exception as exc:
+        say(f"x86 emulation settings skipped: {exc}")
+    try:
+        cores = resolve_cores(profile.get("cores"), core_groups())
+        if cores:
+            os.sched_setaffinity(0, cores)
+            done.append(f"cores={format_cpulist(cores)}")
+            if profile.get("wineTopology", True):
+                topology = f"{len(cores)}:{','.join(map(str, cores))}"
+                os.environ.setdefault("WINE_CPU_TOPOLOGY", topology)
+                # Proton's own per-game topology otherwise wins over Wine's.
+                os.environ.setdefault("PROTON_CPU_TOPOLOGY", topology)
+    except Exception as exc:
+        say(f"CPU core settings skipped: {exc}")
+    env = profile.get("env")
+    if isinstance(env, dict):
+        for key, value in env.items():
+            try:
+                os.environ[str(key)] = str(value)
+                done.append(str(key))
+            except (ValueError, OSError) as exc:
+                say(f"variable {key!r} skipped: {exc}")
+    say(f"app {game}: {', '.join(done) or 'nothing to change'}")
+
+
+def info():
+    groups = core_groups()
+    print(json.dumps({
+        "presets": read_json(PRESETS),
+        "env": read_json(ENV_PRESETS).get("presets", []),
+        "cores": {name: format_cpulist(cpus) for name, cpus in groups.items()},
+        "cpus": len(groups["all"]),
+    }))
+
+
+def main():
+    args = sys.argv[1:]
+    if args == ["--info"]:
+        info()
+        return
+    game = appid(args)
+    if not args:
+        raise SystemExit("usage: pbos-game-launch [--appid=APPID] COMMAND [ARGS...]")
+    if game:
+        try:
+            profile = read_json(profiles_path()).get("games", {}).get(game)
+            if isinstance(profile, dict):
+                apply(profile, game)
+        except Exception as exc:
+            say(f"profile for app {game} skipped: {exc}")
+    try:
+        os.execvp(args[0], args)
+    except OSError as exc:
+        raise SystemExit(f"pbos-game-launch: could not start {args[0]}: {exc}")
+
+
+if __name__ == "__main__":
+    main()

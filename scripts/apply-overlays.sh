@@ -167,6 +167,12 @@ cp -r "$MOD/proton-pbos/dist/." "$R/usr/share/pb-os/proton-pbos/"
 chmod -R u=rwX,go=rX "$R/usr/share/pb-os/proton-pbos"
 install_file "$OVL/usr/lib/steamos/pbos-proton" "$R/usr/lib/steamos/pbos-proton" 0755
 install_file "$OVL/usr/lib/steamos/pbos-proton-launcher" "$R/usr/lib/steamos/pbos-proton-launcher" 0644
+# Per-game profiles (PB-OS Tools' Games tab): the launch wrapper the tab puts
+# in a game's launch options, and its FEX and environment-variable presets.
+install_file "$OVL/usr/bin/pbos-game-launch" "$R/usr/bin/pbos-game-launch" 0755
+for f in fex-presets.json env-presets.json; do
+  install_file "$OVL/usr/share/pb-os/game-launch/$f" "$R/usr/share/pb-os/game-launch/$f" 0644
+done
 mkdir -p "$R/usr/lib/systemd/user/default.target.wants"
 # alpha-v0.5.2.7 ran it from a 5-minute timer; release layers are reused.
 rm -f "$R/usr/lib/systemd/user/pbos-proton.timer" \

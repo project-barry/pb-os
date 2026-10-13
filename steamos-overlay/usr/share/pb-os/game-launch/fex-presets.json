@@ -1,0 +1,42 @@
+{
+  "_source": "PB-OS. Presets match konkr-game's fast / fastest / compat; the Compatible preset also takes Armada's (https://github.com/armada-os/armada, fex-profiles.json, GPL-2.0-or-later) memory-ordering and Multiblock settings.",
+  "options": [
+    {"key": "TSOEnabled", "label": "x86 Memory Ordering (TSO)", "default": "1"},
+    {"key": "HalfBarrierTSOEnabled", "label": "Half-Barrier TSO", "default": "1"},
+    {"key": "VectorTSOEnabled", "label": "Vector TSO", "default": "0"},
+    {"key": "MemcpySetTSOEnabled", "label": "Memcpy/Memset TSO", "default": "0"},
+    {"key": "StrictInProcessSplitLocks", "label": "Strict Split Locks", "default": "0"},
+    {"key": "X87ReducedPrecision", "label": "Reduced x87 Precision", "default": "0"},
+    {"key": "Multiblock", "label": "Multiblock JIT", "default": "1"}
+  ],
+  "presets": {
+    "default": {
+      "label": "Default",
+      "description": "FEX's own settings. Nothing changes.",
+      "config": {}
+    },
+    "fast": {
+      "label": "Fast",
+      "description": "x87 math at 64 bits instead of 80: a big win for older (DirectX 9-era) games. Safe for most games.",
+      "config": {"X87ReducedPrecision": "1"}
+    },
+    "fastest": {
+      "label": "Fastest",
+      "description": "Fast, without x86 memory-ordering emulation: the biggest CPU win, but multithreaded games can crash or glitch.",
+      "config": {"X87ReducedPrecision": "1", "TSOEnabled": "0"}
+    },
+    "compatible": {
+      "label": "Compatible",
+      "description": "Strict and slower, for games that crash or glitch.",
+      "config": {
+        "TSOEnabled": "1",
+        "HalfBarrierTSOEnabled": "1",
+        "VectorTSOEnabled": "1",
+        "MemcpySetTSOEnabled": "1",
+        "StrictInProcessSplitLocks": "1",
+        "X87ReducedPrecision": "0",
+        "Multiblock": "0"
+      }
+    }
+  }
+}
