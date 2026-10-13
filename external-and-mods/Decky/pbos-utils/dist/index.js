@@ -70,6 +70,9 @@ const setChargeControl = callable("set_charge_control");
 const getProton = callable("get_proton");
 const getProtonGames = callable("get_proton_games");
 const setProtonGames = callable("set_proton_games");
+// Per-game profiles, applied at launch by /usr/bin/pbos-game-launch.
+const getGameProfiles = callable("get_game_profiles");
+const setGameProfile = callable("set_game_profile");
 
 const row = (child) => jsx(DFL.PanelSectionRow, { children: child });
 const note = (text) => row(jsx("div", { style: { fontSize: "12px", opacity: 0.75 }, children: text }));
@@ -120,6 +123,9 @@ const HardwareIcon = svg([
     jsx("circle", { cx: 12, cy: 12, r: 6.4, fill: "none", stroke: "#000", strokeOpacity: 0.35, strokeWidth: 0.9 }, "chamfer"),
 ]);
 
+// A gamepad: per-game profiles. The d-pad and two face buttons are cut out.
+const GamesIcon = svg(jsx("path", { fillRule: "evenodd", d: "M7 6h10a5 5 0 0 1 4.9 4l1 5.2a2.9 2.9 0 0 1-5 2.5L15.6 15H8.4l-2.3 2.7a2.9 2.9 0 0 1-5-2.5l1-5.2A5 5 0 0 1 7 6zM6.2 8.4v1.8H4.4v1.6h1.8v1.8h1.6v-1.8h1.8v-1.6H7.8V8.4zM16.4 8.6a1.1 1.1 0 1 0 0 2.2a1.1 1.1 0 1 0 0-2.2zm2.2 2.4a1.1 1.1 0 1 0 0 2.2a1.1 1.1 0 1 0 0-2.2z" }));
+
 // A lightning bolt: power and charging.
 const PowerIcon = svg(jsx("path", { d: "M13.5 2 4.5 13.5h6L9.5 22l9-11.5h-6z" }));
 
@@ -128,8 +134,7 @@ const GB = DFL.GamepadButton || {};
 const BUMPER_LEFT = GB.BUMPER_LEFT != null ? GB.BUMPER_LEFT : 5;
 const BUMPER_RIGHT = GB.BUMPER_RIGHT != null ? GB.BUMPER_RIGHT : 6;
 
-// The tab shown, kept while Steam runs; at first the first tab (Lighting
-// where the device has it).
+// The tab shown, kept while Steam runs; at first the first tab (Games).
 let lastTab = null;
 
 function TabBar({ tabs, active, onPick }) {
@@ -1318,6 +1323,347 @@ function PowerTab() {
     return jsxs(SP_REACT.Fragment, { children: [jsx(ChargeControl, {}), jsx(DFL.PanelSection, { title: "Power", children: items })] });
 }
 
+// ---------------------------------------------------------------- games ---
+// Per-game profiles: the x86 emulation (FEX) preset or the user's own FEX
+// switches, the CPU cores the game runs on, and environment variables.
+// /usr/bin/pbos-game-launch applies them when the game starts; this puts it
+// in a game's launch options when the game gets a profile and takes it out
+// when the profile is reset, so games without one are never touched.
+// Port of Armada's per-game compatibility settings (armada-os/armada,
+// decky/armada-control, GPL-2.0-or-later): the FEX presets and switches, the
+// core choice with Wine's CPU topology, the environment-variable list and
+// editor, and the launch-option wrapping.
+const GAME_LAUNCH = "/usr/bin/pbos-game-launch";
+// Steam app types: game, application, demo; and a non-Steam game.
+const GAME_TYPES = new Set([1, 2, 8]);
+const SHORTCUT_TYPE = 1073741824;
+const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const CORE_CHOICES = [
+    { data: "all", label: "All Cores" },
+    { data: "performance", label: "Big + Prime Cores" },
+    { data: "big", label: "Big Cores" },
+    { data: "little", label: "Little Cores" },
+];
+// The game picked, kept while Steam runs.
+let lastGame = null;
+
+function runningGame() {
+    const app = DFL.Router && DFL.Router.MainRunningApp;
+    return app && app.appid ? String(app.appid) : null;
+}
+
+// Installed games and non-Steam games: appid -> name.
+function installedGames() {
+    const cs = window.collectionStore;
+    const names = new Map();
+    for (const c of [cs && cs.localGamesCollection, cs && cs.deckDesktopApps]) {
+        for (const app of (c && c.allApps) || []) {
+            if (!GAME_TYPES.has(app.app_type) && app.app_type !== SHORTCUT_TYPE) continue;
+            names.set(String(app.appid), app.display_name || `App ${app.appid}`);
+        }
+    }
+    return names;
+}
+
+// The launch options with the wrapper in front of %command% (null: already
+// there). Options without %command% are arguments, so they go after it.
+function withWrapper(opts, appid) {
+    if (opts.includes(GAME_LAUNCH)) return null;
+    const prefix = `${GAME_LAUNCH} --appid=${appid} %command%`;
+    if (opts.includes("%command%")) return opts.replace("%command%", prefix);
+    return opts.trim() ? `${prefix} ${opts.trim()}` : prefix;
+}
+
+function withoutWrapper(opts) {
+    if (!opts.includes(GAME_LAUNCH)) return null;
+    const next = opts.replace(/\/usr\/bin\/pbos-game-launch(\s+--appid=\d+)?\s*/g, "").trim();
+    return next === "%command%" ? "" : next;
+}
+
+async function setWrapper(appid, on) {
+    const d = await appDetails(Number(appid));
+    if (!d) return false;
+    const now = d.strLaunchOptions || "";
+    const next = on ? withWrapper(now, appid) : withoutWrapper(now);
+    if (next !== null) SteamClient.Apps.SetAppLaunchOptions(Number(appid), next);
+    return true;
+}
+
+function cpulistError(text, count) {
+    const seen = new Set();
+    for (const part of text.split(",")) {
+        const item = part.trim();
+        if (!item) continue;
+        const m = /^(\d+)(?:-(\d+))?$/.exec(item);
+        if (!m) return `"${item}" is not a core number or a range like 4-7.`;
+        const lo = Number(m[1]);
+        const hi = m[2] !== undefined ? Number(m[2]) : lo;
+        if (hi < lo) return `${item}: the range runs backwards.`;
+        for (let c = lo; c <= hi; c++) {
+            if (c >= count) return `This device has no core ${c} (it has cores 0-${count - 1}).`;
+            if (seen.has(c)) return `Core ${c} is listed twice.`;
+            seen.add(c);
+        }
+    }
+    return seen.size ? "" : "List at least one core.";
+}
+
+function EnvModal({ closeModal, presets, name: name0, value: value0, fromList, onSave, onDelete }) {
+    const [name, setName] = useState(name0 || "");
+    const [value, setValue] = useState(value0 || "");
+    const [error, setError] = useState("");
+    const preset = presets.find((p) => p.name === name);
+    const save = () => {
+        const n = name.trim();
+        if (!ENV_NAME.test(n)) {
+            setError("A name has letters, digits and underscores only, and doesn't start with a digit.");
+            return;
+        }
+        onSave(n, value);
+        closeModal();
+    };
+    const button = (text, onClick, disabled) => jsx(DFL.DialogButton, {
+        style: { width: "auto", minWidth: "110px" }, disabled, onClick, children: text });
+    return jsx(DFL.ModalRoot, {
+        closeModal, onCancel: closeModal,
+        children: jsxs("div", { children: [
+            jsx("div", { style: { fontSize: "20px", fontWeight: "bold", marginBottom: "12px" },
+                children: name0 ? "Edit Variable" : "Add Variable" }),
+            fromList
+                ? jsx(DFL.DropdownItem, {
+                    label: "Name", strDefaultLabel: "Choose a variable",
+                    rgOptions: presets.map((p) => ({ data: p.name, label: p.name })),
+                    selectedOption: name || null,
+                    onChange: (o) => { setName(o.data); setError(""); },
+                })
+                : jsx(DFL.TextField, { label: "Name", value: name, onChange: (e) => { setName(e.target.value); setError(""); } }),
+            preset ? jsx("div", { style: { fontSize: "12px", opacity: 0.75, margin: "6px 0" }, children: preset.description }) : null,
+            preset && preset.options
+                ? jsx(DFL.DropdownItem, {
+                    label: "Value", strDefaultLabel: "Choose a value",
+                    rgOptions: preset.options.map((o) => ({ data: o.data, label: o.label })),
+                    selectedOption: value || null,
+                    onChange: (o) => setValue(o.data),
+                })
+                : jsx(DFL.TextField, {
+                    label: "Value", value,
+                    description: preset && preset.example ? `For example ${preset.example}` : undefined,
+                    onChange: (e) => setValue(e.target.value),
+                }),
+            error ? jsx("div", { style: { color: "#ff6b6b", marginTop: "8px" }, children: error }) : null,
+            jsxs(DFL.Focusable, {
+                "flow-children": "horizontal",
+                style: { display: "flex", gap: "8px", marginTop: "16px", justifyContent: "flex-end" },
+                children: [
+                    onDelete ? button("Delete", () => { onDelete(); closeModal(); }) : null,
+                    button("Cancel", closeModal),
+                    button("Save", save, !name || (fromList && !value)),
+                ],
+            }),
+        ] }),
+    });
+}
+
+function GamesTab() {
+    const [info, setInfo] = useState(null);
+    const [profiles, setProfiles] = useState({});
+    const [pick, setPickState] = useState(lastGame || runningGame());
+    const [opts, setOpts] = useState(null);
+    const [customCores, setCustomCores] = useState(false);
+    const [coresText, setCoresText] = useState(null);
+    const [error, setError] = useState("");
+    const queue = useRef(Promise.resolve());
+    const setPick = (appid) => { lastGame = appid; setPickState(appid); };
+    const showOpts = useCallback((appid) => {
+        setOpts(null);
+        if (appid) appDetails(Number(appid)).then((d) => setOpts(d ? d.strLaunchOptions || "" : null));
+    }, []);
+    useEffect(() => {
+        getGameProfiles().then((r) => { setInfo(r || {}); setProfiles((r && r.games) || {}); }).catch(() => setInfo({}));
+    }, []);
+    useEffect(() => { showOpts(pick); setCustomCores(false); setCoresText(null); setError(""); }, [pick]);
+
+    if (!info) return jsx(DFL.PanelSection, { children: note("Loading…") });
+    if (!info.available) return jsx(DFL.PanelSection, { children: note("This pb-os build has no game profiles (pbos-game-launch is missing).") });
+
+    const names = installedGames();
+    const running = runningGame();
+    const nameOf = (appid) => names.get(appid) || (profiles[appid] && profiles[appid].name) || `App ${appid}`;
+    const ids = [...new Set([...names.keys(), ...Object.keys(profiles)])]
+        .filter((id) => id !== running)
+        .sort((a, b) => nameOf(a).localeCompare(nameOf(b)));
+    const label = (id) => `${nameOf(id)}${profiles[id] ? " (profile)" : ""}`;
+    const gameChoices = [
+        ...(running ? [{ data: running, label: `Now playing: ${label(running)}` }] : []),
+        ...ids.map((id) => ({ data: id, label: label(id) })),
+    ];
+    const picker = jsx(DFL.PanelSection, { title: "Game", children: [
+        row(jsx(DFL.DropdownItem, {
+            label: "Game", strDefaultLabel: "Choose a game",
+            rgOptions: gameChoices, selectedOption: pick,
+            onChange: (o) => setPick(o.data),
+        })),
+        note("Settings for one game. They apply the next time it starts."),
+    ] });
+    if (!pick) return picker;
+
+    const p = profiles[pick] || {};
+    // Saves go out one at a time, in order; the reply is what was kept.
+    const commit = (appid, next) => {
+        queue.current = queue.current.then(() => setGameProfile(appid, next)).then(async (r) => {
+            if (!r || !r.ok) { setError(`Not saved: ${(r && r.error) || "unknown error"}`); return; }
+            setProfiles((all) => {
+                const out = { ...all };
+                if (r.profile) out[appid] = r.profile; else delete out[appid];
+                return out;
+            });
+            if (!(await setWrapper(appid, !!r.profile))) setError("Saved, but this game's launch options could not be changed. Try again.");
+            else setError("");
+            if (lastGame === appid) showOpts(appid);
+        }).catch(() => setError("Not saved."));
+    };
+    const save = (patch) => {
+        const next = { ...p, ...patch, name: nameOf(pick) };
+        for (const k of Object.keys(patch)) if (patch[k] === undefined) delete next[k];
+        setProfiles({ ...profiles, [pick]: next });
+        commit(pick, next);
+    };
+
+    // x86 emulation.
+    const doc = info.presets || {};
+    const presets = doc.presets || {};
+    const options = doc.options || [];
+    const fex = p.fex === "custom" || presets[p.fex] ? p.fex : "default";
+    const defaults = Object.fromEntries(options.map((o) => [o.key, o.default]));
+    const fexNow = fex === "custom" ? { ...defaults, ...(p.fexConfig || {}) } : { ...defaults, ...((presets[fex] || {}).config || {}) };
+    const fexItems = [
+        row(jsx(DFL.DropdownItem, {
+            label: "Preset",
+            description: fex === "custom" ? "Your own switches, below." : (presets[fex] || {}).description,
+            rgOptions: [...Object.entries(presets).map(([id, x]) => ({ data: id, label: x.label })), { data: "custom", label: "Custom" }],
+            selectedOption: fex,
+            onChange: (o) => save(o.data === "custom" ? { fex: "custom", fexConfig: fexNow } : { fex: o.data, fexConfig: undefined }),
+        })),
+    ];
+    if (fex === "custom") {
+        for (const o of options) {
+            fexItems.push(row(jsx(DFL.ToggleField, {
+                label: o.label, checked: fexNow[o.key] === "1",
+                onChange: (v) => save({ fex: "custom", fexConfig: { ...fexNow, [o.key]: v ? "1" : "0" } }),
+            })));
+        }
+    }
+    fexItems.push(note("For Windows and x86 Linux games. Native ARM games ignore it."));
+
+    // CPU cores.
+    const groups = info.cores || {};
+    const count = info.cpus || 8;
+    const cores = p.cores || "";
+    const isCustom = customCores || (cores !== "" && !(cores in groups));
+    const text = coresText !== null ? coresText : (isCustom ? cores : "");
+    const coresError = isCustom && text ? cpulistError(text, count) : "";
+    const cpuItems = [
+        row(jsx(DFL.DropdownItem, {
+            label: "Cores",
+            description: cores ? undefined : "Steam's choice: all cores.",
+            rgOptions: [
+                { data: "", label: "Default" },
+                ...CORE_CHOICES.filter((c) => groups[c.data]).map((c) => ({ data: c.data, label: `${c.label} (${groups[c.data]})` })),
+                { data: "custom", label: "Custom" },
+            ],
+            selectedOption: isCustom ? "custom" : cores,
+            onChange: (o) => {
+                if (o.data === "custom") { setCustomCores(true); return; }
+                setCustomCores(false);
+                setCoresText(null);
+                save({ cores: o.data || undefined, wineTopology: o.data ? p.wineTopology : undefined });
+            },
+        })),
+    ];
+    if (isCustom) {
+        cpuItems.push(row(jsx(DFL.TextField, {
+            label: `Core list (0-${count - 1}), like 4-7 or 2,3,7`,
+            value: text,
+            onChange: (e) => {
+                const t = e.target.value;
+                setCoresText(t);
+                // Only a valid list is saved.
+                if (!cpulistError(t, count)) save({ cores: t.replace(/\s/g, "") });
+            },
+        })));
+        if (coresError) cpuItems.push(warn(coresError));
+    }
+    if (cores) {
+        cpuItems.push(row(jsx(DFL.ToggleField, {
+            label: "Match Windows' Core Count",
+            description: "Windows games see only these cores (Wine's CPU topology).",
+            checked: p.wineTopology !== false,
+            onChange: (v) => save({ wineTopology: v ? undefined : false }),
+        })));
+    }
+
+    // Environment variables.
+    const env = p.env || {};
+    const envList = info.env || [];
+    const setEnv = (next) => save({ env: Object.keys(next).length ? next : undefined });
+    const openEnv = (key, fromList) => DFL.showModal(jsx(EnvModal, {
+        presets: envList,
+        name: key || "", value: key ? env[key] : "",
+        fromList: fromList || (!!key && envList.some((x) => x.name === key)),
+        onSave: (name, value) => {
+            const next = { ...env };
+            if (key && key !== name) delete next[key];
+            next[name] = value;
+            setEnv(next);
+        },
+        onDelete: key ? () => { const next = { ...env }; delete next[key]; setEnv(next); } : null,
+    }));
+    const envItems = Object.keys(env).sort().map((k) => row(jsx(DFL.ButtonItem, {
+        label: k, description: env[k] === "" ? "(empty)" : env[k],
+        onClick: () => openEnv(k, false), children: "Edit",
+    })));
+    envItems.push(
+        row(jsx(DFL.ButtonItem, { layout: "below", onClick: () => openEnv(null, true), children: "Add Common Variable" })),
+        row(jsx(DFL.ButtonItem, { layout: "below", onClick: () => openEnv(null, false), children: "Add Your Own Variable" })),
+    );
+
+    // The profile itself.
+    const has = !!profiles[pick];
+    const profileItems = [];
+    if (has && opts !== null && !opts.includes(GAME_LAUNCH)) {
+        profileItems.push(warn("pbos-game-launch is not in this game's launch options, so the profile does nothing. Change any setting to put it back."));
+    }
+    if (has && opts) profileItems.push(note(`Launch options: ${opts}`));
+    if (has) {
+        profileItems.push(row(jsx(DFL.ButtonItem, {
+            layout: "below",
+            onClick: () => DFL.showModal(jsx(DFL.ConfirmModal, {
+                strTitle: `Reset ${nameOf(pick)}?`,
+                strDescription: "Its profile is deleted and pbos-game-launch comes out of its launch options. Your own launch options stay.",
+                strOKButtonText: "Reset",
+                onOK: () => {
+                    setProfiles((all) => { const out = { ...all }; delete out[pick]; return out; });
+                    setCustomCores(false);
+                    setCoresText(null);
+                    commit(pick, null);
+                },
+            })),
+            children: "Reset Game",
+        })));
+    } else {
+        profileItems.push(note("No profile yet: this game starts as usual. Changing a setting makes one."));
+    }
+    if (error) profileItems.push(failure(error));
+
+    return jsxs(SP_JSX.Fragment, { children: [
+        picker,
+        jsx(DFL.PanelSection, { title: "x86 Emulation", children: fexItems }),
+        jsx(DFL.PanelSection, { title: "CPU", children: cpuItems }),
+        jsx(DFL.PanelSection, { title: "Environment", children: envItems }),
+        jsx(DFL.PanelSection, { title: "Profile", children: profileItems }),
+    ] });
+}
+
 // ---------------------------------------------------------------- panel ---
 function Content() {
     const [tab, setTab] = useState(lastTab);
@@ -1332,10 +1678,11 @@ function Content() {
         Promise.all([getCharging().catch(() => ({})), getChargeControl().catch(() => ({}))])
             .then(([rest, cc]) => setPower(!!rest.supported || !!cc.supported));
     }, []);
-    // Until it's known whether there are lights: Lighting comes first where
-    // there are, and the panel shouldn't open on Update and then jump.
+    // Until the device's tabs are known, so the tab bar doesn't jump.
     if (lights === null || power === null || face === null) return jsx(DFL.PanelSection, { children: note("Loading…") });
     const tabs = [
+        // Games first, on every device.
+        { id: "games", icon: GamesIcon },
         ...(lights ? [{ id: "lights", icon: LightsIcon }] : []),
         // pbosd's settings: KONKR Pocket FIT / AYANEO Pocket S2.
         ...(lights === "pbosd" ? [{ id: "performance", icon: PerformanceIcon }, { id: "hardware", icon: HardwareIcon }] : []),
@@ -1358,6 +1705,7 @@ function Content() {
         },
         children: [
             jsx(TabBar, { tabs, active: shown, onPick: pick }),
+            shown === "games" && jsx(GamesTab, {}),
             shown === "update" && jsx(UpdateTab, {}),
             shown === "install" && jsx(InstallTab, {}),
             shown === "lights" && jsx(LightsTab, {}),

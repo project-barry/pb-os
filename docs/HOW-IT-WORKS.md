@@ -72,6 +72,9 @@ konkr-game fastest %command%   # also TSO off — biggest CPU win, may crash MT 
 konkr-game compat %command%    # strict TSO / split locks for crashing games
 ```
 
+The same presets, without typing, on every device: PB-OS Tools → **Games**
+(below).
+
 ### Display
 
 - **60 / 90 / 120 / 144 Hz**: kernel patch `0003` makes the panel list all four
@@ -102,6 +105,30 @@ live temperature, fan and GPU clock; the **Hardware** tab has Steam Remap, the
 Custom Function / K actions and the MCU link toggle (until alpha v0.5.2 these
 were the PB-OS Control plugin). They replace the SM8550-Power and SM8550-LED
 plugins, which would fight `pbosd` over the fan and drive AYN-only LEDs.
+
+**PB-OS Tools → Games** (every device, the first tab): a profile per game,
+ported from Armada's per-game compatibility settings. Pick a game (the one
+running comes first), then set any of:
+
+- **x86 Emulation**: a FEX preset (Default = FEX's own settings; Fast,
+  Fastest and Compatible match `konkr-game`'s fast / fastest / compat) or
+  Custom, with the FEX switches one by one.
+- **CPU**: the cores the game runs on (all, big + prime, big, little, or a
+  list like `4-7`), read from the device's cpufreq clusters, and whether
+  Windows games see only those cores (Wine's CPU topology).
+- **Environment**: variables from a list of common ones (frame caps, Zink,
+  V-sync mode, WineD3D, WOW64, VKD3D feature level and shader model) or your
+  own.
+
+Settings live in `~/.config/pb-os/game-profiles.json`. The first setting puts
+`/usr/bin/pbos-game-launch --appid=<id> %command%` in front of the game's
+launch options (your own options stay); **Reset Game** deletes the profile
+and takes it out again. Games without a profile are never touched. At
+launch the wrapper writes the FEX settings to `~/.cache/pbos-fex/<id>.json`
+(`FEX_APP_CONFIG`, plus the same `FEX_*` variables), sets the CPU affinity and
+`WINE_CPU_TOPOLOGY` / `PROTON_CPU_TOPOLOGY`, then the variables, and starts the
+game; anything that fails goes to the game's log and is skipped. Changes
+apply the next time the game starts.
 
 **PB-OS Tools** (every device): tabs for pb-os updates, moving SteamOS
 between the microSD card and internal storage, and the stick lights (here
