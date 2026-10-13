@@ -1238,6 +1238,8 @@ if [[ ! -f "$R/usr/lib/qt6/plugins/plasma/kcms/systemsettings_qwidgets/kcm_netwo
     || die "plasma-nm 6.2.5 is required (Network Manager)"
 fi
 if [[ ! -x "$R/usr/bin/plasma-keyboard" ]]; then
+  # Optional Desktop Mode touch keyboard (Settings > Virtual Keyboard); not
+  # the default, see install-vendor-apps.sh. The Thor's Barry switch uses it.
   log "== plasma-keyboard 0.1.0 (desktop touch keyboard)"
   "${SCRIPT_DIR}/build-plasma-keyboard.sh" "$R" \
     || die "plasma-keyboard is required (Desktop Mode touch keyboard)"

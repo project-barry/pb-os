@@ -3,7 +3,9 @@
 # Wayland input-method-v1) inside the Frame rootfs via bubblewrap so it
 # matches its Qt/glibc. Plasma had no touch keyboard: only Steam's (Steam+X),
 # which needs the Steam Deck controller layout. KWin shows this one when a
-# text field is tapped once it's the Wayland virtual keyboard (kwinrc).
+# text field is tapped once it's the Wayland virtual keyboard (kwinrc); the
+# image does not make it that by default (the Steam Deck has none either),
+# it is a choice in Settings > Virtual Keyboard and the Thor's Barry fallback.
 # Later releases need KF6 >= 6.22; the Frame has 6.14. Maliit is Qt5-only.
 set -euo pipefail
 

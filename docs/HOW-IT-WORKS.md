@@ -276,8 +276,11 @@ Output: `/work/steamos-sm8650.img`.
 - SSH is off by default, like on the Steam Deck. After `passwd` and
   `sudo systemctl enable --now sshd` it allows password login for `steamos`
   (root off).
-- Desktop mode: the Steam keyboard works in Wayland apps, Discover gets the
-  Flathub catalog, and KWin/plasmashell get the big-core boost too.
+- Desktop mode: the Steam keyboard (Steam+X) works in Wayland apps, Discover
+  gets the Flathub catalog, and KWin/plasmashell get the big-core boost too.
+  Like the Steam Deck, no KDE on-screen keyboard is set up; plasma-keyboard
+  is installed as a choice in Settings > Virtual Keyboard (as the default it
+  kept the Nova's launcher menu flashing). The Thor uses Barry's keyboard.
 - Steam gets the refresh rate and overlay settings from a file now, the old
   import raced Steam's startup and lost.
 
