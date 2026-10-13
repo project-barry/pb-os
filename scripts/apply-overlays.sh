@@ -242,6 +242,11 @@ install_file "$OVL/usr/lib/systemd/user/steam.service.d/99-sm8550-bootstrap.conf
 # Session vars (refresh slider, mangoapp) via a file: onready's import races Steam.
 install_file "$OVL/usr/lib/systemd/user/steam.service.d/60-gamescope-env.conf" \
   "$R/usr/lib/systemd/user/steam.service.d/60-gamescope-env.conf" 0644
+# Default non-Steam games (vkcube) for each signed-in account, before Steam starts.
+install_file "$OVL/usr/lib/steamos/pbos-default-shortcuts" \
+  "$R/usr/lib/steamos/pbos-default-shortcuts" 0755
+install_file "$OVL/usr/lib/systemd/user/steam.service.d/80-pbos-default-shortcuts.conf" \
+  "$R/usr/lib/systemd/user/steam.service.d/80-pbos-default-shortcuts.conf" 0644
 backup "$R/usr/bin/start-gamescope-session" "$STOCK/usr/bin/start-gamescope-session"
 install_file "$OVL/usr/bin/start-gamescope-session" \
   "$R/usr/bin/start-gamescope-session" 0755

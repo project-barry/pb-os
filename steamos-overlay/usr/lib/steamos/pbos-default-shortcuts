@@ -1,0 +1,157 @@
+#!/usr/bin/env python3
+"""pbos-default-shortcuts — non-Steam games every PB-OS account starts with.
+
+Runs before each Steam start (steam.service ExecStartPre), while Steam is
+closed: Steam reads shortcuts.vdf once at start and writes it back whole, so
+an entry added while it runs would be lost. An account gets each title once;
+one the user removes stays removed. A fresh install signs in after this has
+run, so its titles appear from the next Steam start on.
+"""
+
+import os
+import struct
+import subprocess
+import sys
+import zlib
+
+HOME = os.path.expanduser("~")
+USERDATA = os.path.join(HOME, ".local/share/Steam/userdata")
+STATE = os.path.join(HOME, ".local/state/pb-os/default-shortcuts")
+
+# AppName, executable. vkcube: Vulkan check that runs on every device.
+TITLES = [
+    ("vkcube", "/usr/bin/vkcube"),
+]
+
+
+def read_cstr(data, i):
+    end = data.index(b"\0", i)
+    return data[i:end].decode("utf-8", "surrogateescape"), end + 1
+
+
+def parse(data, i=0):
+    """Binary VDF → (list of (key, type, value), next offset)."""
+    out = []
+    while True:
+        kind = data[i]
+        i += 1
+        if kind == 0x08:
+            return out, i
+        key, i = read_cstr(data, i)
+        if kind == 0x00:
+            val, i = parse(data, i)
+        elif kind == 0x01:
+            val, i = read_cstr(data, i)
+        elif kind == 0x02:
+            val = data[i:i + 4]
+            i += 4
+        elif kind == 0x07:
+            val = data[i:i + 8]
+            i += 8
+        else:
+            raise ValueError(f"VDF type 0x{kind:02x} at {i - 1}")
+        out.append((key, kind, val))
+
+
+def emit(items):
+    out = bytearray()
+    for key, kind, val in items:
+        out += bytes([kind]) + key.encode("utf-8", "surrogateescape") + b"\0"
+        if kind == 0x00:
+            out += emit(val)
+        elif kind == 0x01:
+            out += val.encode("utf-8", "surrogateescape") + b"\0"
+        else:
+            out += val
+    return bytes(out + b"\x08")
+
+
+def i32(n):
+    return struct.pack("<I", n & 0xFFFFFFFF)
+
+
+def entry(index, name, exe):
+    start = os.path.dirname(exe) + "/"
+    s = lambda k, v: (k, 0x01, v)
+    n = lambda k, v: (k, 0x02, i32(v))
+    return (str(index), 0x00, [
+        n("appid", zlib.crc32(f'"{exe}"{name}'.encode()) | 0x80000000),
+        s("AppName", name), s("Exe", f'"{exe}"'), s("StartDir", start),
+        s("icon", ""), s("ShortcutPath", ""), s("LaunchOptions", ""),
+        n("IsHidden", 0), n("AllowDesktopConfig", 1), n("AllowOverlay", 1),
+        n("OpenVR", 0), n("Devkit", 0), s("DevkitGameID", ""),
+        n("DevkitOverrideAppID", 0), n("LastPlayTime", 0), s("FlatpakAppID", ""),
+        s("sortas", ""), ("tags", 0x00, []),
+    ])
+
+
+def field(item, key):
+    return next((v for k, _, v in item[2] if k == key), "")
+
+
+def sync_account(account):
+    config = os.path.join(USERDATA, account, "config")
+    # localconfig.vdf: the account has signed in on this device.
+    if not os.path.isfile(os.path.join(config, "localconfig.vdf")):
+        return
+    state = os.path.join(STATE, account)
+    try:
+        with open(state) as f:
+            done = set(f.read().split("\n"))
+    except FileNotFoundError:
+        done = set()
+    todo = [t for t in TITLES if t[0] not in done and os.path.exists(t[1])]
+    if not todo:
+        return
+
+    path = os.path.join(config, "shortcuts.vdf")
+    try:
+        with open(path, "rb") as f:
+            root, _ = parse(f.read())
+    except FileNotFoundError:
+        root = []
+    if not root:
+        root = [("shortcuts", 0x00, [])]
+    if root[0][0].lower() != "shortcuts" or root[0][1] != 0x00:
+        raise ValueError(f"{path}: no shortcuts list")
+    shortcuts = root[0][2]
+
+    have = {field(e, "Exe").strip('"') for e in shortcuts if e[1] == 0x00}
+    index = max((int(e[0]) for e in shortcuts if e[0].isdigit()), default=-1) + 1
+    added = []
+    for name, exe in todo:
+        if exe not in have:
+            shortcuts.append(entry(index, name, exe))
+            index += 1
+        added.append(name)
+
+    tmp = path + ".pbos-tmp"
+    with open(tmp, "wb") as f:
+        f.write(emit(root))
+    os.replace(tmp, path)
+    os.makedirs(STATE, exist_ok=True)
+    with open(state, "a") as f:
+        f.write("".join(n + "\n" for n in added))
+    print(f"account {account}: {', '.join(added)}")
+
+
+def main():
+    # ExecStartPre runs before Steam, but a Steam started by hand (Desktop
+    # Mode) could still be up: never write under a running Steam.
+    if subprocess.run(["pgrep", "-u", str(os.getuid()), "-x", "steam"],
+                      stdout=subprocess.DEVNULL).returncode == 0:
+        return 0
+    try:
+        accounts = [a for a in os.listdir(USERDATA) if a.isdigit() and a != "0"]
+    except FileNotFoundError:
+        return 0
+    for account in accounts:
+        try:
+            sync_account(account)
+        except (OSError, ValueError, IndexError) as e:
+            print(f"account {account}: {e}", file=sys.stderr)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
