@@ -82,7 +82,8 @@ Sticks    (Hardware tab on the Retroid Pocket 6 / Nova and AYN Thor; was the
 
 Desktop  (Hardware tab on the AYN Thor): Barry Launcher on the bottom
          screen in Desktop Mode, or off, which makes the bottom screen a
-         plain desktop screen (the taskbar, Plasma's keyboard). Game Mode
+         plain desktop screen (the taskbar; Steam+X is the keyboard, like
+         on the Steam Deck). Game Mode
          keeps Barry. /usr/lib/barry_launcher/barry_launcher_desktop_switch
          keeps the setting and applies it; Desktop Mode has the same switch
          as "Barry Launcher On/Off" in its applications menu.
