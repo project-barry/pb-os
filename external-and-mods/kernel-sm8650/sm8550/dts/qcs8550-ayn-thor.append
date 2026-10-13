@@ -1,0 +1,10 @@
+
+/*
+ * The body vibration motor is an LRA, driven like stock Android does it
+ * (AYN's Thor DT: no ERM mode, 1300 mV). AYN-common's ERM setup at 5000 mV
+ * drives it with plain DC, so rumble was a single click instead of a buzz.
+ */
+&pm8550b_hv_haptics {
+	/delete-property/ qcom,use-erm;
+	qcom,vmax-mv = <1300>;
+};
