@@ -518,7 +518,7 @@ def charge_preview() -> bool:
     return r.returncode == 0
 
 
-# Charge limit and bypass charging (Power tab, Retroid Pocket 6 / Nova):
+# Charge limit, bypass and slow charging (Power tab, Retroid Pocket 6 / Nova, AYN Thor, KONKR Pocket FIT):
 # sm8550-charge-control owns its settings and applies them.
 CHARGE_CONTROL = "/usr/lib/steamos-sm8550/sm8550-charge-control"
 

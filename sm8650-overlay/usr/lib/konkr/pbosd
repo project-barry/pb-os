@@ -595,10 +595,10 @@ class Leds:
             wr(f"{self.power}/brightness", 0)
             return
         cap, status = battery()
-        if status == "Charging":
-            led_rgb(self.power, (255, 120, 0), 40)
-        elif status == "Full" or (status == "Not charging" and cap >= 99):
+        if status == "Full" or (status == "Not charging" and cap >= 99) or charge_held():
             led_rgb(self.power, (0, 255, 0), 30)
+        elif status == "Charging":
+            led_rgb(self.power, (255, 120, 0), 40)
         elif 0 <= cap < 15:
             self.pulse = not self.pulse
             led_rgb(self.power, (255, 0, 0), 60 if self.pulse else 0)
@@ -635,10 +635,18 @@ STANDBY_FLAG = "/run/konkr-standby"
 # sm8550-charge-rest (sleep on the charger, Pocket FIT too) holds its PID
 # here while it rests or watches deep sleep: it owns the power key then.
 CHARGE_REST_FLAG = "/run/sm8550-charge-rest"
+# sm8550-charge-control holds its PID here while it keeps the battery below
+# full on purpose (charge limit): the power LED shows "charged" then.
+CHARGE_HELD_FLAG = "/run/sm8550-charge-held"
 
 
 def charge_resting() -> bool:
     pid = rd(CHARGE_REST_FLAG)
+    return pid.isdigit() and os.path.exists(f"/proc/{pid}")
+
+
+def charge_held() -> bool:
+    pid = rd(CHARGE_HELD_FLAG)
     return pid.isdigit() and os.path.exists(f"/proc/{pid}")
 
 

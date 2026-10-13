@@ -1,37 +1,53 @@
 #!/usr/bin/env python3
-"""sm8550-charge-control — charge limit and bypass charging on the Retroid
-Pocket 6 and Nova.
+"""sm8550-charge-control — charge limit, bypass charging and slow charging on
+the Retroid Pocket 6, Nova, AYN Thor and KONKR Pocket FIT.
 
-Retroid's battery firmware (on its own ADSP, see sm8550/firmware/.../rp6 and
-.../rpnova) has two OEM switches, which kernel patch 0545 exposes on the
-battery manager device:
+Two ways to hold the battery below full, picked by what the kernel offers:
 
-  retroid_charge_now      0 = run from USB power and leave the battery
-                          alone ("charge separation", bypass), 1 = charge
-  retroid_limit_capacity  1 = the firmware stops charging at 80 %
+  OEM switches (Retroid Pocket 6, Nova, AYN Thor): their battery firmware
+  (the devices' own ADSP builds) has two switches that Retroid's and AYN's
+  Android driver calls usb_charge_now and limit_capacity_charge; kernel
+  patch 0545 exposes them on the battery manager device as
+    retroid_charge_now      0 = run from USB power and leave the battery
+                            alone ("charge separation", bypass), 1 = charge
+    retroid_limit_capacity  1 = the firmware stops charging at 80 %
 
-The firmware doesn't keep them across a reboot, and it may drop them when
-the charger is plugged in again or the ADSP restarts, so this daemon holds
-the chosen mode (MODES) and writes it again at start, after a wake and on
-every charger plug-in. Modes:
+  Charge thresholds (KONKR Pocket FIT): the standard power-supply pair
+  charge_control_start_threshold / charge_control_end_threshold, which its
+  firmware enforces itself (it ships with 70 / 80: the Pocket FIT stops at
+  80 % out of the box). The firmware keeps them across reboots.
+
+Slow charging (every device, kernel patch 0549 / 0022): the battery's
+constant_charge_current_max is the firmware's fast-charge current limit,
+what Android's "restricted charging" writes (1 A by default). A large value
+gives full speed back (the kernel cuts it to the firmware's ceiling).
+
+The firmware may drop the OEM switches and the current limit when the
+charger is plugged in again, after a sleep or when the ADSP restarts, so
+this daemon holds the chosen settings (SETTINGS) and writes them again at
+start, after a wake and on every plug-in. Modes:
 
   normal   charge to 100 %
   limit80  the firmware's 80 % limit
-  hold     charge to HOLD_AT %, then run from USB (Retroid's automatic charge
-           separation); charges again once it drops HOLD_GAP below
-  bypass   always run from USB; it still charges below BYPASS_FLOOR (until
-           BYPASS_FLOOR + HOLD_GAP), so a charger too weak to run the device
-           can't drain it flat while plugged in
+  hold     charge to HOLD_AT %, then stop; charges again once it drops
+           HOLD_GAP below (OEM: Retroid's automatic charge separation;
+           thresholds: end = HOLD_AT, start = HOLD_AT - HOLD_GAP)
+  bypass   (OEM only) always run from USB; it still charges below
+           BYPASS_FLOOR (until BYPASS_FLOOR + HOLD_GAP), so a charger too
+           weak to run the device can't drain it flat while plugged in
 
 While the battery is held on purpose, HELD (holding this process's PID)
-tells sm8550-charge-rest's charging indicator to show "charged".
+tells sm8550-charge-rest's charging indicator and pbosd's power LED to
+show "charged".
 
-On stop both switches go back to the firmware's defaults (charging, no
-limit), so an update or a crash never leaves the device unable to charge.
+On stop the OEM switches go back to the firmware's defaults (charging, no
+limit) and the current limit to full speed, so an update or a crash never
+leaves the device unable to charge. The thresholds are left as they are
+(the firmware keeps them anyway, and they never stop charging below 55 %).
 
-For PB-OS Utils' Power tab: `settings` prints the settings, the ranges and
-the live state as JSON; `save JSON` stores changes (merged, held to the
-ranges) and tells the running daemon.
+For PB-OS Tools' Power tab: `settings` prints the settings, what this
+device supports, the ranges and the live state as JSON; `save JSON` stores
+changes (merged, held to the ranges) and tells the running daemon.
 """
 from __future__ import annotations
 
@@ -43,14 +59,22 @@ import subprocess
 import sys
 import time
 
-STATE = "/var/lib/pbos-utils/charge-control.json"
-HELD = "/run/sm8550-charge-held"
-BATTMGR = "/sys/bus/auxiliary/devices/pmic_glink.power-supply.*"
-BATTERY = "/sys/class/power_supply/battery"
-USB = "/sys/class/power_supply/qcom-battmgr-usb"
+# A prefix for every /sys and /run path, for tests on a fake tree.
+ROOT = os.environ.get("SM8550_CHARGE_CONTROL_ROOT", "")
+STATE = ROOT + "/var/lib/pbos-utils/charge-control.json"
+HELD = ROOT + "/run/sm8550-charge-held"
+BATTMGR = ROOT + "/sys/bus/auxiliary/devices/pmic_glink.power-supply.*"
+BATTERY = ROOT + "/sys/class/power_supply/battery"
+USB = ROOT + "/sys/class/power_supply/qcom-battmgr-usb"
+START_THR = f"{BATTERY}/charge_control_start_threshold"
+END_THR = f"{BATTERY}/charge_control_end_threshold"
+CURRENT_MAX = f"{BATTERY}/constant_charge_current_max"
 MODES = ("normal", "limit80", "hold", "bypass")
-DEFAULTS = {"mode": "normal", "hold_at": 80}
+DEFAULTS = {"mode": "normal", "hold_at": 80, "slow": False, "slow_ma": 1000}
 HOLD_RANGE = (50, 95)
+THR_HOLD_RANGE = (55, 95)        # the kernel clamps the end threshold to 55..100
+SLOW_RANGE = (500, 3000)         # mA; the kernel cuts it to the firmware's ceiling
+FULL_UA = 10_000_000             # "no limit": cut to the firmware's ceiling
 HOLD_GAP = 3
 BYPASS_FLOOR = 15
 LIMIT = 80
@@ -70,6 +94,14 @@ def rd(p: str, d: str = "") -> str:
         return d
 
 
+def rd_int(p: str) -> int | None:
+    v = rd(p)
+    try:
+        return int(v)
+    except ValueError:
+        return None
+
+
 def wr(p: str, v) -> bool:
     try:
         with open(p, "w", encoding="utf-8") as fh:
@@ -81,49 +113,109 @@ def wr(p: str, v) -> bool:
 
 
 def battmgr() -> str | None:
+    """The battery manager device with the OEM switches (patch 0545)."""
     for d in sorted(glob.glob(BATTMGR)):
         if os.path.exists(f"{d}/retroid_charge_now"):
             return d
     return None
 
 
+def has_thresholds() -> bool:
+    return os.access(END_THR, os.W_OK) and os.access(START_THR, os.W_OK)
+
+
+def has_current_limit() -> bool:
+    return os.access(CURRENT_MAX, os.W_OK)
+
+
+def backend() -> str | None:
+    if battmgr():
+        return "oem"
+    if has_thresholds():
+        return "thresholds"
+    return None
+
+
+def features(kind: str | None) -> dict:
+    return {"limit80": kind is not None, "hold": kind is not None,
+            "bypass": kind == "oem", "slow": has_current_limit()}
+
+
+def hold_range(kind: str | None) -> tuple[int, int]:
+    return THR_HOLD_RANGE if kind == "thresholds" else HOLD_RANGE
+
+
 # ------------------------------------------------------------- settings --
-def settings() -> dict:
+def clamp(v, lo: int, hi: int, default: int) -> int:
+    try:
+        return max(lo, min(hi, int(v)))
+    except (TypeError, ValueError):
+        return default
+
+
+def settings(kind: str | None = None) -> dict:
+    kind = kind if kind is not None else backend()
     try:
         with open(STATE, encoding="utf-8") as fh:
-            s = {**DEFAULTS, **json.load(fh)}
+            raw = json.load(fh)
+        raw = raw if isinstance(raw, dict) else {}
     except (OSError, ValueError):
-        s = dict(DEFAULTS)
-    if s.get("mode") not in MODES:
+        raw = {}
+    s = {**DEFAULTS, **{k: v for k, v in raw.items() if k in DEFAULTS}}
+    if "mode" not in raw and kind == "thresholds":
+        # First run on a thresholds device: keep what its firmware does now
+        # (the Pocket FIT ships stopping at 80 %).
+        s["mode"] = firmware_mode(s)
+    if s["mode"] not in MODES or (s["mode"] == "bypass" and kind != "oem"):
         s["mode"] = DEFAULTS["mode"]
-    try:
-        s["hold_at"] = max(HOLD_RANGE[0], min(HOLD_RANGE[1], int(s["hold_at"])))
-    except (TypeError, ValueError):
-        s["hold_at"] = DEFAULTS["hold_at"]
+    lo, hi = hold_range(kind)
+    s["hold_at"] = clamp(s["hold_at"], lo, hi, DEFAULTS["hold_at"])
+    s["slow"] = bool(s["slow"])
+    s["slow_ma"] = clamp(s["slow_ma"], SLOW_RANGE[0], SLOW_RANGE[1], DEFAULTS["slow_ma"])
     return {k: s[k] for k in DEFAULTS}
 
 
+def firmware_mode(s: dict) -> str:
+    """The mode that matches the thresholds the firmware holds right now."""
+    end = rd_int(END_THR)
+    if end is None or end >= 100:
+        return "normal"
+    if end == LIMIT:
+        return "limit80"
+    lo, hi = THR_HOLD_RANGE
+    s["hold_at"] = max(lo, min(hi, end))
+    return "hold"
+
+
 def save(changes: dict) -> dict:
-    s = {**settings(), **{k: v for k, v in changes.items() if k in DEFAULTS}}
+    kind = backend()
+    s = {**settings(kind), **{k: v for k, v in changes.items() if k in DEFAULTS}}
+    _write_state(s)
+    s = settings(kind)
+    _write_state(s)
+    try:
+        subprocess.run(["systemctl", "kill", "--signal=HUP", "sm8550-charge-control.service"],
+                       capture_output=True)
+    except OSError:
+        pass
+    return s
+
+
+def _write_state(s: dict) -> None:
     os.makedirs(os.path.dirname(STATE), exist_ok=True)
     with open(STATE + ".tmp", "w", encoding="utf-8") as fh:
         json.dump(s, fh, indent=2)
     os.replace(STATE + ".tmp", STATE)
-    s = settings()
-    with open(STATE + ".tmp", "w", encoding="utf-8") as fh:
-        json.dump(s, fh, indent=2)
-    os.replace(STATE + ".tmp", STATE)
-    subprocess.run(["systemctl", "kill", "--signal=HUP", "sm8550-charge-control.service"],
-                   capture_output=True)
-    return s
 
 
 def live() -> dict:
     cap = rd(f"{BATTERY}/capacity")
+    ma = rd_int(CURRENT_MAX) if has_current_limit() else None
     return {"capacity": int(cap) if cap.isdigit() else None,
             "status": rd(f"{BATTERY}/status"),
             "plugged": rd(f"{USB}/online") == "1",
-            "held": held_by_us()}
+            "held": held_by_us(),
+            "charge_current_ma": ma // 1000 if ma else None}
 
 
 def held_by_us() -> bool:
@@ -132,30 +224,31 @@ def held_by_us() -> bool:
 
 
 def report(s: dict) -> dict:
-    return {"supported": battmgr() is not None, "settings": s,
-            "limits": {"hold_at": list(HOLD_RANGE), "limit": LIMIT, "bypass_floor": BYPASS_FLOOR,
-                       "defaults": DEFAULTS},
+    kind = backend()
+    return {"supported": kind is not None, "backend": kind, "features": features(kind),
+            "settings": s,
+            "limits": {"hold_at": list(hold_range(kind)), "limit": LIMIT, "bypass_floor": BYPASS_FLOOR,
+                       "slow_ma": list(SLOW_RANGE), "defaults": DEFAULTS},
             "state": live()}
 
 
-# --------------------------------------------------------------- daemon --
-def _stop(*_) -> None:
-    raise SystemExit(0)
+# -------------------------------------------------------------- backends --
+class Oem:
+    """retroid_charge_now / retroid_limit_capacity (patch 0545)."""
+    name = "oem"
 
-
-class Daemon:
     def __init__(self, dev: str):
         self.dev = dev
-        self.s = settings()
         self.charge = None       # last values written (None = write again)
         self.limit = None
-        self.plugged = None
         self.wanted_charge = 1   # hysteresis memory for hold/bypass
-        self.reload = False
 
-    def want(self, cap: int | None) -> tuple[int, int]:
+    def reset(self) -> None:
+        self.wanted_charge = 1
+
+    def want(self, s: dict, cap: int | None) -> tuple[int, int]:
         """(charge_now, limit_capacity) for the mode and battery level."""
-        mode = self.s["mode"]
+        mode = s["mode"]
         if mode == "normal":
             return 1, 0
         if mode == "limit80":
@@ -163,7 +256,7 @@ class Daemon:
         if cap is None:
             return 1, 0
         if mode == "hold":
-            stop, resume = self.s["hold_at"], self.s["hold_at"] - HOLD_GAP
+            stop, resume = s["hold_at"], s["hold_at"] - HOLD_GAP
             if cap >= stop:
                 self.wanted_charge = 0
             elif cap <= resume:
@@ -175,14 +268,9 @@ class Daemon:
                 self.wanted_charge = 0
         return self.wanted_charge, 0
 
-    def apply(self, force: bool) -> None:
-        cap_s = rd(f"{BATTERY}/capacity")
-        cap = int(cap_s) if cap_s.isdigit() else None
-        plugged = rd(f"{USB}/online") == "1"
-        if plugged and not self.plugged:
-            force = True         # firmware may have dropped the switches
-        self.plugged = plugged
-        charge, limit = self.want(cap)
+    def apply(self, s: dict, cap: int | None, plugged: bool, force: bool) -> bool:
+        """Returns whether the battery is held below full on purpose."""
+        charge, limit = self.want(s, cap)
         if force or limit != self.limit:
             if wr(f"{self.dev}/retroid_limit_capacity", limit):
                 if limit != self.limit:
@@ -193,8 +281,107 @@ class Daemon:
                 if charge != self.charge:
                     log(f"{'charging allowed' if charge else 'running from USB'} at {cap} %")
                 self.charge = charge
-        held = plugged and cap is not None and (
+        return plugged and cap is not None and (
             charge == 0 or (limit == 1 and cap >= LIMIT - 1))
+
+    def restore(self) -> None:
+        wr(f"{self.dev}/retroid_limit_capacity", 0)
+        wr(f"{self.dev}/retroid_charge_now", 1)
+
+
+class Thresholds:
+    """charge_control_start/end_threshold, enforced by the firmware."""
+    name = "thresholds"
+
+    def __init__(self):
+        self.end = None          # last end threshold written
+
+    def reset(self) -> None:
+        pass
+
+    @staticmethod
+    def want(s: dict) -> tuple[int, int]:
+        """(start, end) for the mode."""
+        mode = s["mode"]
+        if mode == "limit80":
+            return 70, LIMIT     # what the Pocket FIT's firmware ships with
+        if mode == "hold":
+            end = max(THR_HOLD_RANGE[0], min(THR_HOLD_RANGE[1], s["hold_at"]))
+            return end - HOLD_GAP, end
+        return 95, 100
+
+    def apply(self, s: dict, cap: int | None, plugged: bool, force: bool) -> bool:
+        start, end = self.want(s)
+        if force or end != self.end or rd_int(END_THR) != end or rd_int(START_THR) != start:
+            # End first: the kernel moves the end up when a start is written
+            # above it, and moves the start down when the end is written
+            # below it, so this order lands on (start, end) either way.
+            if wr(END_THR, end) and wr(START_THR, start):
+                got = (rd_int(START_THR), rd_int(END_THR))
+                if end != self.end:
+                    log(f"charge thresholds {start}/{end} % (firmware: {got[0]}/{got[1]})")
+                self.end = end
+        # Held: at the end threshold, or in the firmware's window below it
+        # (it lets the battery drop to the start threshold before charging).
+        status = rd(f"{BATTERY}/status")
+        return plugged and end < 100 and cap is not None and (
+            cap >= end - 1 or (status != "Charging" and cap >= start))
+
+    def restore(self) -> None:
+        pass
+
+
+class CurrentLimit:
+    """constant_charge_current_max: slow charging (patch 0549 / 0022)."""
+
+    def __init__(self):
+        self.ua = None           # last value written (None = write again)
+
+    def apply(self, s: dict, force: bool) -> None:
+        ua = s["slow_ma"] * 1000 if s["slow"] else FULL_UA
+        if force or ua != self.ua:
+            if wr(CURRENT_MAX, ua):
+                got = rd_int(CURRENT_MAX)
+                if ua != self.ua:
+                    if s["slow"]:
+                        log(f"slow charging: {s['slow_ma']} mA" + (f" (firmware: {got // 1000} mA)" if got else ""))
+                    else:
+                        log("full-speed charging" + (f" (firmware: {got // 1000} mA)" if got else ""))
+                self.ua = ua
+
+    def restore(self) -> None:
+        wr(CURRENT_MAX, FULL_UA)
+
+
+# --------------------------------------------------------------- daemon --
+def _stop(*_) -> None:
+    raise SystemExit(0)
+
+
+class Daemon:
+    def __init__(self, control, current: CurrentLimit | None):
+        self.control = control
+        self.current = current
+        self.s = settings(control.name)
+        self.plugged = None
+        self.reload = False
+
+    def describe(self) -> str:
+        s = self.s
+        out = f"mode {s['mode']}" + (f" at {s['hold_at']} %" if s["mode"] == "hold" else "")
+        if self.current:
+            out += f", slow charging {s['slow_ma']} mA" if s["slow"] else ", full-speed charging"
+        return out
+
+    def apply(self, force: bool) -> None:
+        cap = rd_int(f"{BATTERY}/capacity")
+        plugged = rd(f"{USB}/online") == "1"
+        if plugged and not self.plugged:
+            force = True         # firmware may have dropped the switches
+        self.plugged = plugged
+        held = self.control.apply(self.s, cap, plugged, force)
+        if self.current:
+            self.current.apply(self.s, force)
         if held:
             if not held_by_us():
                 wr(HELD, os.getpid())
@@ -205,8 +392,9 @@ class Daemon:
                 pass
 
     def restore(self) -> None:
-        wr(f"{self.dev}/retroid_limit_capacity", 0)
-        wr(f"{self.dev}/retroid_charge_now", 1)
+        self.control.restore()
+        if self.current:
+            self.current.restore()
         try:
             os.remove(HELD)
         except OSError:
@@ -215,16 +403,16 @@ class Daemon:
     def run(self) -> int:
         signal.signal(signal.SIGHUP, lambda *_: setattr(self, "reload", True))
         signal.signal(signal.SIGTERM, _stop)
-        log(f"mode {self.s['mode']}" + (f" at {self.s['hold_at']} %" if self.s["mode"] == "hold" else ""))
+        log(f"{self.control.name}: {self.describe()}")
         gap = time.clock_gettime(time.CLOCK_BOOTTIME) - time.monotonic()
         force = True
         try:
             while True:
                 if self.reload:
                     self.reload = False
-                    self.s = settings()
-                    self.wanted_charge = 1
-                    log(f"mode {self.s['mode']}" + (f" at {self.s['hold_at']} %" if self.s["mode"] == "hold" else ""))
+                    self.s = settings(self.control.name)
+                    self.control.reset()
+                    log(self.describe())
                     force = True
                 # BOOTTIME runs on through suspend, MONOTONIC doesn't: a
                 # growing gap means the device slept since the last tick.
@@ -260,16 +448,23 @@ def main() -> int:
     if cmd:
         print("usage: sm8550-charge-control [settings | save JSON]", file=sys.stderr)
         return 2
-    dev = None
+    control = None
     for _ in range(WAIT_S):
         dev = battmgr()
         if dev:
+            control = Oem(dev)
+            break
+        if has_thresholds():
+            control = Thresholds()
             break
         time.sleep(1)
-    if not dev:
-        log("no Retroid charge controls (kernel patch 0545 / Retroid firmware): nothing to do")
+    if control is None:
+        log("no charge controls (kernel patch 0545 with Retroid or Thor firmware, or charge thresholds): nothing to do")
         return 0
-    return Daemon(dev).run()
+    current = CurrentLimit() if has_current_limit() else None
+    if current is None:
+        log("no charge current limit (kernel patch 0549 / 0022): no slow charging")
+    return Daemon(control, current).run()
 
 
 if __name__ == "__main__":

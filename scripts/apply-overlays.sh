@@ -858,8 +858,6 @@ else
     "$R/usr/lib/systemd/system/multi-user.target.wants/sm8550-powerbuttond.service" \
     "$R/usr/lib/systemd/system/sm8550-fand.service" \
     "$R/usr/lib/systemd/system/multi-user.target.wants/sm8550-fand.service" \
-    "$R/usr/lib/systemd/system/sm8550-charge-control.service" \
-    "$R/usr/lib/systemd/system/multi-user.target.wants/sm8550-charge-control.service" \
     "$R/usr/lib/steamos-sm8550/sm8550-stickcal" \
     "$R/usr/lib/systemd/system/sm8550-stickcal.service" \
     "$R/usr/lib/systemd/system/multi-user.target.wants/sm8550-stickcal.service" \
@@ -882,6 +880,15 @@ else
     "$R/usr/lib/steamos-sm8550/sm8550-charge-rest" 0755
   install_file "$SM8550_OVL/usr/lib/systemd/system/systemd-suspend.service.d/20-sm8550-charge-rest.conf" \
     "$R/usr/lib/systemd/system/systemd-suspend.service.d/20-sm8550-charge-rest.conf" 0644
+  # KONKR Pocket FIT: charge limit (its firmware's thresholds) and slow
+  # charging; the unit's ExecCondition keeps it to the Pocket FIT.
+  install_file "$SM8550_OVL/usr/lib/steamos-sm8550/sm8550-charge-control" \
+    "$R/usr/lib/steamos-sm8550/sm8550-charge-control" 0755
+  install_file "$SM8550_OVL/usr/lib/systemd/system/sm8550-charge-control.service" \
+    "$R/usr/lib/systemd/system/sm8550-charge-control.service" 0644
+  mkdir -p "$R/usr/lib/systemd/system/multi-user.target.wants"
+  ln -sfn ../sm8550-charge-control.service \
+    "$R/usr/lib/systemd/system/multi-user.target.wants/sm8550-charge-control.service"
 fi
 
 # CPU, GPU and memory tuning shared by SM8550 and SM8650 (measured on the

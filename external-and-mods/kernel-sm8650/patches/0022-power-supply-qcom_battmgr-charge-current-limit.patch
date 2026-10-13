@@ -1,0 +1,156 @@
+From: lavachemist <48248311+lavachemist@users.noreply.github.com>
+Subject: [PATCH] power: supply: qcom_battmgr: charge current limit (slow charging)
+
+The ADSP charger firmware takes a fast-charge current limit through the
+battery property BATT_CHG_CTRL_LIM (uA), with BATT_CHG_CTRL_LIM_MAX as its
+ceiling. It is what Qualcomm's Android driver (qti_battery_charger) writes
+for its "restricted charging" switch (restrict_chg / restrict_cur, 1 A by
+default), and the KONKR Pocket FIT, Retroid Pocket 6, Nova and AYN Thor
+all ship that driver on Android. Nothing in the mainline driver writes it.
+
+Expose it as the battery's constant_charge_current_max (read: the
+firmware's current limit; write: a new limit, sent with
+BATTMGR_BAT_PROPERTY_SET and cut to the ceiling, so a large value gives
+full-speed charging back), acknowledge the property-set reply, and store
+the two values from the property-get replies. sm8550-charge-control
+(userspace) uses it for the slow charging switch, writing the limit again
+after a wake and a charger plug-in in case the firmware dropped it.
+
+Compile-checked only; the firmware's answer to the set is checked on the
+devices.
+---
+--- a/drivers/power/supply/qcom_battmgr.c
++++ b/drivers/power/supply/qcom_battmgr.c
+@@ -326,6 +326,10 @@
+ 	struct completion ack;
+ 
+ 	bool service_up;
++
++	/* Charge current limit (BATT_CHG_CTRL_LIM) and its ceiling, uA; 0 = not read yet. */
++	unsigned int charge_current_limit;
++	unsigned int charge_current_limit_max;
+ 
+ 	struct qcom_battmgr_info info;
+ 	struct qcom_battmgr_status status;
+@@ -506,7 +510,65 @@
+ 	}
+ 
+ out_unlock:
++	mutex_unlock(&battmgr->lock);
++	return ret;
++}
++
++/*
++ * The charger firmware's fast-charge current limit (BATT_CHG_CTRL_LIM, uA):
++ * the property Qualcomm's Android driver writes for its "restricted
++ * charging" (restrict_chg / restrict_cur, 1 A by default). Exposed as the
++ * battery's constant_charge_current_max. A request above the firmware's
++ * ceiling (BATT_CHG_CTRL_LIM_MAX) is cut to the ceiling, so writing a large
++ * value restores full-speed charging.
++ */
++#define QCOM_BATTMGR_CHG_CURRENT_MIN_UA		100000
++#define QCOM_BATTMGR_CHG_CURRENT_FALLBACK_UA	6000000
++
++static int qcom_battmgr_get_charge_current_limit(struct qcom_battmgr *battmgr,
++						 union power_supply_propval *val)
++{
++	int ret;
++
++	mutex_lock(&battmgr->lock);
++	ret = qcom_battmgr_request_property(battmgr, BATTMGR_BAT_PROPERTY_GET,
++					    BATT_CHG_CTRL_LIM, 0);
++	mutex_unlock(&battmgr->lock);
++	if (ret)
++		return ret;
++
++	val->intval = battmgr->charge_current_limit;
++	return 0;
++}
++
++static int qcom_battmgr_set_charge_current_limit(struct qcom_battmgr *battmgr, int ua)
++{
++	unsigned int max;
++	int ret;
++
++	if (ua < QCOM_BATTMGR_CHG_CURRENT_MIN_UA)
++		return -EINVAL;
++
++	mutex_lock(&battmgr->lock);
++	if (!battmgr->charge_current_limit_max) {
++		ret = qcom_battmgr_request_property(battmgr, BATTMGR_BAT_PROPERTY_GET,
++						    BATT_CHG_CTRL_LIM_MAX, 0);
++		if (ret || !battmgr->charge_current_limit_max)
++			dev_warn_once(battmgr->dev,
++				      "no charge current ceiling from the firmware (%d), assuming %u uA\n",
++				      ret, QCOM_BATTMGR_CHG_CURRENT_FALLBACK_UA);
++	}
++	max = battmgr->charge_current_limit_max ?: QCOM_BATTMGR_CHG_CURRENT_FALLBACK_UA;
++	if (ua > max)
++		ua = max;
++	ret = qcom_battmgr_request_property(battmgr, BATTMGR_BAT_PROPERTY_SET,
++					    BATT_CHG_CTRL_LIM, ua);
++	if (!ret) {
++		battmgr->charge_current_limit = ua;
++		dev_info(battmgr->dev, "charge current limit %d uA (ceiling %u uA)\n", ua, max);
++	}
+ 	mutex_unlock(&battmgr->lock);
++
+ 	return ret;
+ }
+ 
+@@ -521,6 +583,9 @@
+ 	if (!battmgr->service_up)
+ 		return -EAGAIN;
+ 
++	if (psp == POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX)
++		return qcom_battmgr_get_charge_current_limit(battmgr, val);
++
+ 	if (battmgr->variant == QCOM_BATTMGR_SC8280XP ||
+ 	    battmgr->variant == QCOM_BATTMGR_X1E80100)
+ 		ret = qcom_battmgr_bat_sc8280xp_update(battmgr, psp);
+@@ -764,6 +829,7 @@
+ 	switch (psp) {
+ 	case POWER_SUPPLY_PROP_CHARGE_CONTROL_START_THRESHOLD:
+ 	case POWER_SUPPLY_PROP_CHARGE_CONTROL_END_THRESHOLD:
++	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX:
+ 		return 1;
+ 	default:
+ 		return 0;
+@@ -786,6 +852,8 @@
+ 		return qcom_battmgr_set_charge_start_threshold(battmgr, pval->intval);
+ 	case POWER_SUPPLY_PROP_CHARGE_CONTROL_END_THRESHOLD:
+ 		return qcom_battmgr_set_charge_end_threshold(battmgr, pval->intval);
++	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX:
++		return qcom_battmgr_set_charge_current_limit(battmgr, pval->intval);
+ 	default:
+ 		return -EINVAL;
+ 	}
+@@ -920,6 +988,7 @@
+ 	POWER_SUPPLY_PROP_POWER_NOW,
+ 	POWER_SUPPLY_PROP_CHARGE_CONTROL_START_THRESHOLD,
+ 	POWER_SUPPLY_PROP_CHARGE_CONTROL_END_THRESHOLD,
++	POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX,
+ };
+ 
+ static const struct power_supply_desc sm8550_bat_psy_desc = {
+@@ -1470,6 +1539,12 @@
+ 			break;
+ 		case BATT_POWER_NOW:
+ 			battmgr->status.power_now = le32_to_cpu(resp->intval.value);
++			break;
++		case BATT_CHG_CTRL_LIM:
++			battmgr->charge_current_limit = le32_to_cpu(resp->intval.value);
++			break;
++		case BATT_CHG_CTRL_LIM_MAX:
++			battmgr->charge_current_limit_max = le32_to_cpu(resp->intval.value);
+ 			break;
+ 		case BATT_CHG_CTRL_START_THR:
+ 			battmgr->info.charge_ctrl_start = le32_to_cpu(resp->intval.value);
+@@ -1558,6 +1633,7 @@
+ 			break;
+ 		}
+ 		break;
++	case BATTMGR_BAT_PROPERTY_SET:
+ 	case BATTMGR_REQUEST_NOTIFICATION:
+ 	case BATTMGR_DISABLE_NOTIFICATION:
+ 	case BATTMGR_CHG_CTRL_LIMIT_EN:

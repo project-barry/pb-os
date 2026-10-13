@@ -1,13 +1,14 @@
 [Unit]
-Description=Charge limit and bypass charging (Retroid Pocket 6 and Nova)
+Description=Charge limit, bypass and slow charging (Retroid Pocket 6, Nova, AYN Thor, KONKR Pocket FIT)
 ConditionPathExists=/sys/firmware/devicetree/base/compatible
 
 [Service]
 Type=simple
-ExecCondition=/bin/sh -c 'grep -qaE "retroidpocket,(rp6|rpnova)" /sys/firmware/devicetree/base/compatible'
+ExecCondition=/bin/sh -c 'grep -qaE "retroidpocket,(rp6|rpnova)|ayn,thor|konkr,pocket-fit" /sys/firmware/devicetree/base/compatible'
 ExecStart=/usr/lib/steamos-sm8550/sm8550-charge-control
-# Never leave the battery unable to charge if the daemon goes away.
-ExecStopPost=/bin/sh -c 'for d in /sys/bus/auxiliary/devices/pmic_glink.power-supply.*; do [ -e $d/retroid_charge_now ] && echo 1 > $d/retroid_charge_now && echo 0 > $d/retroid_limit_capacity; done; rm -f /run/sm8550-charge-held; true'
+# Never leave the battery unable to charge, or charging slowly, if the
+# daemon goes away (the thresholds stay: the firmware keeps them anyway).
+ExecStopPost=/bin/sh -c 'for d in /sys/bus/auxiliary/devices/pmic_glink.power-supply.*; do [ -e $d/retroid_charge_now ] && echo 1 > $d/retroid_charge_now && echo 0 > $d/retroid_limit_capacity; done; f=/sys/class/power_supply/battery/constant_charge_current_max; [ -w $f ] && echo 10000000 > $f; rm -f /run/sm8550-charge-held; true'
 Restart=on-failure
 RestartSec=5
 

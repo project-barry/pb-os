@@ -63,7 +63,7 @@ const stickDelete = callable("stick_delete");
 const getCharging = callable("get_charging");
 const setCharging = callable("set_charging");
 const previewCharging = callable("preview_charging");
-// Charge limit and bypass charging (Retroid Pocket 6 / Nova, sm8550-charge-control).
+// Charge limit, bypass and slow charging (Retroid Pocket 6 / Nova, AYN Thor, KONKR Pocket FIT; sm8550-charge-control).
 const getChargeControl = callable("get_charge_control");
 const setChargeControl = callable("set_charge_control");
 // PB-OS twins of Valve's Proton: set per game (pbos-proton builds them).
@@ -1189,14 +1189,22 @@ function HardwareTab() {
 // at a quarter of the LEDs' current, so the lowest are very dim.
 const secs = (v) => `${Number(v).toFixed(1).replace(/\.0$/, "")} s`;
 
-// Battery charging on Retroid handhelds: Retroid's firmware can stop at 80 %
-// or run the device from USB power without charging (charge separation).
+// Battery charging: the Retroid Pocket 6 / Nova and AYN Thor firmware can
+// stop at 80 % or run the device from USB power without charging (charge
+// separation); the KONKR Pocket FIT's firmware enforces charge thresholds
+// (it stops at 80 % out of the box). Slow charging caps the charge current
+// on every device (sm8550-charge-control).
 const CHARGE_MODES = [
     { data: "normal", label: "Normal", desc: "Charges to 100 %." },
     { data: "limit80", label: "Stop at 80 %", desc: "The battery firmware stops charging at 80 %. Easier on the battery when the device lives on the charger." },
-    { data: "hold", label: "Hold at a level", desc: "Charges to the level below, then runs from USB power and leaves the battery alone." },
-    { data: "bypass", label: "Run from USB", desc: "Runs from USB power and doesn't charge (charge separation). Below 15 % it still charges a little." },
+    { data: "hold", label: "Hold at a level", desc: "Charges to the level below, then stops and leaves the battery alone.", oem: "Charges to the level below, then runs from USB power and leaves the battery alone." },
+    { data: "bypass", label: "Run from USB", desc: "Runs from USB power and doesn't charge (charge separation). Below 15 % it still charges a little.", feature: "bypass" },
 ];
+const CHARGE_SPEEDS = [
+    { data: false, label: "Full speed", desc: "Charges as fast as the firmware allows." },
+    { data: true, label: "Slow", desc: "Caps the charge current: less heat, easier on the battery, good for playing on the charger." },
+];
+const amps = (ma) => `${(ma / 1000).toFixed(2).replace(/0$/, "").replace(/\.0$/, "")} A`;
 
 function ChargeControl() {
     const [cc, setCc] = useState(null);
@@ -1212,29 +1220,45 @@ function ChargeControl() {
     }, []);
     if (!cc || !cc.supported) return null;
     const s = cc.settings;
+    const f = cc.features || {};
     const change = (patch) => {
         movedAt.current = Date.now();
         const next = { ...s, ...patch };
         setCc({ ...cc, settings: next });
         send(next);
     };
-    const mode = CHARGE_MODES.find((m) => m.data === s.mode) || CHARGE_MODES[0];
+    const modes = CHARGE_MODES.filter((m) => !m.feature || f[m.feature]);
+    const mode = modes.find((m) => m.data === s.mode) || modes[0];
+    const speed = CHARGE_SPEEDS.find((m) => m.data === !!s.slow) || CHARGE_SPEEDS[0];
     const live = cc.state || {};
+    const slowNow = s.slow && live.charge_current_ma ? ` Slow charging, up to ${amps(live.charge_current_ma)}.` : "";
     const status = !live.plugged ? "Not on a charger."
         : live.held ? `On the charger, holding at ${live.capacity} %.`
-        : `On the charger, ${String(live.status || "").toLowerCase() || "charging"} at ${live.capacity} %.`;
+        : `On the charger, ${String(live.status || "").toLowerCase() || "charging"} at ${live.capacity} %.${slowNow}`;
     return jsx(DFL.PanelSection, { title: "Battery", children: [
         row(jsx(DFL.DropdownItem, {
             label: "Charging",
-            description: mode.desc,
-            rgOptions: CHARGE_MODES.map((m) => ({ data: m.data, label: m.label })),
-            selectedOption: s.mode,
+            description: (cc.backend === "oem" && mode.oem) || mode.desc,
+            rgOptions: modes.map((m) => ({ data: m.data, label: m.label })),
+            selectedOption: mode.data,
             onChange: (o) => change({ mode: o.data }),
         })),
         s.mode === "hold" ? row(jsx(DFL.SliderField, {
             label: `Hold at ${s.hold_at} %`,
             value: s.hold_at, min: cc.limits.hold_at[0], max: cc.limits.hold_at[1], step: 5,
             onChange: (v) => change({ hold_at: v }),
+        })) : null,
+        f.slow ? row(jsx(DFL.DropdownItem, {
+            label: "Charging speed",
+            description: speed.desc,
+            rgOptions: CHARGE_SPEEDS.map((m) => ({ data: m.data, label: m.label })),
+            selectedOption: !!s.slow,
+            onChange: (o) => change({ slow: !!o.data }),
+        })) : null,
+        f.slow && s.slow ? row(jsx(DFL.SliderField, {
+            label: `Slow charging: up to ${amps(s.slow_ma)}`,
+            value: s.slow_ma, min: cc.limits.slow_ma[0], max: cc.limits.slow_ma[1], step: 250,
+            onChange: (v) => change({ slow_ma: v }),
         })) : null,
         note(status),
     ] });

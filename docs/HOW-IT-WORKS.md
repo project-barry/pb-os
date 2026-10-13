@@ -118,12 +118,20 @@ deep sleep mode) rests on the charger the same way, after `konkr-sleep` has
 prepared the sleep: kernel patch 0019 counts its doorbell wakes, 0020 its
 power key wakes, the stick-light MCU is bound again only for the indicator
 (the MCU draws the pulse itself), and the power LED keeps its charge
-colours; it has no Power tab (default indicator settings). On the
-Retroid Pocket 6 and Nova the Power tab also has battery charging modes,
-using Retroid's own battery firmware (kernel patch 0545,
-`sm8550-charge-control`): Normal, Stop at 80 % (the firmware's limit), Hold at
-a level, and Run from USB (charge separation: the device runs from USB power
-and the battery is left alone).
+colours (default indicator settings). The Power tab's **Battery** section
+(`sm8550-charge-control`, every device) has the charging modes Normal, Stop
+at 80 % and Hold at a level, plus Run from USB on the Retroid Pocket 6, Nova
+and AYN Thor (charge separation: the device runs from USB power and the
+battery is left alone). On the Retroids and the Thor they use two switches
+of the devices' own battery firmware (kernel patch 0545, the same OEM
+properties Retroid's and AYN's Android driver writes); on the Pocket FIT
+they set the standard charge thresholds its firmware enforces (it ships
+stopping at 80 %, which the first run keeps as the chosen mode). **Charging
+speed** Slow caps the charge current (kernel patch 0549 / 0022: the battery's
+`constant_charge_current_max`, the firmware limit Android's "restricted
+charging" writes; 1 A by default, 0.5-3 A) for less heat while playing on
+the charger. The daemon writes the settings again after a wake and a
+plug-in, and gives everything back to the firmware's defaults when it stops.
 
 **Sticks** (PB-OS Tools → Hardware on the AYN Thor, Retroid Pocket 6 and
 Nova, EXPERIMENTAL; was the Stick Calibration plugin): two switches for the
