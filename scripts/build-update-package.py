@@ -31,7 +31,11 @@ from pathlib import Path, PurePosixPath
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import root_trim
 
 ap = argparse.ArgumentParser()
 ap.add_argument('--rootfs', required=True)
@@ -226,6 +230,8 @@ with tempfile.TemporaryDirectory(prefix='konkr-package-', dir=output.parent) as 
     for rel in MANAGED:
         src = root / rel
         if src.exists(): copy(src, stage / 'root' / rel)
+    # Same paths the image leaves out. Unlinking hard links leaves the build tree alone.
+    root_trim.apply(stage / 'root')
     for rel, mode in SUID.items():
         p = stage / 'root' / rel
         if p.is_symlink() or not p.is_file(): continue

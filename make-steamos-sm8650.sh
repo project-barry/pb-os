@@ -432,6 +432,8 @@ build_image() {
       --exclude=home --exclude=boot --exclude=proc --exclude=sys \
       --exclude=dev --exclude=tmp --exclude=run --exclude='.image-mnt' \
       "${R}" | awk '{print $1}')"
+    # The image leaves out scripts/root_trim.py's paths (SteamVR, headers, docs).
+    used_mib=$((used_mib - $(python3 "${SCRIPTS}/root_trim.py" size "${R}")))
     # ~500 MiB free after 1% reserved blocks + a little slack for first boot.
     # 1.5 GiB free at pack: 500 MiB filled on first boot last time (root 100%).
     ROOT_MIB=$((used_mib + 1536 + used_mib / 100 + 128))
@@ -492,7 +494,9 @@ EOF
   sudo_run mount "${boot_dev}" "${MNT}/boot"
 
   log "Copying root filesystem"
+  python3 "${SCRIPTS}/root_trim.py" filter "${R}" >"${WORKDIR}/.root-trim.filter"
   sudo_run rsync -aHAX --numeric-ids --info=progress2 \
+    --filter="merge ${WORKDIR}/.root-trim.filter" \
     --exclude='/home/**' \
     --exclude='/boot/**' \
     --exclude='/dev/**' \
