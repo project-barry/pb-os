@@ -419,8 +419,10 @@ def stage(source_package, expected, move=False, version=None):
         # The plan's new files, plus a backup of at most as much replaced data.
         if shutil.disk_usage('/home').free < 2 * plan['bytes'] + (512 << 20):
             raise ValueError('not enough HOME space for the update and its rollback backup')
-        if shutil.disk_usage('/').free < plan['bytes'] + (512 << 20):
-            raise ValueError('root partition is too small for this update')
+        need = root_need(Path('/'), work, plan)
+        if shutil.disk_usage('/').free < need:
+            raise ValueError(f'root partition is too small for this update '
+                             f'(needs {need >> 20} MiB free, has {shutil.disk_usage("/").free >> 20} MiB)')
         step('Checking the new files')
         verify_planned(work, manifest, plan, counter(plan['bytes']))
         # System files do not change while it runs; /etc is backed up at the restart.
@@ -1039,6 +1041,25 @@ def snapshot_paths(root, work, rels, progress=None):
             shutil.copy2(p, dst, follow_symlinks=False)
             if progress: progress(p.lstat().st_size)
     write_json(path, record)
+
+
+def root_need(root, work, plan):
+    """Free root space the restart needs: what the plan's files add beyond what
+    they replace or delete, plus room for the largest one (rsync writes each
+    file beside the old one, then renames it) and a margin. Deletions run first."""
+    payload = work / 'payload/root'
+    def files(base, rels):
+        seen = {}
+        for rel in rels:
+            st = lstat(base / rel)
+            if st and stat.S_ISREG(st.st_mode): seen.setdefault((st.st_dev, st.st_ino), [st, 0])[1] += 1
+        return seen.values()
+    new = list(files(payload, set(plan["write"])))
+    added = sum(st.st_blocks * 512 for st, _ in new)
+    # A replaced file frees its blocks only when the plan covers all its links.
+    freed = sum(st.st_blocks * 512 for st, n in files(root, set(plan_paths(plan))) if n >= st.st_nlink)
+    largest = max((st.st_blocks * 512 for st, _ in new), default=0)
+    return max(0, added - freed) + largest + (512 << 20)
 
 
 def plan_paths(plan):
