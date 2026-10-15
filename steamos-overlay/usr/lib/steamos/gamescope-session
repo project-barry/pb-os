@@ -114,7 +114,14 @@ if [[ "$KMS_ROTATION" == 1 ]]; then
 else
   export GAMESCOPE_USE_ROTATION_SHADER=1
 fi
-export GAMESCOPE_FORCE_INTERNAL="${GAMESCOPE_FORCE_INTERNAL:-1}"
+# External DP/HDMI output: gamescope switches to it when connected.
+# GAMESCOPE_FORCE_INTERNAL=1 keeps Game Mode on the panel instead. Our
+# gamescope fork also skips external connectors whenever a DSI panel is
+# connected (drm_skip_external_connectors) unless GAMESCOPE_ALLOW_EXTERNAL is set.
+export GAMESCOPE_FORCE_INTERNAL="${GAMESCOPE_FORCE_INTERNAL:-0}"
+if [[ "$GAMESCOPE_FORCE_INTERNAL" != 1 ]]; then
+  export GAMESCOPE_ALLOW_EXTERNAL="${GAMESCOPE_ALLOW_EXTERNAL:-1}"
+fi
 # Same physical size the working SM8550 session advertises (not connector mm).
 export GAMESCOPE_FAKE_OUTPUT_MM="${GAMESCOPE_FAKE_OUTPUT_MM:-177x100}"
 if [[ "$MANGOAPP" != 1 ]]; then
@@ -242,8 +249,7 @@ WATCH_SERVICE=""
 # --backend wayland/sdl would nest inside another compositor and drop the panel.
 GAMESCOPE_ARGS=(
   --backend drm
-  --prefer-output "$OUTPUT"
-  --force-internal
+  --prefer-output "*,$OUTPUT"
   --force-windows-fullscreen
   --scaler fit
   --filter linear
