@@ -40,7 +40,7 @@ jobs:
 
         steps:
             - uses: actions/checkout@v5
-            - uses: lukka/get-cmake@latest
+            - uses: lukka/get-cmake@da37b03df250c343a90268c30948f7814f31d88e # latest
               with:
                 cmakeVersion: 3.22
 
