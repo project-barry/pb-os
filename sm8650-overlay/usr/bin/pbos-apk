@@ -61,86 +61,108 @@ patch_lepton() {
   python3 - "${LEPTON_DIR}" <<'EOF'
 import sys, pathlib
 root = pathlib.Path(sys.argv[1])
-def patch(name, old, new):
+def patch(name, *pairs):
+    """Apply the first (old, new) whose old is still in the file.
+
+    Valve rewords these files between Lepton releases, so a patch carries one
+    pair per upstream wording it knows (newest Lepton last). Already patched
+    with any of them: leave it alone.
+    """
     f = root / name
     s = f.read_text()
-    if new in s:
+    if any(new in s for _, new in pairs):
         return
-    if old not in s:
-        print(f"pbos-apk: WARN {name} changed upstream, patch skipped", file=sys.stderr)
-        return
-    f.write_text(s.replace(old, new, 1))
+    for old, new in pairs:
+        if old in s:
+            f.write_text(s.replace(old, new, 1))
+            return
+    print(f"pbos-apk: WARN {name} changed upstream, patch skipped", file=sys.stderr)
 
 # A Steam launch without an APK boots straight to Android (like `dev`), but
 # keeps its data like a Steam game.
 patch("lepton",
-      '        if ! is_steamlaunch && ! is_app; then\n            continue_boot_after_bake\n',
-      '        # konkr-apk: shared Android without an app\n'
-      '        if ! is_app; then\n            continue_boot_after_bake\n')
+      ('        if ! is_steamlaunch && ! is_app; then\n            continue_boot_after_bake\n',
+       '        # konkr-apk: shared Android without an app\n'
+       '        if ! is_app; then\n            continue_boot_after_bake\n'))
 
 patch("lepton",
-      '        if is_steamlaunch || [[ "${LEPTON_CONTEXT}" == *.apk ]]; then\n'
-      '            if [[ -z "${APP_PACKAGE_ID}" ]]; then\n',
-      '        # konkr-apk: shared Android has no APK\n'
-      '        if { is_steamlaunch && is_app; } || [[ "${LEPTON_CONTEXT}" == *.apk ]]; then\n'
-      '            if [[ -z "${APP_PACKAGE_ID}" ]]; then\n')
+      ('        if is_steamlaunch || [[ "${LEPTON_CONTEXT}" == *.apk ]]; then\n'
+       '            if [[ -z "${APP_PACKAGE_ID}" ]]; then\n',
+       '        # konkr-apk: shared Android has no APK\n'
+       '        if { is_steamlaunch && is_app; } || [[ "${LEPTON_CONTEXT}" == *.apk ]]; then\n'
+       '            if [[ -z "${APP_PACKAGE_ID}" ]]; then\n'))
 
 # Per-app persistent data only makes sense with an app (an empty app id
 # would move the whole compat dir into itself).
 patch("liblepton/mounting.sh",
-      '    if [[ -d "${STEAM_COMPAT_DATA_PATH:-}" ]]; then\n'
-      '        PERSISTENT_DATA_PATH=',
-      '    # konkr-apk: shared Android has no app id\n'
-      '    if [[ -d "${STEAM_COMPAT_DATA_PATH:-}" && -n "$(get_app_id)" ]]; then\n'
-      '        PERSISTENT_DATA_PATH=')
+      ('    if [[ -d "${STEAM_COMPAT_DATA_PATH:-}" ]]; then\n'
+       '        PERSISTENT_DATA_PATH=',
+       '    # konkr-apk: shared Android has no app id\n'
+       '    if [[ -d "${STEAM_COMPAT_DATA_PATH:-}" && -n "$(get_app_id)" ]]; then\n'
+       '        PERSISTENT_DATA_PATH='))
 
 # Gamepads: the host's live /dev/input, which pbos-apk links pads from
 # (Waydroid only forwards touch/keyboard/mouse from Wayland). Steam
 # recreates its virtual pads, so per-node mounts would go stale.
 patch("liblepton/mounting.sh",
-      '    # By default, we do not allow writes to msg\n',
-      '    # konkr-apk: host input devices\n'
-      '    if [[ -n "${KONKR_LEPTON_OVERLAY:-}" ]]; then\n'
-      '        podman_mount_entry /dev/input /dev/host-input ro\n'
-      '    fi\n\n'
-      '    # By default, we do not allow writes to msg\n')
+      ('    # By default, we do not allow writes to msg\n',
+       '    # konkr-apk: host input devices\n'
+       '    if [[ -n "${KONKR_LEPTON_OVERLAY:-}" ]]; then\n'
+       '        podman_mount_entry /dev/input /dev/host-input ro\n'
+       '    fi\n\n'
+       '    # By default, we do not allow writes to msg\n'))
 
 # LuaJIT (xLua/ToLua in many Unity games) needs memory below 2^47, but our
 # 48-bit+ VA kernel maps top-down from 2^48 and lua_newstate returns NULL.
 # An unlimited stack rlimit selects the legacy bottom-up layout (from 2^46);
 # zygote inherits it and every app forks from zygote. Phones use 39-bit VA.
 patch("liblepton/mounting.sh",
-      '    # namespaces\n',
-      '    # namespaces\n'
-      '    # konkr-apk: low mmap layout for LuaJIT\n'
-      '    if [[ -n "${KONKR_LEPTON_OVERLAY:-}" ]]; then\n'
-      '        podman_cmdline --ulimit stack=-1:-1\n'
-      '    fi\n')
+      ('    # namespaces\n',
+       '    # namespaces\n'
+       '    # konkr-apk: low mmap layout for LuaJIT\n'
+       '    if [[ -n "${KONKR_LEPTON_OVERLAY:-}" ]]; then\n'
+       '        podman_cmdline --ulimit stack=-1:-1\n'
+       '    fi\n'))
 
 # Extra rootfs overlay (restored framework services, Play Store); Steam's
-# own Android games keep Valve's image.
+# own Android games keep Valve's image. Lepton v3.0.3 quotes the two paths.
 patch("liblepton/mounting.sh",
-      '    for OVERLAY in ${LEPTON_OVERLAY} ${GUESTOS_OVERLAY}; do\n',
-      '    # konkr-apk: extra overlay\n'
-      '    for OVERLAY in ${LEPTON_OVERLAY} ${GUESTOS_OVERLAY} ${KONKR_LEPTON_OVERLAY:-}; do\n')
+      ('    for OVERLAY in ${LEPTON_OVERLAY} ${GUESTOS_OVERLAY}; do\n',
+       '    # konkr-apk: extra overlay\n'
+       '    for OVERLAY in ${LEPTON_OVERLAY} ${GUESTOS_OVERLAY} ${KONKR_LEPTON_OVERLAY:-}; do\n'),
+      ('    for OVERLAY in "${LEPTON_OVERLAY}" "${GUESTOS_OVERLAY}"; do\n',
+       '    # konkr-apk: extra overlay\n'
+       '    for OVERLAY in "${LEPTON_OVERLAY}" "${GUESTOS_OVERLAY}" ${KONKR_LEPTON_OVERLAY:-}; do\n'))
 
 # Lepton writes brand/model/manufacturer into its runtime waydroid.prop on
 # every start. Match the certified identity from props_overlay, or Google
 # sees a Pixel 5 fingerprint on a "Valve Lepton" and refuses it again.
+# Lepton v3.0.3 dropped the ro.product.brand line.
 patch("liblepton/properties.sh",
-      '    props_echo "ro.product.brand=Steam Frame"\n'
-      '    props_echo "ro.product.model=Lepton"\n'
-      '    props_echo "ro.product.manufacturer=Valve"\n',
-      '    # konkr-apk: certified identity\n'
-      '    if [[ -n "${KONKR_LEPTON_OVERLAY:-}" ]]; then\n'
-      '        props_echo "ro.product.brand=google"\n'
-      '        props_echo "ro.product.model=Pixel 5"\n'
-      '        props_echo "ro.product.manufacturer=Google"\n'
-      '    else\n'
-      '    props_echo "ro.product.brand=Steam Frame"\n'
-      '    props_echo "ro.product.model=Lepton"\n'
-      '    props_echo "ro.product.manufacturer=Valve"\n'
-      '    fi\n')
+      ('    props_echo "ro.product.brand=Steam Frame"\n'
+       '    props_echo "ro.product.model=Lepton"\n'
+       '    props_echo "ro.product.manufacturer=Valve"\n',
+       '    # konkr-apk: certified identity\n'
+       '    if [[ -n "${KONKR_LEPTON_OVERLAY:-}" ]]; then\n'
+       '        props_echo "ro.product.brand=google"\n'
+       '        props_echo "ro.product.model=Pixel 5"\n'
+       '        props_echo "ro.product.manufacturer=Google"\n'
+       '    else\n'
+       '    props_echo "ro.product.brand=Steam Frame"\n'
+       '    props_echo "ro.product.model=Lepton"\n'
+       '    props_echo "ro.product.manufacturer=Valve"\n'
+       '    fi\n'),
+      ('    props_echo "ro.product.model=Lepton"\n'
+       '    props_echo "ro.product.manufacturer=Valve"\n',
+       '    # konkr-apk: certified identity\n'
+       '    if [[ -n "${KONKR_LEPTON_OVERLAY:-}" ]]; then\n'
+       '        props_echo "ro.product.brand=google"\n'
+       '        props_echo "ro.product.model=Pixel 5"\n'
+       '        props_echo "ro.product.manufacturer=Google"\n'
+       '    else\n'
+       '    props_echo "ro.product.model=Lepton"\n'
+       '    props_echo "ro.product.manufacturer=Valve"\n'
+       '    fi\n'))
 EOF
 }
 
