@@ -38,6 +38,8 @@ const setMcu = callable("set_mcu");
 const getFaceButtons = callable("get_face_buttons");
 const setFaceButtons = callable("set_face_buttons");
 const getMtp = callable("get_mtp");
+// Android apps: is Google Play added (see androidTitles).
+const getAndroid = callable("get_android");
 const setMtp = callable("set_mtp");
 // Barry Launcher in Desktop Mode (AYN Thor).
 const getBarryDesktop = callable("get_barry_desktop");
@@ -1922,6 +1924,33 @@ P.plugin({ id: "install", title: "Move SteamOS", icon: InstallIcon, content: Ins
     if (power) P.plugin({ id: "power", title: "Power", icon: PowerIcon, content: PowerTab, order: 50 });
 })().catch((e) => P.fail("plugins", e));
 
+// Android titles that no longer fit: a Google Play Store title without
+// Google Play (earlier images shipped it; it can only fail now) or one that
+// does not open the Play Store (older images left some with no arguments),
+// and Add Google Play once it is added. Only pbos-apk's own titles (exe
+// konkr-apk or pbos-apk). At Steam start and when a title exits.
+async function androidTitles() {
+    const st = await getAndroid().catch(() => null);
+    if (!st || !st.available) return;
+    const cs = window.collectionStore;
+    const apps = new Map();
+    for (const c of [cs && cs.localGamesCollection, cs && cs.deckDesktopApps]) {
+        for (const app of (c && c.allApps) || []) {
+            if (app.app_type === SHORTCUT_TYPE) apps.set(app.appid, app.display_name || "");
+        }
+    }
+    for (const [appid, name] of apps) {
+        if (name !== "Google Play Store" && name !== "Add Google Play") continue;
+        const d = await appDetails(appid);
+        if (!d || !/\/(konkr|pbos)-apk"?$/.test(d.strShortcutExe || "")) continue;
+        const opts = d.strLaunchOptions || "";
+        const stale = opts.includes('"gapps"')
+            ? st.google
+            : !st.google || !opts.includes('"run" "com.android.vending"');
+        if (stale) SteamClient.Apps.RemoveShortcut(appid);
+    }
+}
+
 // While Steam runs (as the Decky plugin did while loaded): Proton PB-OS
 // follows Valve's picks, and the backend's news shows as toasts.
 // The running game, for its performance mode: told now (Steam just loaded)
@@ -1930,10 +1959,11 @@ P.plugin({ id: "install", title: "Move SteamOS", icon: InstallIcon, content: Ins
 function reportGame(appid) { gameRunning(appid != null ? String(appid) : (runningGame() || "")).catch(() => {}); }
 reportGame();
 protonSoon(null);
+androidTitles().catch(() => {});
 protonEvents = [
     SteamClient.GameSessions.RegisterForAppLifetimeNotifications((n) => {
         if (n && n.bRunning) reportGame(n.unAppID);
-        else setTimeout(() => reportGame(), 1000);
+        else setTimeout(() => { reportGame(); androidTitles().catch(() => {}); }, 1000);
     }),
     SteamClient.Apps.RegisterForAppOverviewChanges(() => protonSoon(null)),
     SteamClient.Apps.RegisterForGameActionStart((_action, appid) => protonSoon([String(appid)])),

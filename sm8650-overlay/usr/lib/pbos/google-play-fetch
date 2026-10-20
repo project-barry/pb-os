@@ -1,0 +1,123 @@
+#!/usr/bin/python3 -I
+# google-play-fetch common|tools DIR — downloads for pbos-apk's optional
+# Google Play (Add Google Play in the Steam library). PB-OS ships no Google
+# apps: each user fetches them from their own sources, and every file is
+# checked against the SHA-256 below before it is used.
+#
+#   common DIR  Play services, Services Framework and their permission files
+#               (MindTheGapps 11 arm64), the Play Store (MindTheGapps 14:
+#               11's has no arm64 libs) and Simple Keyboard (F-Droid; Lepton
+#               ships no keyboard) into DIR/common, laid out as a Lepton
+#               overlay. Only these files are read out of the zips, with HTTP
+#               range requests, not the whole 194 / 430 MB.
+#   tools DIR   a Java runtime (Eclipse Temurin 17) and smali/baksmali into
+#               DIR, to rebuild services.jar for the installed Lepton
+#               (pbos-apk deletes them afterwards).
+import hashlib, io, os, sys, tarfile, urllib.request, zipfile
+
+MTG11 = ("https://github.com/MindTheGapps/11.0.0-arm64/releases/download/"
+         "MindTheGapps-11.0.0-arm64-20230922_081122/MindTheGapps-11.0.0-arm64-20230922_081122.zip")
+MTG14 = ("https://github.com/MindTheGapps/14.0.0-arm64/releases/download/"
+         "MindTheGapps-14.0.0-arm64-20250203_200051/MindTheGapps-14.0.0-arm64-20250203_200051.zip")
+KBD = "https://f-droid.org/repo/rkr.simplekeyboard.inputmethod_148.apk"
+JRE = ("https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.20.1%2B1/"
+       "OpenJDK17U-jre_aarch64_linux_hotspot_17.0.20.1_1.tar.gz")
+SMALI = "https://bitbucket.org/JesusFreke/smali/downloads/{}-2.5.2.jar"
+
+# (zip url, path in the zip, sha256)
+FROM_ZIPS = [
+    (MTG11, "system/product/priv-app/PrebuiltGmsCore/PrebuiltGmsCore.apk",
+     "0b4e47b1e53d8d035fda2f5d8369f67de6f9985ed49001c207aac329d563b56f"),
+    (MTG11, "system/system_ext/priv-app/GoogleServicesFramework/GoogleServicesFramework.apk",
+     "482798ab45ae314ae8084ee15295d0acb7da4ea9cdc3c2701a75ab2dbc10f252"),
+    (MTG11, "system/product/etc/permissions/privapp-permissions-google-p.xml",
+     "1d06370c2d94d519907b87c13e42789131e9a0a811a8b53fe60439062238d541"),
+    (MTG11, "system/system_ext/etc/permissions/privapp-permissions-google-se.xml",
+     "4e2161961b9750773d4b9239ec1b4c5197c8131f6f51a18496aef72389dbbd8c"),
+    (MTG11, "system/product/etc/sysconfig/google.xml",
+     "95616cfe00726b60759be00a6491e2b5186da02bb0e384e6682bef61428d2709"),
+    (MTG11, "system/product/etc/sysconfig/google_build.xml",
+     "724875dc95f7fb7eb950714f9a474a9a304e081626d9364647e02409e4bdae9c"),
+    (MTG11, "system/product/etc/sysconfig/google-hiddenapi-package-whitelist.xml",
+     "8be877d7f55f1ef7a650290e99f6bbeeab25ae2573c4604280c7f2b6d286d516"),
+    (MTG14, "system/product/priv-app/Phonesky/Phonesky.apk",
+     "a11f673c924a5900672793ec631408d0a8b0f50191cc22208da6bd5202e8bdf1"),
+]
+KBD_SHA = "b8affd986041afc9f47f59a3b5953b791a06401fb77682cff551ed4d68c32885"
+KBD_PATH = "system/product/app/SimpleKeyboard/SimpleKeyboard.apk"
+JRE_SHA = "b8efcd5acc9109fe8d35bed132499643048a257b4f6042906ece37d03c839d77"
+SMALI_SHA = {"smali": "9544299578b16f771d8aa8eaefe0d3718ca03478c16f3c356f2fcf1366bfb116",
+             "baksmali": "d3116248cce4f82ec5a31eb7f95ee75daff42ddf6eed0ab573973dc53fbad2e5"}
+UA = {"User-Agent": "pb-os google-play-fetch"}
+
+
+def get(url, headers=None):
+    req = urllib.request.Request(url, headers={**UA, **(headers or {})})
+    with urllib.request.urlopen(req, timeout=120) as r:
+        return r.read()
+
+
+class Remote(io.RawIOBase):
+    """A file on a web server, read with range requests."""
+    def __init__(self, url):
+        req = urllib.request.Request(url, method="HEAD", headers=UA)
+        with urllib.request.urlopen(req, timeout=120) as r:
+            self.url, self.size, self.pos = r.geturl(), int(r.headers["Content-Length"]), 0
+    def seekable(self): return True
+    def readable(self): return True
+    def tell(self): return self.pos
+    def seek(self, off, whence=0):
+        self.pos = off if whence == 0 else self.pos + off if whence == 1 else self.size + off
+        return self.pos
+    def readinto(self, b):
+        if self.pos >= self.size: return 0
+        end = min(self.size, self.pos + len(b)) - 1
+        d = get(self.url, {"Range": f"bytes={self.pos}-{end}"})
+        b[:len(d)] = d
+        self.pos += len(d)
+        return len(d)
+
+
+def checked(data, sha, name):
+    got = hashlib.sha256(data).hexdigest()
+    if got != sha:
+        sys.exit(f"google-play-fetch: {name}: checksum mismatch ({got})")
+    return data
+
+
+def write(path, data):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "wb") as f:
+        f.write(data)
+
+
+def common(out):
+    zips = {}
+    for url, name, sha in FROM_ZIPS:
+        if url not in zips:
+            zips[url] = zipfile.ZipFile(io.BufferedReader(Remote(url), buffer_size=1 << 20))
+        print(f"google-play-fetch: {os.path.basename(name)}", flush=True)
+        write(os.path.join(out, "common", name), checked(zips[url].read(name), sha, name))
+    print("google-play-fetch: SimpleKeyboard.apk", flush=True)
+    write(os.path.join(out, "common", KBD_PATH), checked(get(KBD), KBD_SHA, KBD_PATH))
+
+
+def tools(out):
+    print("google-play-fetch: Java runtime", flush=True)
+    data = checked(get(JRE), JRE_SHA, "Java runtime")
+    jre = os.path.join(out, "jre")
+    with tarfile.open(fileobj=io.BytesIO(data)) as t:
+        top = t.getmembers()[0].name.split("/")[0]
+        t.extractall(out, filter="data")
+    os.rename(os.path.join(out, top), jre)
+    for name, sha in SMALI_SHA.items():
+        print(f"google-play-fetch: {name}", flush=True)
+        write(os.path.join(out, f"{name}.jar"), checked(get(SMALI.format(name)), sha, name))
+
+
+if len(sys.argv) != 3 or sys.argv[1] not in ("common", "tools"):
+    sys.exit("usage: google-play-fetch common|tools DIR")
+try:
+    {"common": common, "tools": tools}[sys.argv[1]](sys.argv[2])
+except (OSError, KeyError, zipfile.BadZipFile, tarfile.TarError) as e:
+    sys.exit(f"google-play-fetch: {e}")

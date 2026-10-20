@@ -747,6 +747,19 @@ Value barry_desktop(const std::vector<std::string>& args) {
 // and copies the user's files with nothing to install on either side. Off by
 // default, like SSH, so the switch enables the unit as well as starting it
 // and the choice survives a reboot. The PC always sees Home and Steam.
+// ---------------------------------------------------------------- android --
+// Google Play is the user's to add (pbos-apk gapps, the "Add Google Play"
+// title). The tab's script drops the Steam title that no longer fits: the
+// Play Store without it (earlier images shipped it), Add Google Play once it
+// is there.
+Value android_state() {
+    Value out = Value::object();
+    out["available"] = can_exec("/usr/bin/pbos-apk");
+    out["google"] = is_file(desktop_user().home +
+        "/.local/share/pbos-google-play/common/system/product/priv-app/Phonesky/Phonesky.apk");
+    return out;
+}
+
 Value mtp_state() {
     Value out = Value::object();
     const auto udcs = glob("/sys/class/udc/*");
@@ -1138,6 +1151,7 @@ public:
             log("tools: face buttons -> %s", layout.c_str());
             return face_buttons({"set", layout});
         }
+        if (m == "get_android") return android_state();
         if (m == "get_mtp") return mtp_state();
         if (m == "set_mtp") return set_mtp(arg(a, 0, false).truthy());
         if (m == "get_barry_desktop") return barry_desktop({"get"});

@@ -5,7 +5,9 @@
 #   pbos-apk install FILE...  .apk / .apkm / .xapk / .apks (split bundles
 #                              too). Opening one in Dolphin does the same.
 #   pbos-apk run PACKAGE      open an app (what its Steam title calls)
-#   pbos-apk store            open the Play Store
+#   pbos-apk store            open the Play Store (once Google Play is added)
+#   pbos-apk gapps            add Google Play: download it from its sources
+#                              and set it up (the "Add Google Play" title)
 #   pbos-apk list             installed apps
 #   pbos-apk remove PACKAGE   uninstall (delete its Steam title by hand)
 #   pbos-apk inbox            install everything in ~/Android/Inbox
@@ -16,6 +18,12 @@
 # sideloaded or from the Play Store — gets its own Steam title with its name
 # and icon. Lepton is presented a Steam launch without an APK
 # (SteamAppId=konkr-android), which keeps /data between runs.
+#
+# PB-OS ships no Google apps. Google Play is the user's choice: `gapps`
+# fetches it (google-play-fetch, checked against pinned SHA-256) into
+# ~/.local/share/pbos-google-play, which updates never touch, and builds the
+# framework fixes it needs for the installed Lepton on the device. When Valve
+# updates Lepton, the next Android start rebuilds them.
 set -euo pipefail
 
 LEPTON_APPID=3029110
@@ -29,13 +37,24 @@ RUNDIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 READY="${RUNDIR}/konkr-android.ready"
 DESKTOP_DIR="${HOME}/.local/share/applications"
 APK_INFO=/usr/lib/pbos/apk-info
-# Lepton overlays (Play Store, framework fixes): in home, not on the root
-# partition; the updater installs them there.
+# Lepton overlay from the image (Steam pad key layout, no freeform windows):
+# in home, not on the root partition; the updater installs it there.
 OVERLAY_ROOT="${HOME}/.local/share/konkr-android"
-# Launchable system apps that get a Steam title too.
-SYSTEM_TITLES=(com.android.vending)
-# Touch keyboard shipped in the overlay (Simple Keyboard, F-Droid).
+# Google Play, added by the user: common/ (Play Store, Play services, touch
+# keyboard) and lepton-<ver>/ (framework fixes built here for that Lepton).
+GP_ROOT="${HOME}/.local/share/pbos-google-play"
+GP_FETCH=/usr/lib/pbos/google-play-fetch
+FRAMEWORK=/usr/lib/pbos/android-framework
+GP_DESKTOP="${DESKTOP_DIR}/pbos-google-play.desktop"
+MODE="${RUNDIR}/konkr-android.mode"
+GOOGLE_PKGS=(com.android.vending com.google.android.gms com.google.android.gsf rkr.simplekeyboard.inputmethod)
+# Touch keyboard from Google Play's overlay (Simple Keyboard, F-Droid).
 IME=rkr.simplekeyboard.inputmethod/.latin.LatinIME
+
+google_on() { [[ -f "${GP_ROOT}/common/system/product/priv-app/Phonesky/Phonesky.apk" ]]; }
+lepton_ver() { cat "${LEPTON_DIR}/images/version.txt" 2>/dev/null || true; }
+# Launchable system apps that get a Steam title too.
+system_titles() { google_on && echo com.android.vending; return 0; }
 
 say() {
   echo "pbos-apk: $*" >&2
@@ -135,34 +154,29 @@ patch("liblepton/mounting.sh",
        '    for OVERLAY in "${LEPTON_OVERLAY}" "${GUESTOS_OVERLAY}" ${KONKR_LEPTON_OVERLAY:-}; do\n'))
 
 # Lepton writes brand/model/manufacturer into its runtime waydroid.prop on
-# every start. Match the certified identity from props_overlay, or Google
-# sees a Pixel 5 fingerprint on a "Valve Lepton" and refuses it again.
+# every start. With Google Play added (KONKR_LEPTON_GOOGLE), match the
+# certified identity from props_overlay, or Google sees a Pixel 5 fingerprint
+# on a "Valve Lepton" and refuses it again; without it Android keeps Valve's.
 # Lepton v3.0.3 dropped the ro.product.brand line.
+def identity(valve, gate):
+    return ('    # konkr-apk: certified identity\n'
+            f'    if [[ -n "${{{gate}:-}}" ]]; then\n'
+            '        props_echo "ro.product.brand=google"\n'
+            '        props_echo "ro.product.model=Pixel 5"\n'
+            '        props_echo "ro.product.manufacturer=Google"\n'
+            '    else\n' + valve + '    fi\n')
+V2 = ('    props_echo "ro.product.brand=Steam Frame"\n'
+      '    props_echo "ro.product.model=Lepton"\n'
+      '    props_echo "ro.product.manufacturer=Valve"\n')
+V3 = ('    props_echo "ro.product.model=Lepton"\n'
+      '    props_echo "ro.product.manufacturer=Valve"\n')
+# Files patched before Google Play was optional (gated on the overlay) come
+# first: Valve's own lines are still inside them, in the else branch.
 patch("liblepton/properties.sh",
-      ('    props_echo "ro.product.brand=Steam Frame"\n'
-       '    props_echo "ro.product.model=Lepton"\n'
-       '    props_echo "ro.product.manufacturer=Valve"\n',
-       '    # konkr-apk: certified identity\n'
-       '    if [[ -n "${KONKR_LEPTON_OVERLAY:-}" ]]; then\n'
-       '        props_echo "ro.product.brand=google"\n'
-       '        props_echo "ro.product.model=Pixel 5"\n'
-       '        props_echo "ro.product.manufacturer=Google"\n'
-       '    else\n'
-       '    props_echo "ro.product.brand=Steam Frame"\n'
-       '    props_echo "ro.product.model=Lepton"\n'
-       '    props_echo "ro.product.manufacturer=Valve"\n'
-       '    fi\n'),
-      ('    props_echo "ro.product.model=Lepton"\n'
-       '    props_echo "ro.product.manufacturer=Valve"\n',
-       '    # konkr-apk: certified identity\n'
-       '    if [[ -n "${KONKR_LEPTON_OVERLAY:-}" ]]; then\n'
-       '        props_echo "ro.product.brand=google"\n'
-       '        props_echo "ro.product.model=Pixel 5"\n'
-       '        props_echo "ro.product.manufacturer=Google"\n'
-       '    else\n'
-       '    props_echo "ro.product.model=Lepton"\n'
-       '    props_echo "ro.product.manufacturer=Valve"\n'
-       '    fi\n'))
+      (identity(V2, "KONKR_LEPTON_OVERLAY"), identity(V2, "KONKR_LEPTON_GOOGLE")),
+      (identity(V3, "KONKR_LEPTON_OVERLAY"), identity(V3, "KONKR_LEPTON_GOOGLE")),
+      (V2, identity(V2, "KONKR_LEPTON_GOOGLE")),
+      (V3, identity(V3, "KONKR_LEPTON_GOOGLE")))
 EOF
 }
 
@@ -256,13 +270,13 @@ ensure_android() {
 }
 
 # Rootfs overlays for Lepton (see external-and-mods/pbos-android):
-#  common/        Play Store + Play services, touch keyboard, Steam pad key
-#                 layout, no freeform windows
+#  common/        (image) Steam pad key layout, no freeform windows
+# With Google Play added, from GP_ROOT:
+#  common/        Play Store + Play services, touch keyboard
 #  lepton-<ver>/  services.jar with the SystemServer services Lepton strips
 #                 (clipboard, biometric/auth, cross-profile apps, …) and the
-#                 odex/dalvik-cache built against it. Tied to one Lepton
-#                 Android image: skipped for any other version, which then
-#                 boots stock (apps relying on those services may crash).
+#                 odex/dalvik-cache built against it, for one Lepton Android
+#                 image: built here (build_fixes) for each new one.
 #  props-<ver>/   build.prop copies (generated below): Google refuses Play
 #                 Store sign-in on uncertified builds ("This device isn't Play
 #                 Protect certified") and Lepton identifies as a userdebug
@@ -307,14 +321,50 @@ props_overlay() {
 
 overlay_dirs() {
   local ver dirs=("${OVERLAY_ROOT}/common")
-  ver="$(cat "${LEPTON_DIR}/images/version.txt" 2>/dev/null || true)"
-  if [[ -d "${OVERLAY_ROOT}/lepton-${ver}" ]]; then
-    dirs+=("${OVERLAY_ROOT}/lepton-${ver}")
-  else
-    say "Lepton's Android image (${ver:-unknown}) is newer than this build's framework fixes; some apps may crash."
+  if google_on; then
+    ver="$(lepton_ver)"
+    dirs+=("${GP_ROOT}/common")
+    [[ -d "${GP_ROOT}/lepton-${ver}" ]] && dirs+=("${GP_ROOT}/lepton-${ver}")
+    dirs+=("$(props_overlay "${ver:-unknown}")")
   fi
-  dirs+=("$(props_overlay "${ver:-unknown}")")
   echo "${dirs[*]}"
+}
+
+# Rebuild services.jar for the installed Lepton and compile against it inside
+# the running Android (as external-and-mods/pbos-android/framework/
+# build-framework.sh does on a build machine): a Java runtime and smali come
+# from google-play-fetch and are deleted afterwards.
+build_fixes() {
+  local ver work out java
+  ver="$(lepton_ver)"
+  [[ -n "$ver" ]] || return 1
+  mkdir -p "${HOME}/.cache"
+  work="$(mktemp -d "${HOME}/.cache/pbos-google-play.XXXXXX")"
+  out="${work}/lepton-${ver}"
+  java="${work}/jre/bin/java"
+  if python3 -I "$GP_FETCH" tools "$work" >&2 \
+     && cp "${LEPTON_DIR}/images/rootfs/system/framework/services.jar" "${work}/orig.jar" \
+     && python3 -I -c 'import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extract("classes.dex", sys.argv[2])' \
+          "${work}/orig.jar" "${work}/jar" \
+     && "$java" -jar "${work}/baksmali.jar" d -a 30 "${work}/jar/classes.dex" -o "${work}/classes" \
+     && python3 -I "${FRAMEWORK}/restore-services.py" "${work}/classes/com/android/server/SystemServer.smali" >&2 \
+     && "$java" -jar "${work}/smali.jar" a -a 30 "${work}/classes" -o "${work}/classes.new.dex" \
+     && python3 -I "${FRAMEWORK}/repack-jar.py" "${work}/orig.jar" "${work}/services.jar" \
+          "classes.dex=${work}/classes.new.dex" >&2 \
+     && podman cp "${work}/services.jar" "${CTR}:/data/local/tmp/services.jar" \
+     && podman cp "${FRAMEWORK}/compile-odex.sh" "${CTR}:/data/local/tmp/compile-odex.sh" \
+     && podman exec "$CTR" /system/bin/sh /data/local/tmp/compile-odex.sh >"${work}/compile-odex.log" 2>&1 \
+     && podman cp "${CTR}:/data/local/tmp/out" "$out" \
+     && cp "${work}/services.jar" "${out}/system/framework/services.jar" \
+     && [[ "$(find "$out" -type f | wc -l)" == 10 ]]; then
+    rm -rf "${GP_ROOT}"/lepton-*
+    mv "$out" "${GP_ROOT}/lepton-${ver}"
+  else
+    rm -rf "$out"
+  fi
+  asx 'rm -rf /data/local/tmp/services.jar /data/local/tmp/compile-odex.sh /data/local/tmp/out' || true
+  rm -rf "$work"
+  [[ -d "${GP_ROOT}/lepton-${ver}" ]]
 }
 
 # --- titles -----------------------------------------------------------------
@@ -356,11 +406,14 @@ EOF
   return 0
 }
 
-# Is there a Steam shortcut for this package? Steam stores a .desktop add
-# as exe "/usr/bin/konkr-apk" (what add_title writes, see there),
-# LaunchOptions '"run" "<pkg>"' and the .desktop as ShortcutPath.
+# Is there a Steam shortcut for this package (or "gapps": Add Google Play)?
+# Steam stores a .desktop add as exe "/usr/bin/konkr-apk" (what add_title
+# writes, see there), LaunchOptions '"run" "<pkg>"' and the .desktop as
+# ShortcutPath.
 steam_has() {
-  grep -qaF -e "\"run\" \"$1\"" -e "konkr-android-$1.desktop" \
+  local a=("\"run\" \"$1\"" "konkr-android-$1.desktop")
+  [[ "$1" == gapps ]] && a=('"gapps"' "${GP_DESKTOP##*/}")
+  grep -qaF -e "${a[0]}" -e "${a[1]}" \
     "${HOME}"/.local/share/Steam/userdata/*/config/shortcuts.vdf 2>/dev/null
 }
 
@@ -385,7 +438,7 @@ sync_titles() {
   local pkgs pkg f
   pkgs="$(asx "pm list packages -3" | sed -n 's/^package://p' || true)"
   [[ -n "$pkgs" ]] || pkgs=""
-  pkgs+=$'\n'"$(printf '%s\n' "${SYSTEM_TITLES[@]}")"
+  pkgs+=$'\n'"$(system_titles)"
   # Keyboards have a settings screen but aren't something to launch.
   pkgs="$(grep -vxF -f <(asx "ime list -a -s" | cut -d/ -f1 || true) <<<"$pkgs" || true)"
   for pkg in $pkgs; do
@@ -427,7 +480,12 @@ cmd_daemon() {
   ensure_vrpaths
   mkdir -p "${SYS}/app" "${SYS}/data" "${SYS}/shadercache/fozpipelinesv6"
   touch "${SYS}/app/lepton-show-flatscreen"
-  rm -f "$READY"
+  rm -f "$READY" "$MODE"
+  local google="" fixed=""
+  if google_on; then
+    google=1
+    [[ -d "${GP_ROOT}/lepton-$(lepton_ver)" ]] && fixed=1
+  fi
 
   export SteamAppId=konkr-android
   export STEAM_COMPAT_INSTALL_PATH="${SYS}/app"
@@ -440,6 +498,7 @@ cmd_daemon() {
   export LEPTON_NO_CLEANUP=true
   export GAMESCOPE_WAYLAND_DISPLAY="${KONKR_ANDROID_DISPLAY:-$(current_display)}"
   export KONKR_LEPTON_OVERLAY="$(overlay_dirs)"
+  export KONKR_LEPTON_GOOGLE="$google"
 
   "$LEPTON" waitforexitandrun &
   local lepton_pid=$! i
@@ -450,22 +509,47 @@ cmd_daemon() {
     kill -0 "$lepton_pid" 2>/dev/null || exit 1
     sleep 2
   done
-  # Lepton ships no keyboard; ours is in the overlay. Android treats the
-  # Wayland keyboard as a hardware one and would hide the touch keyboard.
-  asx 'ime enable '"$IME"'; case "$(settings get secure default_input_method)" in ""|null) ime set '"$IME"';; esac;
-       settings put secure show_ime_with_hard_keyboard 1' >/dev/null || true
+  if [[ -n "$google" ]]; then
+    # Lepton ships no keyboard; Google Play's overlay has one. Android treats
+    # the Wayland keyboard as a hardware one and would hide the touch keyboard.
+    asx 'ime enable '"$IME"'; case "$(settings get secure default_input_method)" in ""|null) ime set '"$IME"';; esac;
+         settings put secure show_ime_with_hard_keyboard 1' >/dev/null || true
+  else
+    # No Google Play: updates of the Google apps that earlier PB-OS builds
+    # shipped stay in /data as plain apps, and would come back as titles.
+    asx 'for p in '"${GOOGLE_PKGS[*]}"'; do pm path $p >/dev/null 2>&1 && pm uninstall $p; done' >/dev/null || true
+    sed -i '/^com\.android\.vending$/d' "${SYS}/titles" 2>/dev/null || true
+  fi
   # No setup wizard runs here, and Android ignores Home ("user setup is in
   # progress") until setup is marked done. It gets reset, so set it each boot.
   asx 'settings put secure user_setup_complete 1; settings put global device_provisioned 1' >/dev/null || true
   # Google checked this Android in under the old, uncertified identity. With
   # no account signed in yet, clear that so it checks in again as certified.
-  if [[ "$(cat "${SYS}/props-rev" 2>/dev/null)" != "$PROPS_REV" ]]; then
+  if [[ -n "$google" && "$(cat "${SYS}/props-rev" 2>/dev/null)" != "$PROPS_REV" ]]; then
     if ! asx 'dumpsys account' | grep -qE 'Account \{name=.*, type=com\.google\}'; then
       asx 'pm clear com.google.android.gsf; pm clear com.google.android.gms; pm clear com.android.vending' >/dev/null || true
     fi
     echo "$PROPS_REV" >"${SYS}/props-rev"
   fi
   echo "$GAMESCOPE_WAYLAND_DISPLAY" >"$READY"
+
+  # Google Play without fixes for this Lepton (just added, or Valve updated
+  # Lepton): build them, then start again with them. A failed build is not
+  # retried until "Add Google Play" runs again.
+  if [[ -n "$google" && -z "$fixed" && ! -e "${GP_ROOT}/failed-$(lepton_ver)" ]]; then
+    echo building >"$MODE"
+    say "Setting up Google Play for this Android version. This takes a few minutes…"
+    if build_fixes; then
+      say "Google Play is ready. Restarting Android…"
+      systemctl --user restart --no-block pbos-android.service
+    else
+      touch "${GP_ROOT}/failed-$(lepton_ver)"
+      say "Couldn't set up Google Play for this Android version. Launch Add Google Play to try again."
+      echo failed >"$MODE"
+    fi
+  else
+    echo "${google:+google}${fixed:+-fixed}" >"$MODE"
+  fi
 
   # Pads every 3 s; titles for apps installed from inside Android (Play
   # Store, F-Droid…) every 15 s.
@@ -601,13 +685,42 @@ cmd_run() {
   schedule_idle_stop
 }
 
-# First login: a Play Store title, so there's something to start from.
-# Needs no running Android (the APK ships in the image).
+# Each login: a title to start from. "Add Google Play" until Google Play is
+# added (only once: a user who deletes it keeps it deleted), then the Play
+# Store. The PB-OS tab removes the one that no longer fits from Steam.
 cmd_setup() {
+  if google_on; then rm -f "$GP_DESKTOP"; setup_store_title; else setup_gapps_title; fi
+}
+
+setup_gapps_title() {
+  local i
+  [[ -e "${SYS}/gapps-title" ]] && return 0
+  mkdir -p "$SYS" "$DESKTOP_DIR"
+  cat >"$GP_DESKTOP" <<EOF
+[Desktop Entry]
+Type=Application
+Name=Add Google Play
+Comment=Download Google Play from its sources and set it up for Android apps
+Exec=/usr/bin/konkr-apk gapps
+Icon=android-package-archive
+Categories=Game;
+EOF
+  for ((i = 0; i < 360; i++)); do
+    if steam_add "$GP_DESKTOP" gapps; then
+      touch "${SYS}/gapps-title"
+      return 0
+    fi
+    sleep 20
+  done
+  return 1
+}
+
+# Needs no running Android (Google Play's overlay has the APK).
+setup_store_title() {
   local i desktop="${DESKTOP_DIR}/konkr-android-com.android.vending.desktop" icon="${SYS}/icons/com.android.vending.png"
   steam_has com.android.vending && return 0
   mkdir -p "${SYS}/icons" "$DESKTOP_DIR"
-  python3 "$APK_INFO" "${OVERLAY_ROOT}/common/system/product/priv-app/Phonesky/Phonesky.apk" "$icon" >/dev/null 2>&1 || true
+  python3 "$APK_INFO" "${GP_ROOT}/common/system/product/priv-app/Phonesky/Phonesky.apk" "$icon" >/dev/null 2>&1 || true
   [[ -f "$icon" ]] || icon=android-package-archive
   # Exec keeps the old name, as in add_title.
   cat >"$desktop" <<EOF
@@ -630,6 +743,40 @@ EOF
     sleep 20
   done
   return 1
+}
+
+# Add Google Play: fetch it, start Android with it (its first start builds
+# the framework fixes and starts again with them), open the Play Store.
+cmd_gapps() {
+  local i tmp
+  ensure_lepton
+  rm -f "${GP_ROOT}"/failed-*
+  if ! google_on; then
+    say "Downloading Google Play (about 230 MB)…"
+    mkdir -p "$GP_ROOT"
+    tmp="$(mktemp -d "${GP_ROOT}/.new.XXXXXX")"
+    if ! python3 -I "$GP_FETCH" common "$tmp" >&2; then
+      rm -rf "$tmp"
+      die "Couldn't download Google Play. Check the internet connection and launch Add Google Play again."
+    fi
+    rm -rf "${GP_ROOT}/common"
+    mv "${tmp}/common" "${GP_ROOT}/common"
+    rmdir "$tmp"
+  fi
+  [[ "$(cat "$MODE" 2>/dev/null)" == google-fixed ]] && android_up \
+    || systemctl --user stop pbos-android.service 2>/dev/null || true
+  ensure_android
+  for ((i = 0; i < 300; i++)); do
+    case "$(cat "$MODE" 2>/dev/null)" in
+      google-fixed) android_up && break ;;
+      failed) die "Couldn't set up Google Play for this Android version. Launch Add Google Play to try again." ;;
+    esac
+    sleep 3
+  done
+  [[ "$(cat "$MODE" 2>/dev/null)" == google-fixed ]] && android_up \
+    || die "Google Play setup didn't finish (journalctl --user -u pbos-android)."
+  rm -f "$GP_DESKTOP"
+  cmd_run com.android.vending
 }
 
 cmd_idle_stop() {
@@ -674,7 +821,9 @@ cmd_inbox() {
 case "${1:-}" in
   install) shift; (($#)) || die "usage: pbos-apk install FILE..."; for f; do cmd_install "$f"; done ;;
   run) [[ -n "${2:-}" ]] || die "usage: pbos-apk run PACKAGE"; cmd_run "$2" ;;
-  store) cmd_run com.android.vending ;;
+  store) google_on || die "Google Play isn't added yet: launch Add Google Play in the Steam library."
+         cmd_run com.android.vending ;;
+  gapps) cmd_gapps ;;
   list) cmd_list ;;
   remove) [[ -n "${2:-}" ]] || die "usage: pbos-apk remove PACKAGE"; cmd_remove "$2" ;;
   inbox) cmd_inbox ;;

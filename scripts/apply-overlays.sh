@@ -646,6 +646,7 @@ chmod 0755 "$R/usr/lib/steamos/sm8550-audio-setup" \
   "$R/usr/lib/konkr/konkr-suspend" "$R/usr/lib/konkr/konkr-sleep-mode" \
   "$R/usr/lib/pbos/pbos-focusfix" \
   "$R/usr/bin/pbos-apk" "$R/usr/lib/pbos/apk-info" "$R/usr/lib/pbos/pbos-hostname" \
+  "$R/usr/lib/pbos/google-play-fetch" \
   "$R/usr/lib/NetworkManager/dispatcher.d/60-pbos-timesync"
 # Game mode: re-activate the game after Quick Access / Steam menu closes.
 mkdir -p "$R/usr/lib/systemd/user/gamescope-session.target.wants"
@@ -653,10 +654,15 @@ ln -sfn ../pbos-focusfix.service \
   "$R/usr/lib/systemd/user/gamescope-session.target.wants/pbos-focusfix.service"
 # Android apps (pbos-apk + Lepton): .apk/.apkm/.xapk/.apks open in it, and
 # ~/Android/Inbox auto-installs. /etc links vanish under the /etc overlay.
+# Add Google Play rebuilds Lepton's services.jar on the device with these.
+for f in restore-services.py repack-jar.py compile-odex.sh; do
+  install -D -m0644 "${ROOT}/external-and-mods/pbos-android/framework/$f" \
+    "$R/usr/lib/pbos/android-framework/$f"
+done
 mkdir -p "$R/usr/lib/systemd/user/default.target.wants"
 ln -sfn ../pbos-apk-inbox.path \
   "$R/usr/lib/systemd/user/default.target.wants/pbos-apk-inbox.path"
-# First login adds a Google Play Store title.
+# Each login: the Add Google Play title (the Play Store once it is added).
 ln -sfn ../pbos-android-setup.service \
   "$R/usr/lib/systemd/user/default.target.wants/pbos-android-setup.service"
 # Lepton overlays (Play Store etc.) go to home: see "Android apps payload" below.
@@ -1172,37 +1178,20 @@ else
   HOME_DST="$R/home/steamos"
 fi
 mkdir -p "$HOME_DST"
-# Android apps payload: Lepton overlays (Play Store, keyboard, pad layout,
-# framework fixes; external-and-mods/pbos-android, binaries fetched/built,
-# not in git). ~210 MiB, kept off the root partition; pbos-apk reads it here
-# and the updater installs it like the bundled Decky plugins.
-# Release builds export the commit, which has only the payload's text files:
-# then the binaries come from this rootfs, the root copy earlier builds made
-# (moved here) or the home copy of the last build (kept).
-KAPAY="${ROOT}/external-and-mods/pbos-android/payload"
+# Android apps payload: the Lepton overlay pbos-apk always uses (Steam pad key
+# layout, no freeform windows; external-and-mods/pbos-android/payload/common,
+# text files in git). No Google apps: Google Play is the user's to add
+# (pbos-apk gapps fetches it into ~/.local/share/pbos-google-play). Kept in
+# home; the updater installs it like the bundled Decky plugins, and its copy
+# replaces the folder, so the Google apps earlier images shipped go with it.
+KAPAY="${ROOT}/external-and-mods/pbos-android/payload/common"
 KADST="$HOME_DST/.local/share/konkr-android"
-KAOLD="$R/usr/share/konkr-android"
-PHONESKY=common/system/product/priv-app/Phonesky/Phonesky.apk
-if [[ -f "$KAPAY/$PHONESKY" ]]; then
-  rm -rf "$KADST"
-elif [[ -f "$KAOLD/$PHONESKY" ]]; then
-  log "Android apps payload: moved from /usr/share/konkr-android"
-  rm -rf "$KADST"; mkdir -p "${KADST%/*}"; cp -a "$KAOLD" "$KADST"
-elif [[ -f "$KADST/$PHONESKY" ]]; then
-  log "Android apps payload: kept from the last build"
-fi
-rm -rf "$KAOLD"
-if [[ -f "$KAPAY/$PHONESKY" || -f "$KADST/$PHONESKY" ]]; then
-  mkdir -p "$KADST"
-  # exFAT/macOS leave ._* AppleDouble files; a ._x.apk breaks PackageManager.
-  rsync -a --no-owner --no-group --exclude '._*' --exclude '.DS_Store' "$KAPAY/" "$KADST/"
-  find "$KADST" -type d -exec chmod 0755 {} +
-  find "$KADST" -type f -exec chmod 0644 {} +
-  # Valve's prebaked dalvik-cache files are 0755; keep ours the same.
-  find "$KADST" -path '*/data/dalvik-cache/*' -type f -exec chmod 0755 {} +
-else
-  log "WARN: no Android apps payload (external-and-mods/pbos-android/build-payload.sh); Android apps will lack the Play Store and fixes"
-fi
+rm -rf "$KADST" "$R/usr/share/konkr-android"
+for f in system/etc/permissions/android.software.freeform_window_management.xml \
+         system/usr/keylayout/Vendor_28de_Product_11ff.kl; do
+  install -D -m0644 "$KAPAY/$f" "$KADST/common/$f"
+done
+find "$KADST" -type d -exec chmod 0755 {} +
 # Copy plugin tree (resolve lsfg .so symlink into a real file if needed)
 # .local/lib/liblsfg-vk.so is a link to the SM8550 builder's host library;
 # skip it (decky-lsfg-vk installs its own copy).
