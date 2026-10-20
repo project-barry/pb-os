@@ -1177,8 +1177,9 @@ else
 fi
 mkdir -p "$HOME_DST"
 # Android apps payload: the Lepton overlay pbos-apk always uses (Steam pad key
-# layout, no freeform windows; external-and-mods/pbos-android/payload/common,
-# text files in git). No Google apps: Google Play is the user's to add
+# layout, no freeform windows, PB-OS Keyboard;
+# external-and-mods/pbos-android/payload/common, the keyboard built by
+# external-and-mods/pbos-android/keyboard/build.sh). No Google apps: Google Play is the user's to add
 # (pbos-apk gapps fetches it into ~/.local/share/pbos-google-play). Kept in
 # home; the updater installs it like the bundled Decky plugins, and its copy
 # replaces the folder, so the Google apps earlier images shipped go with it.
@@ -1186,7 +1187,8 @@ KAPAY="${ROOT}/external-and-mods/pbos-android/payload/common"
 KADST="$HOME_DST/.local/share/pbos-android"
 rm -rf "$KADST" "$HOME_DST/.local/share/konkr-android" "$R/usr/share/konkr-android"
 for f in system/etc/permissions/android.software.freeform_window_management.xml \
-         system/usr/keylayout/Vendor_28de_Product_11ff.kl; do
+         system/usr/keylayout/Vendor_28de_Product_11ff.kl \
+         system/app/PbosKeyboard/PbosKeyboard.apk; do
   install -D -m0644 "$KAPAY/$f" "$KADST/common/$f"
 done
 find "$KADST" -type d -exec chmod 0755 {} +

@@ -85,6 +85,8 @@ _agent_*
 # pbos-android binaries (Google apps, Lepton-derived framework): build-payload.sh / framework/build-framework.sh
 /external-and-mods/pbos-android/.cache/
 /external-and-mods/pbos-android/payload/**/*.apk
+# ours, built from external-and-mods/pbos-android/keyboard
+!/external-and-mods/pbos-android/payload/common/system/app/PbosKeyboard/PbosKeyboard.apk
 /external-and-mods/pbos-android/payload/lepton-*/
 /external-and-mods/pbos-android/payload/common/system/product/etc/
 /external-and-mods/pbos-android/payload/common/system/system_ext/etc/

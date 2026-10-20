@@ -15,6 +15,7 @@ packages carry it like the bundled Decky plugins, and replace the folder):
 | --- | --- |
 | `system/etc/permissions/android.software.freeform_window_management.xml` | empty: Waydroid opens every app as a freeform window, whose caption bar crashes apps like Instagram |
 | `system/usr/keylayout/Vendor_28de_Product_11ff.kl` | Steam's virtual pad as an Xbox 360 pad; Generic.kl maps the triggers to the right stick |
+| `system/app/PbosKeyboard/PbosKeyboard.apk` | PB-OS Keyboard, built by `keyboard/build.sh` (source next to it): Lepton ships no keyboard. It draws nothing; when a text field wants a keyboard it logs `show`, and `pbos-apk` opens the device's own (Steam's, or Barry's on the Thor), which types into Android through gamescope |
 
 ## Google Play: the user's choice
 
