@@ -1,0 +1,29 @@
+[Unit]
+# MTP over the USB-C cable: a PC browses and copies the user's files with
+# nothing to install on either side, while the device carries on running.
+# Off by default, like SSH; the PB-OS tab's Hardware section turns it on.
+#
+# A system service on purpose. Closing the lid on a charger - which is what a
+# PC's USB port is - does not suspend at all: pbos-platformd's charge rest
+# freezes the whole user slice, and a responder frozen in there leaves USB
+# electrically alive but unanswered, which hangs the host's file manager for
+# minutes. system.slice is never frozen.
+Description=MTP access to the user's files over USB (uMTP-Responder)
+Documentation=https://github.com/viveris/uMTP-Responder
+Wants=sys-kernel-config.mount
+After=sys-kernel-config.mount
+ConditionPathExistsGlob=/sys/class/udc/*
+
+[Service]
+# umtprd says READY=1 once its FunctionFS descriptors are written, which is
+# exactly when the UDC may be bound: ExecStartPost waits for that by itself.
+Type=notify
+ExecStartPre=/usr/lib/pbos-mtp/pbos-mtp gadget
+ExecStart=/usr/lib/pbos-mtp/umtprd -conf /run/pbos-mtp/umtprd.conf
+ExecStartPost=/usr/lib/pbos-mtp/pbos-mtp bind
+ExecStopPost=/usr/lib/pbos-mtp/pbos-mtp down
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

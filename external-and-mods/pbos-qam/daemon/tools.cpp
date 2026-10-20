@@ -82,6 +82,10 @@ const std::string CHARGE_CONTROL = "/usr/lib/steamos-sm8550/sm8550-charge-contro
 const std::string FACE_BUTTONS = "/usr/lib/steamos/sm8550-face-buttons";
 const std::string STICKCAL = "/usr/lib/steamos-sm8550/sm8550-stickcal";
 const std::string BARRY_SWITCH = "/usr/lib/barry_launcher/barry_launcher_desktop_switch";
+const std::string PBOS_MTP = "/usr/lib/pbos-mtp/pbos-mtp";
+const std::string MTP_UNIT = "pbos-mtp";
+const std::string MTP_SHARES = "/var/lib/pbos-mtp/shares.json";
+constexpr int MTP_MAX_SHARES = 16;        // umtprd's own limit (MAX_STORAGE_NB)
 const std::string PBOS_PROTON = "/usr/lib/steamos/pbos-proton";
 const std::string GAME_LAUNCH = "/usr/bin/pbos-game-launch";
 const std::string COMMUNITY_HINTS = "/usr/share/pb-os/game-launch/protondb-hints.json";
@@ -740,6 +744,144 @@ Value barry_desktop(const std::vector<std::string>& args) {
     return *v;
 }
 
+// ------------------------------------------------------------------ mtp --
+// MTP over the USB-C cable (pbos-mtp.service, uMTP-Responder): a PC browses
+// and copies the user's files with nothing to install on either side. Off by
+// default, like SSH, so the switch enables the unit as well as starting it
+// and the choice survives a reboot.
+// The folders on offer, from pbos-mtp itself: it holds the defaults and does
+// the checking, so the list here and the one umtprd is given cannot drift.
+Value mtp_shares() {
+    Value out = Value::array();
+    if (!can_exec(PBOS_MTP)) return out;
+    auto r = run({PBOS_MTP, "shares"});
+    auto v = Value::parse(last_line(r.out, ""));
+    if (!v || !v->has("shares")) {
+        log("tools: mtp shares unreadable");
+        return out;
+    }
+    return (*v)["shares"];
+}
+
+Value mtp_state() {
+    Value out = Value::object();
+    const auto udcs = glob("/sys/class/udc/*");
+    out["available"] = can_exec(PBOS_MTP) && !udcs.empty();
+    out["enabled"] = unit_active(MTP_UNIT);
+    // "configured" means a host has the gadget: the cable is in and the PC
+    // has accepted it, which is the only part the user cannot see.
+    bool connected = false;
+    for (const auto& udc : udcs) {
+        if (trim(rd(udc + "/state")) == "configured") connected = true;
+    }
+    out["connected"] = connected;
+    out["shares"] = mtp_shares();
+    out["max_shares"] = MTP_MAX_SHARES;
+    out["home"] = desktop_user().home;
+    return out;
+}
+
+// Only the user's own files and removable drives can be shared, as for the
+// tab's file picker (files.cpp): the gadget runs as root and would otherwise
+// hand out the whole system.
+std::vector<std::string> mtp_roots() {
+    return {desktop_user().home, "/run/media", "/media", "/mnt", "/run/barry-launcher/usb"};
+}
+
+bool mtp_allowed(const std::string& real) {
+    for (const auto& r : mtp_roots())
+        if (real == r || real.rfind(r + "/", 0) == 0) return true;
+    return false;
+}
+
+// Folders only, for the section's own browser: the tab's file picker always
+// steps into a folder that is clicked, so it cannot pick one.
+Value list_mtp_folders(const std::string& path) {
+    Value out = Value::object();
+    const std::string real = realpath(path.empty() ? desktop_user().home : path);
+    if (!mtp_allowed(real) || !is_dir(real)) {
+        out["ok"] = false;
+        out["error"] = "That folder can't be shared.";
+        return out;
+    }
+    std::vector<std::string> dirs;
+    for (const auto& n : listdir(real)) {
+        if (n[0] == '.') continue;                 // dot folders: not worth the noise
+        if (is_dir(real + "/" + n)) dirs.push_back(n);
+    }
+    std::sort(dirs.begin(), dirs.end(),
+              [](const std::string& x, const std::string& y) { return lower(x) < lower(y); });
+    Value list = Value::array();
+    for (const auto& n : dirs) {
+        Value v = Value::object();
+        v["name"] = n;
+        v["path"] = real + "/" + n;
+        list.push(v);
+    }
+    out["ok"] = true;
+    out["path"] = real;
+    const std::string parent = dirname(real);
+    out["parent"] = mtp_allowed(parent) && parent != real ? Value(parent) : Value();
+    out["entries"] = list;
+    Value places = Value::array();
+    for (const auto& r : mtp_roots())
+        if (is_dir(r)) places.push(r);
+    out["places"] = places;
+    return out;
+}
+
+// The whole list at once, so adding and removing are the same call and the
+// file is never half-written. umtprd reads its stores once at start, so a
+// change while MTP is on means a restart: the host sees the device leave and
+// come back with the new folders.
+Value set_mtp_shares(const Value& list) {
+    if (!can_exec(PBOS_MTP)) return mtp_state();
+    Value shares = Value::array();
+    int n = 0;
+    for (const auto& item : list.items()) {
+        if (n >= MTP_MAX_SHARES) break;
+        const std::string p = realpath(item.has("path") ? item["path"].str() : item.str());
+        if (p.empty() || !mtp_allowed(p) || !is_dir(p)) continue;
+        Value s = Value::object();
+        s["path"] = p;
+        if (item.has("label") && !item["label"].str().empty()) s["label"] = item["label"].str();
+        s["rw"] = !item.has("rw") || item["rw"].truthy();
+        shares.push(s);
+        ++n;
+    }
+    // Never write an empty list: the accessors here are total, so a malformed
+    // call would otherwise leave umtprd with no stores at all. Sharing nothing
+    // is what the switch above is for.
+    if (n == 0) {
+        log("tools: mtp shares unchanged (nothing usable in the list)");
+        return mtp_state();
+    }
+    Value doc = Value::object();
+    doc["shares"] = shares;
+    makedirs(dirname(MTP_SHARES));
+    if (!write_json(MTP_SHARES, doc)) {
+        log("tools: could not write %s", MTP_SHARES.c_str());
+        return mtp_state();
+    }
+    log("tools: mtp shares -> %d folder(s)", n);
+    if (unit_active(MTP_UNIT)) run({"systemctl", "restart", MTP_UNIT + ".service"});
+    return mtp_state();
+}
+
+Value set_mtp(bool enabled) {
+    // mtp_state() already says available: false when the helper is missing,
+    // so the tab gets the same shape either way.
+    if (!can_exec(PBOS_MTP)) return mtp_state();
+    log("tools: mtp over usb -> %s", enabled ? "on" : "off");
+    if (enabled) {
+        run({"systemctl", "enable", "--now", MTP_UNIT + ".service"});
+    } else {
+        run({"systemctl", "disable", "--now", MTP_UNIT + ".service"});
+        run({"systemctl", "reset-failed", MTP_UNIT + ".service"});
+    }
+    return mtp_state();
+}
+
 // --------------------------------------------------------------- proton --
 Value proton_state() {
     Value out = Value::object();
@@ -1102,6 +1244,10 @@ public:
             log("tools: face buttons -> %s", layout.c_str());
             return face_buttons({"set", layout});
         }
+        if (m == "get_mtp") return mtp_state();
+        if (m == "set_mtp") return set_mtp(arg(a, 0, false).truthy());
+        if (m == "list_mtp_folders") return list_mtp_folders(arg(a, 0, "").str());
+        if (m == "set_mtp_shares") return set_mtp_shares(a.at(0));
         if (m == "get_barry_desktop") return barry_desktop({"get"});
         if (m == "set_barry_desktop") {
             bool on = arg(a, 0, true).truthy();

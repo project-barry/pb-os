@@ -1452,6 +1452,25 @@ for _gear in ark kcalc filelight gwenview okular; do
       || die "required desktop app ${_gear} build failed"
   fi
 done
+# ---------------------------------------------------------------------------
+# MTP over USB (uMTP-Responder, built in the rootfs): a PC browses and copies
+# the user's files over the USB-C cable with nothing to install on either
+# side, while the device keeps running. Off by default, like SSH; the PB-OS
+# tab's Hardware section turns it on. The suspend drop-in lets the UDC go
+# around a sleep or a charge rest, so the host sees an unplug instead of a
+# gadget that stopped answering. See external-and-mods/uMTP-Responder.
+# ---------------------------------------------------------------------------
+log "== MTP over USB (uMTP-Responder)"
+UMTPRD_BUILD="${UMTPRD_BUILD:-${WORKDIR}/umtprd-build}"
+"${SCRIPT_DIR}/build-umtprd-in-rootfs.sh" "$R" "$UMTPRD_BUILD"
+cp -a "$UMTPRD_BUILD/dest/usr/." "$R/usr/"
+install_file "$OVL/usr/lib/pbos-mtp/pbos-mtp" "$R/usr/lib/pbos-mtp/pbos-mtp" 0755
+install_file "$OVL/usr/lib/pbos-mtp/umtprd.conf" "$R/usr/lib/pbos-mtp/umtprd.conf" 0644
+install_file "$OVL/usr/lib/systemd/system/pbos-mtp.service" \
+  "$R/usr/lib/systemd/system/pbos-mtp.service" 0644
+install_file "$OVL/usr/lib/systemd/system/systemd-suspend.service.d/60-pbos-mtp.conf" \
+  "$R/usr/lib/systemd/system/systemd-suspend.service.d/60-pbos-mtp.conf" 0644
+
 log "== vendor apps (UFS, MESA, Proton-ARM, Non-Steam, SRM)"
 STEAMOS_HOME="$HOME_DST" "${SCRIPT_DIR}/install-vendor-apps.sh" "$R" \
   || die "required vendor apps (installer/updater) failed"
