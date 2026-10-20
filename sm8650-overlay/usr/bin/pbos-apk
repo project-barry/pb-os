@@ -295,6 +295,14 @@ migrate_old_names() {
     sed 's#/usr/bin/konkr-apk#/usr/bin/pbos-apk#' "$f" >"${new}.tmp" && mv "${new}.tmp" "$new"
     [[ "$f" == "$new" ]] || rm -f "$f"
   done
+  # The SteamVR paths Lepton mounts (ensure_vrpaths) pointed into konkr-apk:
+  # left so, Lepton passes podman an empty host path and Android never starts.
+  f="${HOME}/.config/openvr/openvrpaths.vrpath"
+  if [[ -f "$f" ]] && grep -q '/\.local/share/konkr-apk/' "$f"; then
+    sed -i 's#/\.local/share/konkr-apk/#/.local/share/pbos-apk/#g' "$f"
+  fi
+  # The shared Android's container under its old name.
+  podman rm -f lepton-steamlaunch-konkr-android >/dev/null 2>&1 || true
   return 0
 }
 
