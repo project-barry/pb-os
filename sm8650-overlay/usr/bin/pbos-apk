@@ -572,6 +572,11 @@ cmd_daemon() {
   export STEAM_FOSSILIZE_DUMP_PATH="${SYS}/shadercache/fozpipelinesv6/steamapp_pipeline_cache"
   # Never let Lepton wipe the shared /data (it does on "early exit").
   export LEPTON_NO_CLEANUP=true
+  # Apps stay in /data/app (see patch_lepton). Files that earlier starts moved
+  # into Lepton's one-app layer belong to apps Android has already dropped.
+  export PBOS_SHARED_ANDROID=1
+  [[ -n "$(ls -A "${SYS}/data/baked/app_overlay" 2>/dev/null)" ]] \
+    && podman unshare rm -rf "${SYS}/data/baked/app_overlay" "${SYS}/data/baked/app_workdir"
   export GAMESCOPE_WAYLAND_DISPLAY="${PBOS_ANDROID_DISPLAY:-$(current_display)}"
   export PBOS_LEPTON_OVERLAY="$(overlay_dirs)"
   export PBOS_LEPTON_GOOGLE="$google"
