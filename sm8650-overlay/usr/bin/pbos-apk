@@ -19,11 +19,14 @@
 # and icon. Lepton is presented a Steam launch without an APK
 # (SteamAppId=pbos-android), which keeps /data between runs.
 #
+# Lepton strips SystemServer services that normal apps need (clipboard:
+# Firefox dies at start without it). The first Android start for each Lepton
+# version builds a fixed services.jar on the device (build_fixes) and starts
+# Android again with it. When Valve updates Lepton, that happens again.
+#
 # PB-OS ships no Google apps. Google Play is the user's choice: `gapps`
 # fetches it (google-play-fetch, checked against pinned SHA-256) into
-# ~/.local/share/pbos-google-play, which updates never touch, and builds the
-# framework fixes it needs for the installed Lepton on the device. When Valve
-# updates Lepton, the next Android start rebuilds them.
+# ~/.local/share/pbos-google-play, which updates never touch.
 set -euo pipefail
 
 LEPTON_APPID=3029110
@@ -41,8 +44,11 @@ APK_INFO=/usr/lib/pbos/apk-info
 # in home, not on the root partition; the updater installs it there.
 OVERLAY_ROOT="${HOME}/.local/share/pbos-android"
 # Google Play, added by the user: common/ (Play Store, Play services, touch
-# keyboard) and lepton-<ver>/ (framework fixes built here for that Lepton).
+# keyboard).
 GP_ROOT="${HOME}/.local/share/pbos-google-play"
+# Framework fixes built here: lepton-<ver>/ for the installed Lepton, and
+# failed-<ver> after a failed build (tried again a day later).
+FIXES="${HOME}/.local/share/pbos-apk/framework"
 GP_FETCH=/usr/lib/pbos/google-play-fetch
 FRAMEWORK=/usr/lib/pbos/android-framework
 GP_DESKTOP="${DESKTOP_DIR}/pbos-google-play.desktop"
@@ -311,7 +317,8 @@ ensure_android() {
   systemctl --user set-environment PBOS_ANDROID_DISPLAY="$want"
   systemctl --user start pbos-android.service
   say "Starting Android…"
-  for ((i = 0; i < 120; i++)); do
+  # Up to 10 minutes: a first start builds the framework fixes (cmd_daemon).
+  for ((i = 0; i < 300; i++)); do
     android_up && return 0
     systemctl --user -q is-active pbos-android.service || break
     sleep 2
@@ -344,17 +351,25 @@ migrate_old_names() {
   fi
   # The shared Android's container under its old name.
   podman rm -f lepton-steamlaunch-konkr-android >/dev/null 2>&1 || true
+  # Framework fixes were Google Play's only (0.5.4.18): every Android has them.
+  for f in "${GP_ROOT}"/lepton-*; do
+    [[ -d "$f" ]] || continue
+    mkdir -p "$FIXES"
+    rm -rf "${FIXES:?}/${f##*/}"
+    mv "$f" "${FIXES}/"
+  done
+  rm -f "${GP_ROOT}"/failed-*
   return 0
 }
 
 # Rootfs overlays for Lepton (see external-and-mods/pbos-android):
 #  common/        (image) Steam pad key layout, no freeform windows
+#  lepton-<ver>/  (FIXES) services.jar with the SystemServer services Lepton
+#                 strips (clipboard, biometric/auth, cross-profile apps, …)
+#                 and the odex/dalvik-cache built against it, for one Lepton
+#                 Android image: built here (build_fixes) for each new one.
 # With Google Play added, from GP_ROOT:
 #  common/        Play Store + Play services, touch keyboard
-#  lepton-<ver>/  services.jar with the SystemServer services Lepton strips
-#                 (clipboard, biometric/auth, cross-profile apps, …) and the
-#                 odex/dalvik-cache built against it, for one Lepton Android
-#                 image: built here (build_fixes) for each new one.
 #  props-<ver>/   build.prop copies (generated below): Google refuses Play
 #                 Store sign-in on uncertified builds ("This device isn't Play
 #                 Protect certified") and Lepton identifies as a userdebug
@@ -399,10 +414,10 @@ props_overlay() {
 
 overlay_dirs() {
   local ver dirs=("${OVERLAY_ROOT}/common")
+  ver="$(lepton_ver)"
+  [[ -d "${FIXES}/lepton-${ver}" ]] && dirs+=("${FIXES}/lepton-${ver}")
   if google_on; then
-    ver="$(lepton_ver)"
     dirs+=("${GP_ROOT}/common")
-    [[ -d "${GP_ROOT}/lepton-${ver}" ]] && dirs+=("${GP_ROOT}/lepton-${ver}")
     dirs+=("$(props_overlay "${ver:-unknown}")")
   fi
   echo "${dirs[*]}"
@@ -417,7 +432,7 @@ build_fixes() {
   ver="$(lepton_ver)"
   [[ -n "$ver" ]] || return 1
   mkdir -p "${HOME}/.cache"
-  work="$(mktemp -d "${HOME}/.cache/pbos-google-play.XXXXXX")"
+  work="$(mktemp -d "${HOME}/.cache/pbos-apk-framework.XXXXXX")"
   out="${work}/lepton-${ver}"
   java="${work}/jre/bin/java"
   if python3 -I "$GP_FETCH" tools "$work" >&2 \
@@ -435,14 +450,15 @@ build_fixes() {
      && podman cp "${CTR}:/data/local/tmp/out" "$out" \
      && cp "${work}/services.jar" "${out}/system/framework/services.jar" \
      && [[ "$(find "$out" -type f | wc -l)" == 10 ]]; then
-    rm -rf "${GP_ROOT}"/lepton-*
-    mv "$out" "${GP_ROOT}/lepton-${ver}"
+    mkdir -p "$FIXES"
+    rm -rf "${FIXES}"/lepton-* "${FIXES}"/failed-*
+    mv "$out" "${FIXES}/lepton-${ver}"
   else
     rm -rf "$out"
   fi
   asx 'rm -rf /data/local/tmp/services.jar /data/local/tmp/compile-odex.sh /data/local/tmp/out' || true
   rm -rf "$work"
-  [[ -d "${GP_ROOT}/lepton-${ver}" ]]
+  [[ -d "${FIXES}/lepton-${ver}" ]]
 }
 
 # --- titles -----------------------------------------------------------------
@@ -557,11 +573,10 @@ cmd_daemon() {
   mkdir -p "${SYS}/app" "${SYS}/data" "${SYS}/shadercache/fozpipelinesv6"
   touch "${SYS}/app/lepton-show-flatscreen"
   rm -f "$READY" "$MODE"
-  local google="" fixed=""
-  if google_on; then
-    google=1
-    [[ -d "${GP_ROOT}/lepton-$(lepton_ver)" ]] && fixed=1
-  fi
+  local google="" fixed="" ver
+  ver="$(lepton_ver)"
+  google_on && google=1
+  [[ -d "${FIXES}/lepton-${ver}" ]] && fixed=1
 
   export SteamAppId=pbos-android
   export STEAM_COMPAT_INSTALL_PATH="${SYS}/app"
@@ -578,18 +593,40 @@ cmd_daemon() {
   [[ -n "$(ls -A "${SYS}/data/baked/app_overlay" 2>/dev/null)" ]] \
     && podman unshare rm -rf "${SYS}/data/baked/app_overlay" "${SYS}/data/baked/app_workdir"
   export GAMESCOPE_WAYLAND_DISPLAY="${PBOS_ANDROID_DISPLAY:-$(current_display)}"
-  export PBOS_LEPTON_OVERLAY="$(overlay_dirs)"
   export PBOS_LEPTON_GOOGLE="$google"
 
-  "$LEPTON" waitforexitandrun &
-  local lepton_pid=$! i
-  trap 'rm -f "$READY"; kill -TERM "$lepton_pid" 2>/dev/null; wait "$lepton_pid"; exit 0' TERM INT
+  local lepton_pid="" i
+  trap 'rm -f "$READY"; [[ -z "$lepton_pid" ]] || { kill -TERM "$lepton_pid" 2>/dev/null; wait "$lepton_pid"; }; exit 0' TERM INT
+  boot_android() {
+    export PBOS_LEPTON_OVERLAY="$(overlay_dirs)"
+    "$LEPTON" waitforexitandrun &
+    lepton_pid=$!
+    for ((i = 0; i < 150; i++)); do
+      [[ "$(asx "getprop sys.boot_completed" || true)" == 1 ]] && return 0
+      kill -0 "$lepton_pid" 2>/dev/null || exit 1
+      sleep 2
+    done
+  }
+  boot_android
 
-  for ((i = 0; i < 150; i++)); do
-    [[ "$(asx "getprop sys.boot_completed" || true)" == 1 ]] && break
-    kill -0 "$lepton_pid" 2>/dev/null || exit 1
-    sleep 2
-  done
+  # No framework fixes for this Lepton yet (first start, or Valve updated
+  # Lepton): build them in this Android, then boot it again with them, before
+  # anything opens in it. A failed build is tried again a day later, or right
+  # away by "Add Google Play".
+  if [[ -z "$fixed" && -z "$(find "${FIXES}/failed-${ver}" -mmin -1440 2>/dev/null)" ]]; then
+    echo building >"$MODE"
+    say "Setting up Android for this version. The first start takes a few minutes…"
+    if build_fixes; then
+      fixed=1
+      kill -TERM "$lepton_pid" 2>/dev/null || true
+      wait "$lepton_pid" || true
+      boot_android
+    else
+      mkdir -p "$FIXES"
+      touch "${FIXES}/failed-${ver}"
+      say "Couldn't finish setting up Android for this version: apps that use the clipboard may close at start."
+    fi
+  fi
   if [[ -n "$google" ]]; then
     # Lepton ships no keyboard; Google Play's overlay has one. Android treats
     # the Wayland keyboard as a hardware one and would hide the touch keyboard.
@@ -614,22 +651,10 @@ cmd_daemon() {
   fi
   echo "$GAMESCOPE_WAYLAND_DISPLAY" >"$READY"
 
-  # Google Play without fixes for this Lepton (just added, or Valve updated
-  # Lepton): build them, then start again with them. A failed build is not
-  # retried until "Add Google Play" runs again.
-  if [[ -n "$google" && -z "$fixed" && ! -e "${GP_ROOT}/failed-$(lepton_ver)" ]]; then
-    echo building >"$MODE"
-    say "Setting up Google Play for this Android version. This takes a few minutes…"
-    if build_fixes; then
-      say "Google Play is ready. Restarting Android…"
-      systemctl --user restart --no-block pbos-android.service
-    else
-      touch "${GP_ROOT}/failed-$(lepton_ver)"
-      say "Couldn't set up Google Play for this Android version. Launch Add Google Play to try again."
-      echo failed >"$MODE"
-    fi
+  if [[ -n "$fixed" ]]; then
+    echo "${google:+google}-fixed" >"$MODE"
   else
-    echo "${google:+google}${fixed:+-fixed}" >"$MODE"
+    echo failed >"$MODE"
   fi
 
   # Pads every 3 s; titles for apps installed from inside Android (Play
@@ -831,7 +856,7 @@ EOF
 cmd_gapps() {
   local i tmp
   ensure_lepton
-  rm -f "${GP_ROOT}"/failed-*
+  rm -f "${FIXES}"/failed-*
   if ! google_on; then
     say "Downloading Google Play (about 230 MB)…"
     mkdir -p "$GP_ROOT"
