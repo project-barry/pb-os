@@ -34,6 +34,19 @@ only uses the dir matching the installed one. After Valve updates it, run
 `framework/build-framework.sh` with the device on the network and Android
 running, then rebuild the image.
 
+Without the matching dir Android still boots, but the restored services are
+gone, and that is not a quiet failure: `RestrictionsManager` is then null and
+the bundled Simple Keyboard dies in `onCreate`, so there is no keyboard to
+sign in to the Play Store with. `pbos-apk` logs "Lepton's Android image
+(&lt;ver&gt;) is newer than this build's framework fixes" when this happens —
+`service list | grep restrictions` inside the container confirms it.
+
+`build-framework.sh` runs baksmali/smali through Colima. Any Java 17+ works:
+on a host without Colima the same three steps (baksmali `-a 30`,
+`restore-services.py`, smali `-a 30`, then `repack-jar.py`) can be run
+locally — e.g. `nix-shell -p jre` — and only `compile-odex.sh` has to run on
+the device.
+
 ## What pbos-apk does at run time
 
 Not files, but part of the same fixes (see `sm8650-overlay/usr/bin/pbos-apk`):
@@ -47,3 +60,9 @@ Not files, but part of the same fixes (see `sm8650-overlay/usr/bin/pbos-apk`):
 - touch keyboard selected, "setup complete" set (else Android ignores Home)
 - gamescope patches: Android window gets the Steam title's app id, is
   reported to Steam, gets real touch (not click emulation)
+- edits to Steam's Lepton, re-applied every start (Steam updates overwrite
+  it). Valve rewords those files between releases, so each edit carries one
+  wording per Lepton version it knows: v3.0.3 quotes the two overlay paths
+  and dropped the `ro.product.brand` line, which silently cost the extra
+  rootfs overlay and the certified Pixel 5 identity until both were taught
+  the new shape
