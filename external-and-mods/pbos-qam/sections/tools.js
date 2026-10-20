@@ -338,7 +338,7 @@ function UpdateTab() {
             },
         })));
     }
-    return jsx(DFL.PanelSection, { title: "pb-os update", children: items });
+    return jsx(DFL.PanelSection, { title: "Software Update", children: items });
 }
 
 // -------------------------------------------------------------- install ---
@@ -1213,7 +1213,7 @@ function HardwareTab() {
         jsxs(DFL.PanelSection, { title: "Hardware", children: [
             row(jsx(DFL.ToggleField, {
                 label: "Controller MCU link",
-                description: "Needed for the KONKR, Performance and Quick Access buttons and stick lighting (Lighting tab)",
+                description: "Needed for the KONKR, Performance and Quick Access buttons and stick lighting (Personalization › Lighting)",
                 checked: st.mcu_enabled,
                 onChange: (v) => apply(setMcu(v)).then(() => {
                     toaster.toast({ title: "PB-OS Tools", body: v ? "MCU link enabled" : "MCU link disabled" });
@@ -1787,16 +1787,16 @@ function GamesTab() {
 }
 
 function onAvailable(title) {
-    toaster.toast({ title: "pb-os update", body: `${title} is available. Open PB-OS › Updates in Quick Access.`, duration: 6000 });
+    toaster.toast({ title: "pb-os update", body: `${title} is available. Open PB-OS › System in Quick Access.`, duration: 6000 });
 }
 
 function onLocal(version, place) {
-    toaster.toast({ title: "pb-os update", body: `pb-os ${version} is ${place}. Open PB-OS › Updates in Quick Access to install it.`, duration: 6000 });
+    toaster.toast({ title: "pb-os update", body: `pb-os ${version} is ${place}. Open PB-OS › System in Quick Access to install it.`, duration: 6000 });
 }
 
 function onMoveDone(direction, ok) {
     const what = direction === "sd" ? "Copy to microSD" : "Install to internal storage";
-    toaster.toast({ title: "PB-OS Tools", body: ok ? `${what} finished. Open PB-OS › Move SteamOS for the next steps.` : `${what} failed. Open PB-OS › Move SteamOS for details.`, duration: 8000 });
+    toaster.toast({ title: "PB-OS Tools", body: ok ? `${what} finished. Open PB-OS › System for the next steps.` : `${what} failed. Open PB-OS › System for details.`, duration: 8000 });
 }
 
 // Toast whenever the profile changes (Performance button, pbosctl or the
@@ -1904,24 +1904,24 @@ function protonSoon(appids) {
 let protonEvents = [];
 
 // ------------------------------------------------------------- plugins ---
-// Each former tab is a plugin in the PB-OS list. Games first on every
-// device; the device's own ones (lighting, performance, hardware, power)
-// once the backend has said which it has.
+// Each part goes on its page of the PB-OS list (PAGES in the loader). Those
+// every device has now; the device's own (lighting, hardware, power) once
+// the backend has said which it has.
 // Performance: the default mode (with pbosd's fan on the KONKR Pocket FIT /
 // AYANEO Pocket S2) and per-game settings.
-P.plugin({ id: "performance", title: "Performance", icon: PerformanceIcon, content: PerformanceTab, order: 10 });
-P.plugin({ id: "update", title: "Updates", icon: UpdateIcon, content: UpdateTab, order: 70 });
-P.plugin({ id: "install", title: "Move SteamOS", icon: InstallIcon, content: InstallTab, order: 80 });
+P.plugin({ id: "performance", page: "performance", icon: PerformanceIcon, content: PerformanceTab, order: 10 });
+P.plugin({ id: "update", page: "system", icon: UpdateIcon, content: UpdateTab, order: 10 });
+P.plugin({ id: "install", page: "system", icon: InstallIcon, content: InstallTab, order: 30 });
 (async () => {
     const lights = await getLights().then((s) => s.kind || "").catch(() => "");
     const [f, s] = await Promise.all([getFaceButtons().catch(() => ({})), stickState().catch(() => ({}))]);
     const face = !!f.supported || !!s.supported;
     const [rest, cc] = await Promise.all([getCharging().catch(() => ({})), getChargeControl().catch(() => ({}))]);
     const power = !!rest.supported || !!cc.supported;
-    if (lights) P.plugin({ id: "lights", title: "Lighting", icon: LightsIcon, content: LightsTab, order: 20 });
+    if (lights) P.plugin({ id: "lights", page: "personalization", icon: LightsIcon, content: LightsTab, order: 10 });
     // pbosd's buttons, or face buttons and sticks: Retroid Pocket 6 / Nova, AYN Thor.
-    if (lights === "pbosd" || face) P.plugin({ id: "hardware", title: "Hardware", icon: HardwareIcon, content: HardwareTab, order: 40 });
-    if (power) P.plugin({ id: "power", title: "Power", icon: PowerIcon, content: PowerTab, order: 50 });
+    if (lights === "pbosd" || face) P.plugin({ id: "hardware", page: "hardware", icon: HardwareIcon, content: HardwareTab, order: 10 });
+    if (power) P.plugin({ id: "power", page: "power", icon: PowerIcon, content: PowerTab, order: 10 });
 })().catch((e) => P.fail("plugins", e));
 
 // Android titles that no longer fit: a Google Play Store title without

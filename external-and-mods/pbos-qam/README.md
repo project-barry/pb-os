@@ -2,13 +2,18 @@
 
 PB-OS's own tab in Steam's Quick Access menu. Its icon is Barry's head. It
 replaces the PB-OS Tools and Barry Launcher Decky plugins. The tab opens on
-one list, with one entry per former plugin tab. Each device lists only what
-it has:
+one list of pages, in the order the PB-OS team laid out (`PAGES` in
+`frontend/src/loader.js`); each section adds its parts to a page
+(`plugin({ page, order, content })`). Each device lists only the pages it
+has something for:
 
-- From PB-OS Tools: Performance (a default mode and per-game settings),
-  Lighting, Hardware, Power, Updates, Move SteamOS.
-- From Barry Launcher (AYN Thor only): Dual Screen, Apps, Themes, Keyboard
-  Languages, Companion Apps, Joystick RGB Dimmer, Emulators.
+- Display (AYN Thor): Dual Screen, with Bottom Screen Art; Emulators.
+- Personalization: Lighting (the Thor's stick-light dimmer, or the device's
+  lighting); Themes and Widgets (Thor).
+- Apps (Thor): Apps, Companion Apps.
+- Performance: a default mode and per-game settings.
+- Hardware, Power: where the device has them.
+- System: Software Update, Keyboard Languages (Thor), Move SteamOS.
 
 Selecting an entry opens it. B or the back arrow returns to the list, and
 LB/RB step through the entries.
@@ -93,7 +98,7 @@ sudo pbos-qamd --call files list '["/home/steamos/Downloads"]'
 answer. ARGS is the JSON list the frontend would send.
 
 In Steam's page (CEF DevTools, port 8080), the loaded tab also has
-`window.__pbosQam.plugins()`, `.open("tools/update")` (shows a page),
+`window.__pbosQam.plugins()` (the list's keys), `.open("page/system")` (shows a page),
 `.toast({title, body})` and `.status()` (patched, drawn, sections, errors),
 for tests.
 

@@ -95,8 +95,9 @@ The same presets, without typing, on every device: PB-OS Tools → **Games**
 
 - Power LED (PM8550 LPG, RGB): profile colour flash on change (blue = Low Power, green = Balanced),
   then amber while charging, green when full, red pulse below 15%.
-- Stick RGB rings (MCU link): static / breath / rainbow / off from PB-OS
-  Utils → Lighting, `pbosctl rgb`, or the K button (with Steam Remap off).
+- Stick RGB rings (MCU link): static / breath / rainbow / off from Quick
+  Access → PB-OS → Personalization (Lighting), `pbosctl rgb`, or the K
+  button (with Steam Remap off).
 
 ### Quick Access panels (Decky)
 
