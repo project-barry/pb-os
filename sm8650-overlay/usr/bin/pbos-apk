@@ -162,6 +162,47 @@ patch("liblepton/mounting.sh",
        '    # pbos-apk: extra overlay\n'
        '    for OVERLAY in "${LEPTON_OVERLAY}" "${GUESTOS_OVERLAY}" ${PBOS_LEPTON_OVERLAY:-}; do\n'))
 
+# Lepton's teardown deletes the baked /data and app layers on every stop
+# (remove_prefix), even with LEPTON_NO_CLEANUP, which only guards
+# clear_baked_app_data: the shared Android lost every installed app each time
+# it stopped (10 minutes after the last app, or a restart). Keep them, as
+# LEPTON_NO_CLEANUP means everywhere else.
+patch("liblepton/liblepton.sh",
+      ('    if [[ -n "${LEPTON_PREFIX:-}" ]]; then\n'
+       '        prepare_baked_data_for_removal\n'
+       '\n'
+       '        # clear the whole prefix\n',
+       '    if [[ -n "${LEPTON_PREFIX:-}" ]]; then\n'
+       '        # pbos-apk: shared Android keeps its data\n'
+       '        if [[ "${LEPTON_NO_CLEANUP:-false}" == "false" ]]; then\n'
+       '            prepare_baked_data_for_removal\n'
+       '        fi\n'
+       '\n'
+       '        # clear the whole prefix\n'))
+
+# Lepton v3 runs one app per container: after each install its guest `cmd`
+# moves the app's files into the /data/steam_app layer and binds that over
+# the app's /data/app dir, for this start only. In the shared Android every
+# app landed in that one layer and was gone after the next start ("missing
+# scanned package"). Tell the guest it's shared, and leave apps in /data/app.
+patch("liblepton/properties.sh",
+      ('    # Set correct timezone\n',
+       '    # pbos-apk: shared Android\n'
+       '    if [[ -n "${PBOS_SHARED_ANDROID:-}" ]]; then\n'
+       '        props_echo "pbos.shared_android=1"\n'
+       '    fi\n'
+       '\n'
+       '    # Set correct timezone\n'))
+patch("images/rootfs_overlay/system/bin/cmd",
+      ('    rm -rf /data/media/0/Android/obb/${APP_ID};\n',
+       '    # pbos-apk: shared Android keeps apps (and OBBs) where Android put them\n'
+       '    if [ "$(getprop pbos.shared_android)" != 1 ]; then\n'
+       '    rm -rf /data/media/0/Android/obb/${APP_ID};\n'))
+patch("images/rootfs_overlay/system/bin/cmd",
+      ('    cp /data/steam_app/UECommandLine.txt "${APP_PATH}/UECommandLine.txt" 2> /dev/null || true\n',
+       '    cp /data/steam_app/UECommandLine.txt "${APP_PATH}/UECommandLine.txt" 2> /dev/null || true\n'
+       '    fi  # pbos-apk: shared Android\n'))
+
 # Lepton writes brand/model/manufacturer into its runtime waydroid.prop on
 # every start. With Google Play added (PBOS_LEPTON_GOOGLE), match the
 # certified identity from props_overlay, or Google sees a Pixel 5 fingerprint
