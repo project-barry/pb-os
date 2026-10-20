@@ -39,8 +39,6 @@ const getFaceButtons = callable("get_face_buttons");
 const setFaceButtons = callable("set_face_buttons");
 const getMtp = callable("get_mtp");
 const setMtp = callable("set_mtp");
-const listMtpFolders = callable("list_mtp_folders");
-const setMtpShares = callable("set_mtp_shares");
 // Barry Launcher in Desktop Mode (AYN Thor).
 const getBarryDesktop = callable("get_barry_desktop");
 const setBarryDesktop = callable("set_barry_desktop");
@@ -901,92 +899,18 @@ function FaceButtons({ inline }) {
 
 // ------------------------------------------------------------------- mtp ---
 // MTP over the USB-C cable (pbos-mtp.service): the PC sees Home and Steam,
-// with nothing to install at either end. Off by default, like SSH. Every
-// device has it, so this is its own section in both Hardware layouts.
+// with nothing to install at either end. Off by default, like SSH. One
+// switch: the folders are fixed, so there is nothing here to remove.
 function MtpShare() {
     const [st, setSt] = useState(null);
-    const [browse, setBrowse] = useState(null);   // the folder being looked at
-    const [busy, setBusy] = useState(false);
-    const [err, setErr] = useState("");
     useEffect(() => { getMtp().then(setSt).catch(() => setSt({ available: false })); }, []);
-
-    const open = useCallback((path) => {
-        setErr("");
-        setBusy(true);
-        listMtpFolders(path || "").then((r) => {
-            setBusy(false);
-            if (!r || !r.ok) { setErr((r && r.error) || "Could not open that folder."); return; }
-            setBrowse(r);
-        }).catch((e) => { setBusy(false); setErr(String((e && e.message) || e)); });
-    }, []);
-
-    const save = useCallback((shares, said) => {
-        setBusy(true);
-        setMtpShares(shares).then((r) => {
-            setBusy(false);
-            setSt(r);
-            toaster.toast({ title: "PB-OS Tools", body: said });
-        }).catch(() => {
-            setBusy(false);
-            getMtp().then(setSt).catch(() => {});
-        });
-    }, []);
-
     if (!st || !st.available) return null;
-    const shares = st.shares || [];
-
-    // Browsing: the whole section becomes the folder browser. The tab's file
-    // picker cannot do this - it steps into any folder that is clicked.
-    if (browse) {
-        const rows = [];
-        if (browse.parent) {
-            rows.push(row(jsx(DFL.ButtonItem, {
-                label: "⬆  Up a folder",
-                layout: "below",
-                disabled: busy,
-                onClick: () => open(browse.parent),
-            })));
-        }
-        for (const e of browse.entries || []) {
-            rows.push(row(jsx(DFL.ButtonItem, {
-                label: `📁  ${e.name}`,
-                layout: "below",
-                disabled: busy,
-                onClick: () => open(e.path),
-            })));
-        }
-        if (!(browse.entries || []).length) rows.push(note("No folders in here."));
-        return jsxs(DFL.PanelSection, { title: "Share a folder", children: [
-            note(browse.path),
-            err ? note(err) : null,
-            row(jsx(DFL.ButtonItem, {
-                label: "Share this folder",
-                layout: "below",
-                disabled: busy || shares.length >= (st.max_shares || 16)
-                    || shares.some((s) => s.path === browse.path),
-                onClick: () => {
-                    const next = [...shares.map((s) => ({ path: s.path, label: s.label, rw: s.rw })),
-                                  { path: browse.path, rw: true }];
-                    setBrowse(null);
-                    save(next, "Folder shared");
-                },
-            })),
-            row(jsx(DFL.ButtonItem, {
-                label: "Cancel",
-                layout: "below",
-                disabled: busy,
-                onClick: () => { setBrowse(null); setErr(""); },
-            })),
-            ...rows,
-        ].filter(Boolean) });
-    }
 
     const desc = !st.enabled
-        ? "Let a PC browse and copy your files over the USB-C cable"
+        ? "Let a PC browse and copy your Home and Steam folders over the USB-C cable"
         : st.connected
-            ? "Connected: the PC can see the folders below"
+            ? "Connected: the PC can see your Home and Steam folders"
             : "On: connect the USB-C cable to a PC";
-    const full = shares.length >= (st.max_shares || 16);
     return jsxs(DFL.PanelSection, { title: "USB File Transfer", children: [
         row(jsx(DFL.ToggleField, {
             label: "MTP over USB",
@@ -998,42 +922,16 @@ function MtpShare() {
                     setSt(r);
                     toaster.toast({
                         title: "PB-OS Tools",
-                        body: v ? "MTP on: the PC can see your shared folders" : "MTP off",
+                        body: v ? "MTP on: the PC can see your Home and Steam folders" : "MTP off",
                     });
                 }).catch(() => getMtp().then(setSt).catch(() => {}));
             },
         })),
-        ...shares.map((s) => row(jsx(DFL.ButtonItem, {
-            label: s.label + (s.rw ? "" : " (read only)"),
-            description: s.path,
-            layout: "below",
-            // The last folder stays: umtprd with no stores shows the PC an
-            // empty device. Turn MTP off instead.
-            disabled: busy || shares.length < 2,
-            onClick: () => save(
-                shares.filter((o) => o.path !== s.path)
-                    .map((o) => ({ path: o.path, label: o.label, rw: o.rw })),
-                `${s.label} is no longer shared`,
-            ),
-            children: "Remove",
-        }))),
-        row(jsx(DFL.ButtonItem, {
-            label: full ? `Folder limit reached (${st.max_shares})` : "Add a folder…",
-            layout: "below",
-            disabled: busy || full,
-            onClick: () => open(st.home || ""),
-            children: "Browse",
-        })),
-        err ? note(err) : null,
-        note(lines(...[
-            "Only your own files and plugged-in drives can be shared.",
-            st.enabled
-                ? "Changing the list reconnects the device, so the PC picks the folders up."
-                : null,
+        note(lines(
             "Closing the lid disconnects it, and a transfer still running is lost.",
             "Changing a game's files while Steam is running can confuse Steam.",
-        ].filter(Boolean))),
-    ].filter(Boolean) });
+        )),
+    ] });
 }
 
 // ---------------------------------------------------------------- sticks ---

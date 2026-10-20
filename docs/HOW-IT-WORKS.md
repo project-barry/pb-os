@@ -285,13 +285,9 @@ Output: `/work/steamos-sm8650.img`.
 - MTP over USB is off by default too, and the PB-OS tab's Hardware section
   (**USB File Transfer**) turns it on: the device then shows up on a PC as
   itself, with a Home and a Steam folder, and needs nothing installed at
-  either end. The same section adds and removes the folders the PC sees (up
-  to umtprd's 16), browsing the user's own files and plugged-in drives;
-  changing the list restarts the gadget, so the PC sees the device come back
-  with the new folders. The list is `/var/lib/pbos-mtp/shares.json`, and a
-  complete config of your own at `/etc/umtprd/umtprd.conf` replaces all of
-  it. It is uMTP-Responder in a FunctionFS gadget
-  (`pbos-mtp.service`, `external-and-mods/uMTP-Responder`), a system service
+  either end. Those two folders are fixed; a complete config of your own at
+  `/etc/umtprd/umtprd.conf` replaces the generated one. It is uMTP-Responder
+  in a FunctionFS gadget (`pbos-mtp.service`, `external-and-mods/uMTP-Responder`), a system service
   rather than a user one because closing the lid on a PC's port is a charge
   rest, which freezes the user slice: a responder frozen in there leaves USB
   alive but unanswered and hangs the host's file manager. Around a sleep or a

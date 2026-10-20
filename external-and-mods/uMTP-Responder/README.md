@@ -57,23 +57,10 @@ reads measured 70 / 97 / 108 / 118 / 116 MB/s at 64 KB / 256 KB / 1 MB /
 
 ## Which folders the PC sees
 
-The PB-OS tab's **USB File Transfer** section adds and removes them. The list
-lives in `/var/lib/pbos-mtp/shares.json`, and `pbos-mtp storages` turns it
-into the `storage` lines of the generated config; without that file it is the
-home folder and the Steam folder. `pbos-mtp shares` prints the effective list
-as JSON, which is how pbos-qamd reads it back — the defaults and the checking
-are written down once, in the helper, so the two cannot drift.
-
-Unusable entries are dropped rather than allowed to break the config (gone,
-not a folder, a duplicate, a quote or a newline in the path), labels are made
-unique because an MTP store name is what the PC shows, and the list is cut to
-umtprd's 16 stores (`MAX_STORAGE_NB`).
-
-umtprd reads its stores once at startup, so changing the list restarts the
-service: the host sees the device leave and come back with the new folders.
-Its `lock`/`unlock` IPC can take a store away and bring it back live
-(`MTP_EVENT_STORE_REMOVED` / `_ADDED`), but only for stores already declared
-in the config, so it is no help for a folder the user has just picked.
+Always the home folder and the Steam folder (`pbos-mtp storages`). The PB-OS
+tab has one switch and no folder list: per-folder Remove buttons read like
+they delete the folder, so they were left out. A complete config of your own
+at `/etc/umtprd/umtprd.conf` replaces the generated one, folders included.
 
 ## The FunctionFS instance may not be called `mtp`
 

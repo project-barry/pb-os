@@ -115,7 +115,7 @@ Inherited from **SteamOS-Ubuntu**. See
 | **MangoHud** | https://github.com/flightlessmango/MangoHud | Performance overlay |
 | **lsfg-vk** | https://github.com/PancakeTAS/lsfg-vk | Vulkan frame generation |
 | **ptitSeb / box64** | https://github.com/ptitSeb/box64 | x86_64 programs on ARM (Decky PluginLoader until it went native) |
-| **Viveris Technologies / uMTP-Responder** (GPL-3.0) | https://github.com/viveris/uMTP-Responder | MTP over USB (`pbos-mtp.service`): built unmodified from the commit in `external-and-mods/uMTP-Responder/REF`, with SuperSpeed descriptors and systemd notification turned on at build time |
+| **Viveris Technologies / uMTP-Responder** (GPL-3.0) | https://github.com/viveris/uMTP-Responder | MTP over USB (`pbos-mtp.service`): built from the commit in `external-and-mods/uMTP-Responder/REF` plus one patch (refuses dot names while hidden files are off), with SuperSpeed descriptors and systemd notification turned on at build time |
 | **thorch-os/thorch** | https://github.com/thorch-os/thorch | AYN Thor dual-screen / touch extras |
 | **Tabler Icons** (MIT) | https://github.com/tabler/tabler-icons | Outline Firefox, Discord and Signal logos on Barry Launcher's home screen (`shell/Icon.qml`); the cloud outline in the Cloud theme's mark (`dashboard/skins/cloud/Cloud.qml`) |
 | **Thumb-Key** (GNU AGPL 3.0) | https://github.com/dessalines/thumb-key | The letter and number layouts of Barry Launcher's optional Thumb-Key keyboard (`keyboards-extra/en-thumbkey/`, converted by `tools/thumbkey-to-barry.py`); the keys are drawn and read by Barry's own code, none of Thumb-Key's |

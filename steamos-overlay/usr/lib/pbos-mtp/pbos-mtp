@@ -1,5 +1,5 @@
 #!/bin/bash
-# pbos-mtp gadget|bind|unbind|down — the MTP USB gadget behind
+# pbos-mtp conf|storages|gadget|bind|unbind|down — the MTP USB gadget behind
 # pbos-mtp.service. MTP lets a PC browse and copy the user's files over the
 # USB-C cable with nothing to install on either side, while the device keeps
 # running: unlike a mass_storage gadget it never hands /home away as a block
@@ -24,8 +24,6 @@ LIB=/usr/lib/pbos-mtp
 TEMPLATE="$LIB/umtprd.conf"
 OVERRIDE=/etc/umtprd/umtprd.conf      # the user's own, used as-is when present
 RUNCONF=/run/pbos-mtp/umtprd.conf
-SHARES=/var/lib/pbos-mtp/shares.json  # the PB-OS tab's folder list
-MAX_SHARES=16                         # umtprd's own limit (MAX_STORAGE_NB)
 
 # The desktop user (uid 1000 on every PB-OS image) owns what MTP exposes.
 user() { getent passwd 1000 | cut -d: -f1; }
@@ -49,78 +47,22 @@ serial() {
     printf 'pbos-%s' "${id:0:12}"
 }
 
-shares() {
-    # The folders to share, as JSON, from $SHARES - the single place the
-    # defaults are written down, so pbos-qamd's USB File Transfer section can
-    # read them back from here instead of keeping its own copy. Anything
-    # unusable (gone, not a folder, a duplicate, a quote or a newline in the
-    # path) is dropped rather than breaking umtprd's config, labels are made
-    # unique because MTP store names are what the PC shows, and the list is cut
-    # to umtprd's own limit.
-    #
-    # Only what the folder can be is checked here, not where it is: keeping
-    # shares inside the user's own files and plugged-in drives is pbos-qamd's
-    # job, for what the tab offers. This file is root's, like the config it
-    # feeds, so editing it by hand can share anything - as editing
-    # /etc/umtprd/umtprd.conf could anyway.
-    python3 - "$SHARES" "$(home)" "$MAX_SHARES" <<'PY'
-import json, os, sys
-
-path, home, limit = sys.argv[1], sys.argv[2], int(sys.argv[3])
-defaults = [
-    {"path": home, "label": "Home", "rw": True},
-    {"path": os.path.join(home, ".local/share/Steam"), "label": "Steam", "rw": True},
-]
-# The names these two keep when nothing names them: the home folder's own is
-# the account ("steamos"), which says nothing to whoever is looking at the PC.
-known = {os.path.realpath(d["path"]): d["label"] for d in defaults}
-try:
-    with open(path, encoding="utf-8") as fh:
-        raw = json.load(fh)
-    shares = raw.get("shares") if isinstance(raw, dict) else raw
-    if not isinstance(shares, list):
-        raise ValueError("not a list")
-except (OSError, ValueError, AttributeError):
-    shares = defaults
-
-out, seen, labels = [], set(), set()
-for s in shares:
-    if not isinstance(s, dict):
-        continue
-    p = str(s.get("path") or "")
-    if not p or '"' in p or "\n" in p:
-        continue
-    p = os.path.realpath(p)
-    if p in seen or not os.path.isdir(p):
-        continue
-    label = str(s.get("label") or known.get(p) or os.path.basename(p) or "Root")
-    label = label.replace('"', "").replace("\n", " ").strip()[:40] or "Folder"
-    base, n = label, 2
-    while label in labels:
-        label = f"{base} ({n})"
-        n += 1
-    seen.add(p)
-    labels.add(label)
-    out.append({"path": p, "label": label, "rw": bool(s.get("rw", True))})
-    if len(out) >= limit:
-        break
-print(json.dumps({"shares": out}))
-PY
-}
-
 storages() {
-    # The `storage` lines for umtprd's config.
-    shares | python3 -c '
-import json, sys
-for s in json.load(sys.stdin)["shares"]:
-    print("storage \"%s\" \"%s\" \"%s\"" % (s["path"], s["label"], "rw" if s["rw"] else "ro"))
-'
+    # The `storage` lines for umtprd's config: always Home and the Steam
+    # folder (the same files by a shorter path, for saves, mods and emulator
+    # content). A folder that does not exist yet is left out.
+    local h st
+    h="$(home)"
+    st="$h/.local/share/Steam"
+    [[ -d "$h" ]] && printf 'storage "%s" "Home" "rw"\n' "$h"
+    [[ -d "$st" ]] && printf 'storage "%s" "Steam" "rw"\n' "$st"
+    return 0
 }
 
 conf() {
     # umtprd always reads $RUNCONF, so the unit needs no shell to find it:
     # either the user's own config, linked there, or the image's template with
-    # this device's details and shared folders filled in.
+    # this device's details and the Home and Steam folders filled in.
     mkdir -p "$(dirname "$RUNCONF")"
     if [[ -f "$OVERRIDE" ]]; then
         ln -sfn "$OVERRIDE" "$RUNCONF"
@@ -149,9 +91,6 @@ udc() { ls /sys/class/udc | head -1; }
 case "${1:-}" in
 conf)
     conf
-    ;;
-shares)
-    shares
     ;;
 storages)
     storages
@@ -199,7 +138,7 @@ down)
     rm -f "$RUNCONF"
     ;;
 *)
-    echo "usage: pbos-mtp conf|shares|storages|gadget|bind|unbind|down" >&2
+    echo "usage: pbos-mtp conf|storages|gadget|bind|unbind|down" >&2
     exit 2
     ;;
 esac
