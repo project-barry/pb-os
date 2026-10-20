@@ -594,6 +594,12 @@ cmd_daemon() {
     && podman unshare rm -rf "${SYS}/data/baked/app_overlay" "${SYS}/data/baked/app_workdir"
   export GAMESCOPE_WAYLAND_DISPLAY="${PBOS_ANDROID_DISPLAY:-$(current_display)}"
   export PBOS_LEPTON_GOOGLE="$google"
+  # Rootless podman puts the container in its own libpod scope; gamescope
+  # shows the shared Android's window for the running Steam title only when
+  # it comes from pbos-android.service. Keep the container in this unit.
+  mkdir -p "${HOME}/.local/share/pbos-apk"
+  printf '[containers]\ncgroups = "split"\n' >"${HOME}/.local/share/pbos-apk/containers.conf"
+  export CONTAINERS_CONF_OVERRIDE="${HOME}/.local/share/pbos-apk/containers.conf"
 
   local lepton_pid="" i
   trap 'rm -f "$READY"; [[ -z "$lepton_pid" ]] || { kill -TERM "$lepton_pid" 2>/dev/null; wait "$lepton_pid"; }; exit 0' TERM INT
