@@ -6,8 +6,15 @@ gives PB-OS devices MTP, so a PC can browse and copy the user's files over
 the USB-C cable with no drive letter, no credentials and nothing to install
 on either side — the way a phone does it.
 
-Upstream at the commit in [REF](REF) (v1.9.1, 2026-10-11), built unmodified
-by `scripts/build-umtprd-in-rootfs.sh`. No patches.
+Upstream at the commit in [REF](REF) (v1.9.1, 2026-10-11), built by
+`scripts/build-umtprd-in-rootfs.sh` with the one patch in `patches/`.
+
+## Patches
+
+- `0001` refuses new and renamed names that start with a dot while
+  `show_hidden_files` is off. Hiding dot files only stops a PC seeing them:
+  upstream keeps a leading dot on names a host sends, so with Home shared
+  read-write a PC could still overwrite `~/.bashrc` or `~/.profile` by name.
 
 ## Why MTP and not a disk
 

@@ -4,7 +4,8 @@
 # repos have no uMTP-Responder, and it is plain C with no dependencies beyond
 # libc, libpthread, librt and libsystemd.
 #
-# Upstream unmodified, at the commit in external-and-mods/uMTP-Responder/REF.
+# Upstream at the commit in external-and-mods/uMTP-Responder/REF, plus the
+# patches in that folder's patches/.
 # CONFIG_USB_SS_SUPPORT is required: without SuperSpeed descriptors the gadget
 # enumerates on a SuperSpeed port and then sticks at UDC state `addressed`
 # forever. See that folder's README for the rest.
@@ -34,7 +35,7 @@ command -v bwrap >/dev/null || die "bwrap required (apt install bubblewrap)"
 [[ -x "$R/usr/bin/gcc" && -x "$R/usr/bin/make" ]] || die "rootfs needs gcc+make"
 
 # Same source + rootfs → reuse the last build.
-stamp="$(cat "${MODS}/REF" "${BASH_SOURCE[0]}" | sha256sum | cut -c1-16) $(grep '^BUILD_ID=' "$R/usr/lib/os-release")"
+stamp="$(cat "${MODS}/REF" "${MODS}"/patches/*.patch "${BASH_SOURCE[0]}" | sha256sum | cut -c1-16) $(grep '^BUILD_ID=' "$R/usr/lib/os-release")"
 if [[ -x "$BUILD/dest/usr/lib/pbos-mtp/umtprd" && "$(cat "$BUILD/stamp" 2>/dev/null)" == "$stamp" ]]; then
   log "up to date: $BUILD/dest"
   exit 0
@@ -48,6 +49,9 @@ fi
 "${g[@]}" cat-file -e "${REF}^{commit}" 2>/dev/null || "${g[@]}" fetch -q origin
 "${g[@]}" -c advice.detachedHead=false checkout -q -f "$REF"
 "${g[@]}" clean -qfdx
+for p in "${MODS}"/patches/*.patch; do
+  "${g[@]}" apply "$p" || die "patch failed: ${p##*/}"
+done
 
 cleanup() {
   mountpoint -q "$OVL/root" && umount "$OVL/root"
