@@ -17,7 +17,7 @@
 # stopped 10 minutes after the last app closes). Every app installed in it —
 # sideloaded or from the Play Store — gets its own Steam title with its name
 # and icon. Lepton is presented a Steam launch without an APK
-# (SteamAppId=konkr-android), which keeps /data between runs.
+# (SteamAppId=pbos-android), which keeps /data between runs.
 #
 # PB-OS ships no Google apps. Google Play is the user's choice: `gapps`
 # fetches it (google-play-fetch, checked against pinned SHA-256) into
@@ -32,21 +32,21 @@ LEPTON="${LEPTON_DIR}/lepton"
 APPS="${HOME}/Android"
 INBOX="${APPS}/Inbox"
 SYS="${APPS}/.android"            # shared Android: data, icons, known titles
-CTR=lepton-steamlaunch-konkr-android
+CTR=lepton-steamlaunch-pbos-android
 RUNDIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
-READY="${RUNDIR}/konkr-android.ready"
+READY="${RUNDIR}/pbos-android.ready"
 DESKTOP_DIR="${HOME}/.local/share/applications"
 APK_INFO=/usr/lib/pbos/apk-info
 # Lepton overlay from the image (Steam pad key layout, no freeform windows):
 # in home, not on the root partition; the updater installs it there.
-OVERLAY_ROOT="${HOME}/.local/share/konkr-android"
+OVERLAY_ROOT="${HOME}/.local/share/pbos-android"
 # Google Play, added by the user: common/ (Play Store, Play services, touch
 # keyboard) and lepton-<ver>/ (framework fixes built here for that Lepton).
 GP_ROOT="${HOME}/.local/share/pbos-google-play"
 GP_FETCH=/usr/lib/pbos/google-play-fetch
 FRAMEWORK=/usr/lib/pbos/android-framework
 GP_DESKTOP="${DESKTOP_DIR}/pbos-google-play.desktop"
-MODE="${RUNDIR}/konkr-android.mode"
+MODE="${RUNDIR}/pbos-android.mode"
 GOOGLE_PKGS=(com.android.vending com.google.android.gms com.google.android.gsf rkr.simplekeyboard.inputmethod)
 # Touch keyboard from Google Play's overlay (Simple Keyboard, F-Droid).
 IME=rkr.simplekeyboard.inputmethod/.latin.LatinIME
@@ -97,17 +97,26 @@ def patch(name, *pairs):
             return
     print(f"pbos-apk: WARN {name} changed upstream, patch skipped", file=sys.stderr)
 
+# Edits made before the PB-OS rename are marked konkr-apk and read KONKR_
+# variables: give them the current names, so the checks below find them.
+for name in ("lepton", "liblepton/mounting.sh", "liblepton/properties.sh"):
+    f = root / name
+    s = f.read_text()
+    t = s.replace("# konkr-apk: ", "# pbos-apk: ").replace("KONKR_LEPTON_", "PBOS_LEPTON_")
+    if t != s:
+        f.write_text(t)
+
 # A Steam launch without an APK boots straight to Android (like `dev`), but
 # keeps its data like a Steam game.
 patch("lepton",
       ('        if ! is_steamlaunch && ! is_app; then\n            continue_boot_after_bake\n',
-       '        # konkr-apk: shared Android without an app\n'
+       '        # pbos-apk: shared Android without an app\n'
        '        if ! is_app; then\n            continue_boot_after_bake\n'))
 
 patch("lepton",
       ('        if is_steamlaunch || [[ "${LEPTON_CONTEXT}" == *.apk ]]; then\n'
        '            if [[ -z "${APP_PACKAGE_ID}" ]]; then\n',
-       '        # konkr-apk: shared Android has no APK\n'
+       '        # pbos-apk: shared Android has no APK\n'
        '        if { is_steamlaunch && is_app; } || [[ "${LEPTON_CONTEXT}" == *.apk ]]; then\n'
        '            if [[ -z "${APP_PACKAGE_ID}" ]]; then\n'))
 
@@ -116,7 +125,7 @@ patch("lepton",
 patch("liblepton/mounting.sh",
       ('    if [[ -d "${STEAM_COMPAT_DATA_PATH:-}" ]]; then\n'
        '        PERSISTENT_DATA_PATH=',
-       '    # konkr-apk: shared Android has no app id\n'
+       '    # pbos-apk: shared Android has no app id\n'
        '    if [[ -d "${STEAM_COMPAT_DATA_PATH:-}" && -n "$(get_app_id)" ]]; then\n'
        '        PERSISTENT_DATA_PATH='))
 
@@ -125,8 +134,8 @@ patch("liblepton/mounting.sh",
 # recreates its virtual pads, so per-node mounts would go stale.
 patch("liblepton/mounting.sh",
       ('    # By default, we do not allow writes to msg\n',
-       '    # konkr-apk: host input devices\n'
-       '    if [[ -n "${KONKR_LEPTON_OVERLAY:-}" ]]; then\n'
+       '    # pbos-apk: host input devices\n'
+       '    if [[ -n "${PBOS_LEPTON_OVERLAY:-}" ]]; then\n'
        '        podman_mount_entry /dev/input /dev/host-input ro\n'
        '    fi\n\n'
        '    # By default, we do not allow writes to msg\n'))
@@ -138,8 +147,8 @@ patch("liblepton/mounting.sh",
 patch("liblepton/mounting.sh",
       ('    # namespaces\n',
        '    # namespaces\n'
-       '    # konkr-apk: low mmap layout for LuaJIT\n'
-       '    if [[ -n "${KONKR_LEPTON_OVERLAY:-}" ]]; then\n'
+       '    # pbos-apk: low mmap layout for LuaJIT\n'
+       '    if [[ -n "${PBOS_LEPTON_OVERLAY:-}" ]]; then\n'
        '        podman_cmdline --ulimit stack=-1:-1\n'
        '    fi\n'))
 
@@ -147,19 +156,19 @@ patch("liblepton/mounting.sh",
 # own Android games keep Valve's image. Lepton v3.0.3 quotes the two paths.
 patch("liblepton/mounting.sh",
       ('    for OVERLAY in ${LEPTON_OVERLAY} ${GUESTOS_OVERLAY}; do\n',
-       '    # konkr-apk: extra overlay\n'
-       '    for OVERLAY in ${LEPTON_OVERLAY} ${GUESTOS_OVERLAY} ${KONKR_LEPTON_OVERLAY:-}; do\n'),
+       '    # pbos-apk: extra overlay\n'
+       '    for OVERLAY in ${LEPTON_OVERLAY} ${GUESTOS_OVERLAY} ${PBOS_LEPTON_OVERLAY:-}; do\n'),
       ('    for OVERLAY in "${LEPTON_OVERLAY}" "${GUESTOS_OVERLAY}"; do\n',
-       '    # konkr-apk: extra overlay\n'
-       '    for OVERLAY in "${LEPTON_OVERLAY}" "${GUESTOS_OVERLAY}" ${KONKR_LEPTON_OVERLAY:-}; do\n'))
+       '    # pbos-apk: extra overlay\n'
+       '    for OVERLAY in "${LEPTON_OVERLAY}" "${GUESTOS_OVERLAY}" ${PBOS_LEPTON_OVERLAY:-}; do\n'))
 
 # Lepton writes brand/model/manufacturer into its runtime waydroid.prop on
-# every start. With Google Play added (KONKR_LEPTON_GOOGLE), match the
+# every start. With Google Play added (PBOS_LEPTON_GOOGLE), match the
 # certified identity from props_overlay, or Google sees a Pixel 5 fingerprint
 # on a "Valve Lepton" and refuses it again; without it Android keeps Valve's.
 # Lepton v3.0.3 dropped the ro.product.brand line.
 def identity(valve, gate):
-    return ('    # konkr-apk: certified identity\n'
+    return ('    # pbos-apk: certified identity\n'
             f'    if [[ -n "${{{gate}:-}}" ]]; then\n'
             '        props_echo "ro.product.brand=google"\n'
             '        props_echo "ro.product.model=Pixel 5"\n'
@@ -173,10 +182,10 @@ V3 = ('    props_echo "ro.product.model=Lepton"\n'
 # Files patched before Google Play was optional (gated on the overlay) come
 # first: Valve's own lines are still inside them, in the else branch.
 patch("liblepton/properties.sh",
-      (identity(V2, "KONKR_LEPTON_OVERLAY"), identity(V2, "KONKR_LEPTON_GOOGLE")),
-      (identity(V3, "KONKR_LEPTON_OVERLAY"), identity(V3, "KONKR_LEPTON_GOOGLE")),
-      (V2, identity(V2, "KONKR_LEPTON_GOOGLE")),
-      (V3, identity(V3, "KONKR_LEPTON_GOOGLE")))
+      (identity(V2, "PBOS_LEPTON_OVERLAY"), identity(V2, "PBOS_LEPTON_GOOGLE")),
+      (identity(V3, "PBOS_LEPTON_OVERLAY"), identity(V3, "PBOS_LEPTON_GOOGLE")),
+      (V2, identity(V2, "PBOS_LEPTON_GOOGLE")),
+      (V3, identity(V3, "PBOS_LEPTON_GOOGLE")))
 EOF
 }
 
@@ -184,9 +193,9 @@ EOF
 # into every container. There's no SteamVR here: point them at empty dirs,
 # unless a real SteamVR registered itself.
 ensure_vrpaths() {
-  local vrp="${HOME}/.config/openvr/openvrpaths.vrpath" base="${HOME}/.local/share/konkr-apk/steamvr"
+  local vrp="${HOME}/.config/openvr/openvrpaths.vrpath" base="${HOME}/.local/share/pbos-apk/steamvr"
   # Always: a vrpath left pointing here (a home copied without
-  # ~/.local/share/konkr-apk) makes Lepton pass an empty host path to podman
+  # ~/.local/share/pbos-apk) makes Lepton pass an empty host path to podman
   # ("host directory cannot be empty") and Android never starts.
   mkdir -p "${vrp%/*}" "$base/runtime" "$base/config" "$base/logs"
   [[ -s "$vrp" ]] && return 0
@@ -258,7 +267,7 @@ ensure_android() {
   fi
   # Switched between Game and Desktop Mode: the window lives on the old one.
   systemctl --user stop pbos-android.service 2>/dev/null || true
-  systemctl --user set-environment KONKR_ANDROID_DISPLAY="$want"
+  systemctl --user set-environment PBOS_ANDROID_DISPLAY="$want"
   systemctl --user start pbos-android.service
   say "Starting Android…"
   for ((i = 0; i < 120; i++)); do
@@ -267,6 +276,26 @@ ensure_android() {
     sleep 2
   done
   die "Android didn't start (journalctl --user -u pbos-android)."
+}
+
+# Folders and desktop entries from before the PB-OS rename (konkr): move them
+# once, at login and when Android starts. The PB-OS tab moves the Steam
+# titles to /usr/bin/pbos-apk (their app ids stay).
+migrate_old_names() {
+  local old new f
+  for old in konkr-android konkr-apk; do
+    new="${HOME}/.local/share/pbos-${old#konkr-}"
+    old="${HOME}/.local/share/${old}"
+    [[ -d "$old" ]] || continue
+    if [[ -d "$new" ]]; then rm -rf "$old"; else mv "$old" "$new"; fi
+  done
+  for f in "${DESKTOP_DIR}"/konkr-android-*.desktop "$GP_DESKTOP"; do
+    [[ -f "$f" ]] || continue
+    new="${f%/*}/$(basename "$f" | sed 's/^konkr-android-/pbos-android-/')"
+    sed 's#/usr/bin/konkr-apk#/usr/bin/pbos-apk#' "$f" >"${new}.tmp" && mv "${new}.tmp" "$new"
+    [[ "$f" == "$new" ]] || rm -f "$f"
+  done
+  return 0
 }
 
 # Rootfs overlays for Lepton (see external-and-mods/pbos-android):
@@ -291,7 +320,7 @@ PROPS_FP=google/redfin/redfin:11/RQ3A.211001.001/7641976:user/release-keys
 # internal problem with your device" popup appears on every start.
 props_overlay() {
   local ver="$1" src="${LEPTON_DIR}/images/rootfs" out f
-  out="${HOME}/.local/share/konkr-apk/props-${ver}"
+  out="${HOME}/.local/share/pbos-apk/props-${ver}"
   if [[ "$(cat "$out/.rev" 2>/dev/null)" != "$PROPS_REV" ]]; then
     rm -rf "$out"
     for f in system/build.prop system/system_ext/build.prop system/product/build.prop \
@@ -384,17 +413,14 @@ add_title() {
   [[ -n "$activity" ]] || return 0   # nothing to open (services, libraries)
   label="${meta[1]:-$pkg}"
   [[ -f "$icon" ]] || icon=android-package-archive
-  desktop="${DESKTOP_DIR}/konkr-android-${pkg}.desktop"
+  desktop="${DESKTOP_DIR}/pbos-android-${pkg}.desktop"
   mkdir -p "$DESKTOP_DIR"
-  # Exec keeps the old name (a permanent link to pbos-apk): Steam derives a
-  # shortcut's app id from its exe and name, so titles keep the same id as
-  # the ones added before the rename.
   cat >"$desktop" <<EOF
 [Desktop Entry]
 Type=Application
 Name=${label}
 Comment=Android app (${pkg})
-Exec=/usr/bin/konkr-apk run ${pkg}
+Exec=/usr/bin/pbos-apk run ${pkg}
 Icon=${icon}
 Categories=Game;
 EOF
@@ -407,11 +433,11 @@ EOF
 }
 
 # Is there a Steam shortcut for this package (or "gapps": Add Google Play)?
-# Steam stores a .desktop add as exe "/usr/bin/konkr-apk" (what add_title
+# Steam stores a .desktop add as exe "/usr/bin/pbos-apk" (what add_title
 # writes, see there), LaunchOptions '"run" "<pkg>"' and the .desktop as
 # ShortcutPath.
 steam_has() {
-  local a=("\"run\" \"$1\"" "konkr-android-$1.desktop")
+  local a=("\"run\" \"$1\"" "pbos-android-$1.desktop")
   [[ "$1" == gapps ]] && a=('"gapps"' "${GP_DESKTOP##*/}")
   grep -qaF -e "${a[0]}" -e "${a[1]}" \
     "${HOME}"/.local/share/Steam/userdata/*/config/shortcuts.vdf 2>/dev/null
@@ -442,16 +468,16 @@ sync_titles() {
   # Keyboards have a settings screen but aren't something to launch.
   pkgs="$(grep -vxF -f <(asx "ime list -a -s" | cut -d/ -f1 || true) <<<"$pkgs" || true)"
   for pkg in $pkgs; do
-    f="${DESKTOP_DIR}/konkr-android-${pkg}.desktop"
+    f="${DESKTOP_DIR}/pbos-android-${pkg}.desktop"
     if [[ ! -f "$f" ]]; then
       add_title "$pkg"
     elif ! grep -qx "$pkg" "${SYS}/titles" 2>/dev/null; then
       steam_add "$f" "$pkg" && echo "$pkg" >>"${SYS}/titles"
     fi
   done
-  for f in "${DESKTOP_DIR}"/konkr-android-*.desktop; do
+  for f in "${DESKTOP_DIR}"/pbos-android-*.desktop; do
     [[ -f "$f" ]] || continue
-    pkg="${f##*/konkr-android-}"; pkg="${pkg%.desktop}"
+    pkg="${f##*/pbos-android-}"; pkg="${pkg%.desktop}"
     grep -qx "$pkg" <<<"$pkgs" || rm -f "$f"
   done
   update-desktop-database "$DESKTOP_DIR" 2>/dev/null || true
@@ -475,6 +501,7 @@ sync_pads() {
 
 # pbos-android.service body.
 cmd_daemon() {
+  migrate_old_names
   ensure_lepton
   patch_lepton
   ensure_vrpaths
@@ -487,7 +514,7 @@ cmd_daemon() {
     [[ -d "${GP_ROOT}/lepton-$(lepton_ver)" ]] && fixed=1
   fi
 
-  export SteamAppId=konkr-android
+  export SteamAppId=pbos-android
   export STEAM_COMPAT_INSTALL_PATH="${SYS}/app"
   export STEAM_COMPAT_CLIENT_INSTALL_PATH="${HOME}/.local/share/Steam"
   export STEAM_COMPAT_DATA_PATH="${SYS}/data"
@@ -496,9 +523,9 @@ cmd_daemon() {
   export STEAM_FOSSILIZE_DUMP_PATH="${SYS}/shadercache/fozpipelinesv6/steamapp_pipeline_cache"
   # Never let Lepton wipe the shared /data (it does on "early exit").
   export LEPTON_NO_CLEANUP=true
-  export GAMESCOPE_WAYLAND_DISPLAY="${KONKR_ANDROID_DISPLAY:-$(current_display)}"
-  export KONKR_LEPTON_OVERLAY="$(overlay_dirs)"
-  export KONKR_LEPTON_GOOGLE="$google"
+  export GAMESCOPE_WAYLAND_DISPLAY="${PBOS_ANDROID_DISPLAY:-$(current_display)}"
+  export PBOS_LEPTON_OVERLAY="$(overlay_dirs)"
+  export PBOS_LEPTON_GOOGLE="$google"
 
   "$LEPTON" waitforexitandrun &
   local lepton_pid=$! i
@@ -633,11 +660,11 @@ cmd_install() (
   say "Installed ${meta[1]:-$pkg}."
 )
 
-# KONKR_ANDROID_APPID on gamescope's root window: which Steam title the
+# PBOS_ANDROID_APPID on gamescope's root window: which Steam title the
 # shared Android window belongs to (0 = none).
 set_window_appid() {
   [[ -n "${DISPLAY:-}" ]] || return 0
-  xprop -root -f KONKR_ANDROID_APPID 32c -set KONKR_ANDROID_APPID "$1" 2>/dev/null || true
+  xprop -root -f PBOS_ANDROID_APPID 32c -set PBOS_ANDROID_APPID "$1" 2>/dev/null || true
 }
 
 schedule_idle_stop() {
@@ -689,6 +716,7 @@ cmd_run() {
 # added (only once: a user who deletes it keeps it deleted), then the Play
 # Store. The PB-OS tab removes the one that no longer fits from Steam.
 cmd_setup() {
+  migrate_old_names
   if google_on; then rm -f "$GP_DESKTOP"; setup_store_title; else setup_gapps_title; fi
 }
 
@@ -701,7 +729,7 @@ setup_gapps_title() {
 Type=Application
 Name=Add Google Play
 Comment=Download Google Play from its sources and set it up for Android apps
-Exec=/usr/bin/konkr-apk gapps
+Exec=/usr/bin/pbos-apk gapps
 Icon=android-package-archive
 Categories=Game;
 EOF
@@ -717,18 +745,17 @@ EOF
 
 # Needs no running Android (Google Play's overlay has the APK).
 setup_store_title() {
-  local i desktop="${DESKTOP_DIR}/konkr-android-com.android.vending.desktop" icon="${SYS}/icons/com.android.vending.png"
+  local i desktop="${DESKTOP_DIR}/pbos-android-com.android.vending.desktop" icon="${SYS}/icons/com.android.vending.png"
   steam_has com.android.vending && return 0
   mkdir -p "${SYS}/icons" "$DESKTOP_DIR"
   python3 "$APK_INFO" "${GP_ROOT}/common/system/product/priv-app/Phonesky/Phonesky.apk" "$icon" >/dev/null 2>&1 || true
   [[ -f "$icon" ]] || icon=android-package-archive
-  # Exec keeps the old name, as in add_title.
   cat >"$desktop" <<EOF
 [Desktop Entry]
 Type=Application
 Name=Google Play Store
 Comment=Android app (com.android.vending)
-Exec=/usr/bin/konkr-apk run com.android.vending
+Exec=/usr/bin/pbos-apk run com.android.vending
 Icon=${icon}
 Categories=Game;
 EOF
@@ -780,16 +807,15 @@ cmd_gapps() {
 }
 
 cmd_idle_stop() {
-  # Titles run it as konkr-apk (see add_title); either name counts.
-  pgrep -f "(konkr|pbos)-apk run " >/dev/null && return 0
+  pgrep -f "pbos-apk run " >/dev/null && return 0
   systemctl --user stop pbos-android.service
 }
 
 cmd_list() {
   local f pkg
-  for f in "${DESKTOP_DIR}"/konkr-android-*.desktop; do
+  for f in "${DESKTOP_DIR}"/pbos-android-*.desktop; do
     [[ -f "$f" ]] || continue
-    pkg="${f##*/konkr-android-}"
+    pkg="${f##*/pbos-android-}"
     printf '%-40s %s\n' "${pkg%.desktop}" "$(sed -n 's/^Name=//p' "$f")"
   done
 }
@@ -799,7 +825,7 @@ cmd_remove() {
   [[ "$pkg" =~ ^[A-Za-z0-9_.]+$ ]] || die "bad package name: $pkg"
   ensure_android
   asx "pm uninstall $pkg" | grep -q Success || die "${pkg} isn't installed"
-  rm -f "${DESKTOP_DIR}/konkr-android-${pkg}.desktop" "${SYS}/icons/${pkg}.png"
+  rm -f "${DESKTOP_DIR}/pbos-android-${pkg}.desktop" "${SYS}/icons/${pkg}.png"
   sed -i "/^${pkg//./\\.}\$/d" "${SYS}/titles" 2>/dev/null || true
   say "Removed ${pkg}. Delete its title from the Steam library by hand."
 }

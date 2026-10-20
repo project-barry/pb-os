@@ -3,7 +3,7 @@
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 CACHE="$ROOT/external-and-mods/InputPlumber"
-SRC="${INPUTPLUMBER_BUILD_SRC:-/work/inputplumber-konkr-src}"
+SRC="${INPUTPLUMBER_BUILD_SRC:-/work/inputplumber-pbos-src}"
 REF=ea60d873cca17edd1cb655ede26f557108135252
 [[ $(uname -m) == aarch64 ]] || { echo 'ARM64 build host required' >&2; exit 1; }
 if [[ ! -d "$SRC/.git" ]]; then git clone https://github.com/ShadowBlip/InputPlumber.git "$SRC"; fi

@@ -10,7 +10,7 @@ The updater only offers versions newer than the installed one, so a release with
 
 It reads the releases of [pb-os-updates](https://github.com/project-barry/pb-os-updates), where update packages go so that the pb-os release page keeps only the images, and of pb-os, which has the earlier ones. A device takes packages named `pb-os` (the one image for every device) and the earlier names of its own SoC's image, never another SoC's: `sm8550` or `rp6` on the Retroid Pocket 6, Nova and AYN Thor, `pocketfit` on the Pocket FIT and Pocket S2.
 
-**Dev updates (testers):** a tester-unlocked device also reads [pb-os-dev](https://github.com/project-barry/pb-os-dev), where test builds go first, and takes whatever is newest. Only testers can turn it on, with their own passphrase: in PB-OS Utils (Update tab) tap the **Installed** line 7 times and enter it, or run `pbosctl update-channel dev` or `sudo python3 /usr/share/konkr-update/konkr-update.py channel dev`. The **Dev updates** switch shows only on an unlocked device; turning it off (or `prod`) hides it again. `/etc/pb-os/update-channel` then holds the tester's name and a signature over the device's machine-id, checked against the tester's public key in [dev_testers](dev_testers); a plain `dev` written by hand, or the file copied to another device, counts as prod. To add a tester, run `scripts/dev-passphrase.sh <name>` (a handle, never a real name): it asks for a passphrase of a few words and writes only the salt and public key. Deleting a line turns that tester's devices back to prod with the next update. This keeps the switch away from everyone else; it is no lock against someone with root, and pb-os-dev itself stays public. Fresh images start on prod, and updates keep the setting. A test build that passes is promoted to pb-os-updates unchanged (same files, same signature), so dev builds carry real release numbers; one that is not promoted leaves a gap in the numbering. Switching back to prod never downgrades: the device follows prod again once prod is newer.
+**Dev updates (testers):** a tester-unlocked device also reads [pb-os-dev](https://github.com/project-barry/pb-os-dev), where test builds go first, and takes whatever is newest. Only testers can turn it on, with their own passphrase: in PB-OS Utils (Update tab) tap the **Installed** line 7 times and enter it, or run `pbosctl update-channel dev` or `sudo python3 /usr/share/pbos-update/pbos-update.py channel dev`. The **Dev updates** switch shows only on an unlocked device; turning it off (or `prod`) hides it again. `/etc/pb-os/update-channel` then holds the tester's name and a signature over the device's machine-id, checked against the tester's public key in [dev_testers](dev_testers); a plain `dev` written by hand, or the file copied to another device, counts as prod. To add a tester, run `scripts/dev-passphrase.sh <name>` (a handle, never a real name): it asks for a passphrase of a few words and writes only the salt and public key. Deleting a line turns that tester's devices back to prod with the next update. This keeps the switch away from everyone else; it is no lock against someone with root, and pb-os-dev itself stays public. Fresh images start on prod, and updates keep the setting. A test build that passes is promoted to pb-os-updates unchanged (same files, same signature), so dev builds carry real release numbers; one that is not promoted leaves a gap in the numbering. Switching back to prod never downgrades: the device follows prod again once prod is newer.
 
 ## How it works
 
@@ -32,7 +32,7 @@ The apply step runs the updater that comes in the package, so fixes to it reach 
 
 ## Cleaning up
 
-An update needs its download, unpacked files and backup only until it has installed or rolled back. Each time Game Mode starts, PB-OS Utils deletes them for every finished update, including those installed by older versions of the updater; preparing a new update does the same first. A finished update keeps only its records and logs (`transaction.json`, `state.json`, `recovery.log`, `failure.txt`). The folder of a preparation that never finished (power lost) goes, as do downloads of versions older than the installed one. A pending update, and one that stopped halfway, are never touched. From Konsole: `sudo python3 /usr/share/konkr-update/konkr-update.py cleanup`.
+An update needs its download, unpacked files and backup only until it has installed or rolled back. Each time Game Mode starts, PB-OS Utils deletes them for every finished update, including those installed by older versions of the updater; preparing a new update does the same first. A finished update keeps only its records and logs (`transaction.json`, `state.json`, `recovery.log`, `failure.txt`). The folder of a preparation that never finished (power lost) goes, as do downloads of versions older than the installed one. A pending update, and one that stopped halfway, are never touched. From Konsole: `sudo python3 /usr/share/pbos-update/pbos-update.py cleanup`.
 
 A device takes this with the first update whose updater has it: that update installs the new PB-OS Utils, which cleans up after the restart.
 
@@ -53,11 +53,11 @@ PB-OS Utils notices the drive or the files in Downloads and shows a toast. Open 
 
 Like a download, it installs only when `SHA256SUMS.sig` is from the pb-os release key and the package matches its line in `SHA256SUMS`, so the files from one release must stay together. PB-OS Utils says what is missing when they don't match. It mounts the drive read-only while it looks and copies, and never looks at the disk pb-os runs from. It does not follow symlinks in the Downloads folder.
 
-From Konsole: `sudo python3 /usr/share/konkr-update/konkr-update.py local-check` shows what it finds, and `local-update` installs it.
+From Konsole: `sudo python3 /usr/share/pbos-update/pbos-update.py local-check` shows what it finds, and `local-update` installs it.
 
 ## From Konsole
 
-`sudo python3 /usr/share/konkr-update/konkr-update.py update`, then restart. `check` (no sudo) prints what is installed and what the releases offer.
+`sudo python3 /usr/share/pbos-update/pbos-update.py update`, then restart. `check` (no sudo) prints what is installed and what the releases offer.
 
 ## Releasing an update
 
@@ -106,8 +106,8 @@ Their SteamOS Update app has no download button, and their updater refuses a Tho
 
 ```
 cat pb-os-<tag>-thor.update.tar.gz.0* > pb-os-<tag>-thor.update.tar.gz && rm pb-os-<tag>-thor.update.tar.gz.0*
-tar -xzOf pb-os-<tag>-thor.update.tar.gz root/usr/share/konkr-update/konkr-update.py > /tmp/konkr-update.py
-sudo python3 /tmp/konkr-update.py stage pb-os-<tag>-thor.update.tar.gz --sha256 <its line in SHA256SUMS>
+tar -xzOf pb-os-<tag>-thor.update.tar.gz root/usr/share/pbos-update/pbos-update.py > /tmp/pbos-update.py
+sudo python3 /tmp/pbos-update.py stage pb-os-<tag>-thor.update.tar.gz --sha256 <its line in SHA256SUMS>
 systemctl reboot
 ```
 
@@ -120,7 +120,7 @@ Transaction data and logs are under `/home/.konkr-updates/<id>/`, accessible to 
 From a recovery SD, mount the affected root, boot and HOME partitions and run the same helper as root with the corresponding paths:
 
 ```
-python3 /usr/share/konkr-update/konkr-update.py recover \
+python3 /usr/share/pbos-update/pbos-update.py recover \
   --root /mnt/root --boot /mnt/boot --home /mnt/home \
   --work /mnt/home/.konkr-updates/<id>
 ```

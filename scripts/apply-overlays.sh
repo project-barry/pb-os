@@ -565,13 +565,12 @@ if [[ ! -f "$R/usr/lib/lv2/dpl.lv2/dpl.so" ]]; then
 fi
 cp -r --no-preserve=mode,ownership "$SM8650_OVL/." "$R/"
 # konkrd/konkrctl were renamed pbosd/pbosctl. The build rootfs is reused, so
-# drop the old daemon (two would fight over the fan); keep the old command
-# name for scripts and habits.
+# drop the old daemon (two would fight over the fan) and the old command.
 rm -f "$R/usr/lib/konkr/konkrd" "$R/usr/lib/systemd/system/konkrd.service" \
   "$R/etc/konkrd.conf" "$R/etc/systemd/system/multi-user.target.wants/konkrd.service" \
   "$R/var/lib/overlays/etc/upper/konkrd.conf" \
-  "$R/var/lib/overlays/etc/upper/systemd/system/multi-user.target.wants/konkrd.service"
-ln -sfn pbosctl "$R/usr/bin/konkrctl"
+  "$R/var/lib/overlays/etc/upper/systemd/system/multi-user.target.wants/konkrd.service" \
+  "$R/usr/bin/konkrctl"
 # Drop-ins renamed konkr → pbos. The build rootfs is reused, so remove the old
 # names, or both copies would load (update packages delete them on devices).
 rm -f "$R/etc/ssh/sshd_config.d/10-konkr.conf" \
@@ -594,9 +593,9 @@ rm -rf "$R/usr/src/konkr-focusfix"
 rm -f "$R/usr/lib/konkr/pbosd" "$R/usr/lib/konkr/konkr-volume" "$R/usr/lib/konkr/konkr-standby" \
   "$R/usr/lib/steamos-sm8550/sm8550-fand" "$R/usr/lib/steamos-sm8550/sm8550-powerbuttond" \
   "$R/usr/lib/steamos-sm8550/sm8550-volume-keeper"
-# Units, commands and the APK handler renamed konkr → pbos. Steam shortcuts
-# (Android titles) and users' launch options call the old commands, so those
-# stay as links.
+# Units, commands and the APK handler renamed konkr → pbos. The PB-OS tab
+# moves Steam's Android titles and launch options to the new commands
+# (androidTitles in pbos-qam/sections/tools.js), so the old links go too.
 rm -f "$R/usr/lib/systemd/user/konkr-focusfix.service" \
   "$R/usr/lib/systemd/user/gamescope-session.target.wants/konkr-focusfix.service" \
   "$R/usr/lib/systemd/system/konkr-flatpak-appstream.service" \
@@ -609,9 +608,8 @@ rm -f "$R/usr/lib/systemd/user/konkr-focusfix.service" \
   "$R/usr/lib/systemd/user/konkr-apk-inbox.service" \
   "$R/usr/lib/systemd/user/default.target.wants/konkr-apk-inbox.path" \
   "$R/usr/share/applications/konkr-apk.desktop" \
-  "$R/usr/share/mime/packages/konkr-apk.xml"
-ln -sfn pbos-apk "$R/usr/bin/konkr-apk"
-ln -sfn pbos-game "$R/usr/bin/konkr-game"
+  "$R/usr/share/mime/packages/konkr-apk.xml" \
+  "$R/usr/bin/konkr-apk" "$R/usr/bin/konkr-game"
 if [[ "$SOC" == sm8550 ]]; then
   # SM8550 keeps the Odin 2 audio policy (sm8550-audio-pipewire: pro-audio +
   # MI2S speaker routes). 53 forces the SM8650-APS2 UCM profile and software
@@ -1185,8 +1183,8 @@ mkdir -p "$HOME_DST"
 # home; the updater installs it like the bundled Decky plugins, and its copy
 # replaces the folder, so the Google apps earlier images shipped go with it.
 KAPAY="${ROOT}/external-and-mods/pbos-android/payload/common"
-KADST="$HOME_DST/.local/share/konkr-android"
-rm -rf "$KADST" "$R/usr/share/konkr-android"
+KADST="$HOME_DST/.local/share/pbos-android"
+rm -rf "$KADST" "$HOME_DST/.local/share/konkr-android" "$R/usr/share/konkr-android"
 for f in system/etc/permissions/android.software.freeform_window_management.xml \
          system/usr/keylayout/Vendor_28de_Product_11ff.kl; do
   install -D -m0644 "$KAPAY/$f" "$KADST/common/$f"
@@ -1322,15 +1320,16 @@ touch "$STEAM_HOME/.install-complete"
 # Steam UI through ANGLE-Vulkan on Turnip instead of ANGLE -> GL -> zink
 # (see pbosd ensure_webhelper_vulkan, which keeps it after client updates).
 WH="$STEAM_HOME/steamrtarm64/steamwebhelper.sh"
-if [[ -f "$WH" ]] && ! grep -q KONKR_CEF_FLAGS "$WH"; then
+[[ -f "$WH" ]] && sed -i 's/KONKR_CEF_FLAGS/PBOS_CEF_FLAGS/g' "$WH"  # patched before the PB-OS rename
+if [[ -f "$WH" ]] && ! grep -q PBOS_CEF_FLAGS "$WH"; then
   python3 - "$WH" <<'PY'
 import sys
 from pathlib import Path
 p = Path(sys.argv[1]); s = p.read_text()
 old = 'exec taskset 0x7c $(pwd)/steamwebhelper "$@" &> ~/.steam/steam/logs/steamwebhelper.log'
-new = ('KONKR_CEF_FLAGS="--use-gl=angle --use-angle=vulkan '
+new = ('PBOS_CEF_FLAGS="--use-gl=angle --use-angle=vulkan '
        '--enable-features=Vulkan,DefaultANGLEVulkan,VulkanFromANGLE"\n'
-       'exec taskset 0x7c $(pwd)/steamwebhelper "$@" $KONKR_CEF_FLAGS &> ~/.steam/steam/logs/steamwebhelper.log')
+       'exec taskset 0x7c $(pwd)/steamwebhelper "$@" $PBOS_CEF_FLAGS &> ~/.steam/steam/logs/steamwebhelper.log')
 if old in s:
     p.write_text(s.replace(old, new))
 PY

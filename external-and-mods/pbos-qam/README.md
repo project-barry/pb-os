@@ -39,7 +39,7 @@ the user's own plugins, but PB-OS's settings no longer depend on it.
 
 `scripts/install-pbos-qam.sh` installs everything into an image. Update
 packages remove the old `pbos-utils` and `dual-screen` Decky plugins
-(`build-update-package.py` REMOVE, `konkr-update.py` LEGACY_PLUGINS), and
+(`build-update-package.py` REMOVE, `pbos-update.py` LEGACY_PLUGINS), and
 pbos-qamd also removes them at start if they are there.
 
 ## How it talks to Steam

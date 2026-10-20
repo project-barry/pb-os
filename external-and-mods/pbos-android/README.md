@@ -8,7 +8,7 @@ package installer, and each app becomes a Steam title.
 ## payload/common (in the image)
 
 The only Lepton overlay PB-OS ships, installed to
-`~/.local/share/konkr-android` (home, not the root partition; update
+`~/.local/share/pbos-android` (home, not the root partition; update
 packages carry it like the bundled Decky plugins, and replace the folder):
 
 | File | Why |
@@ -83,5 +83,5 @@ Not files, but part of the same fixes (see `sm8650-overlay/usr/bin/pbos-apk`):
   wording per Lepton version it knows: v3.0.3 quotes the two overlay paths
   and dropped the `ro.product.brand` line, which silently cost the extra
   rootfs overlay and the certified Pixel 5 identity until both were taught
-  the new shape. The identity edit is gated on `KONKR_LEPTON_GOOGLE`, and
+  the new shape. The identity edit is gated on `PBOS_LEPTON_GOOGLE`, and
   files patched before Google Play was optional are rewritten to that

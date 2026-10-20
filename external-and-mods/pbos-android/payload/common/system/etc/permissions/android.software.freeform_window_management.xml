@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- konkr: no freeform windows. Waydroid opens every app as a freeform
+<!-- pb-os: no freeform windows. Waydroid opens every app as a freeform
      window, whose caption bar crashes apps like Instagram; on a handheld
      apps should be fullscreen anyway. -->
 <permissions />

@@ -4,7 +4,6 @@
 #   Steam → game → Properties → Launch Options:
 #     pbos-game fast %command%
 #     pbos-game fastest %command%
-#   (konkr-game, the old name, is a link to this and keeps working.)
 #
 # Presets (FEX-Emu options exported as FEX_<OPTION>; Proton reads the rest):
 #   fast     X87ReducedPrecision (x87 math at 64-bit instead of 80-bit — big

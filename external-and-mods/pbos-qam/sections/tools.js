@@ -1927,8 +1927,11 @@ P.plugin({ id: "install", title: "Move SteamOS", icon: InstallIcon, content: Ins
 // Android titles that no longer fit: a Google Play Store title without
 // Google Play (earlier images shipped it; it can only fail now) or one that
 // does not open the Play Store (older images left some with no arguments),
-// and Add Google Play once it is added. Only pbos-apk's own titles (exe
-// konkr-apk or pbos-apk). At Steam start and when a title exits.
+// and Add Google Play once it is added. Only pbos-apk's own titles. Titles
+// and launch options from before the PB-OS rename (/usr/bin/konkr-apk,
+// konkr-game) move to pbos-apk and pbos-game first; app ids stay. At Steam
+// start and when a title exits.
+const PBOS_APK = '"/usr/bin/pbos-apk"';
 async function androidTitles() {
     const st = await getAndroid().catch(() => null);
     if (!st || !st.available) return;
@@ -1936,13 +1939,21 @@ async function androidTitles() {
     const apps = new Map();
     for (const c of [cs && cs.localGamesCollection, cs && cs.deckDesktopApps]) {
         for (const app of (c && c.allApps) || []) {
-            if (app.app_type === SHORTCUT_TYPE) apps.set(app.appid, app.display_name || "");
+            if (st.old_launch || app.app_type === SHORTCUT_TYPE) apps.set(app.appid, [app.app_type, app.display_name || ""]);
         }
     }
-    for (const [appid, name] of apps) {
-        if (name !== "Google Play Store" && name !== "Add Google Play") continue;
+    for (const [appid, [type, name]] of apps) {
+        const play = type === SHORTCUT_TYPE && (name === "Google Play Store" || name === "Add Google Play");
+        if (!play && !st.old_launch && !(st.old_titles && type === SHORTCUT_TYPE)) continue;
         const d = await appDetails(appid);
-        if (!d || !/\/(konkr|pbos)-apk"?$/.test(d.strShortcutExe || "")) continue;
+        if (!d) continue;
+        if (st.old_launch && /\bkonkr-game\b/.test(d.strLaunchOptions || "")) {
+            SteamClient.Apps.SetAppLaunchOptions(appid, d.strLaunchOptions.replace(/\bkonkr-game\b/g, "pbos-game"));
+        }
+        if (type !== SHORTCUT_TYPE) continue;
+        const exe = d.strShortcutExe || "";
+        if (/\/konkr-apk"?$/.test(exe)) SteamClient.Apps.SetShortcutExe(appid, PBOS_APK);
+        if (!play || !/\/(konkr|pbos)-apk"?$/.test(exe)) continue;
         const opts = d.strLaunchOptions || "";
         const stale = opts.includes('"gapps"')
             ? st.google

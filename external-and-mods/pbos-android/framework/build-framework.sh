@@ -16,7 +16,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 TARGET="${1:-root@frame.local}"
 SSH=(ssh -i ~/.ssh/pbos_steamos "$TARGET")
 LEPTON=/home/steamos/.local/share/Steam/steamapps/common/Lepton
-CTR=lepton-steamlaunch-konkr-android
+CTR=lepton-steamlaunch-pbos-android
 WORK=/work/lepton-framework
 SMALI=https://bitbucket.org/JesusFreke/smali/downloads
 

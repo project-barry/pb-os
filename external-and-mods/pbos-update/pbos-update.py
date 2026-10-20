@@ -39,13 +39,20 @@ PRESERVE = ('passwd', 'shadow', 'group', 'gshadow', 'machine-id', 'hostname', 'h
             'fstab', 'crypttab', 'localtime', 'adjtime', 'resolv.conf', 'ssh',
             'NetworkManager/system-connections', 'sudoers.d',
             'pb-os/update-channel')  # a dev device stays one (full packages replace /etc)
+# The pending marker, the update folder and the boot image's recovery hook
+# keep their names from before the PB-OS rename: older updaters stage into
+# them, and every boot image's /init (RECOVER_HOOK) looks there.
 PENDING = 'var/lib/konkr-update/pending'
 # One folder per update, named by its id. A finished one keeps only these.
 STORAGE = Path('/home/.konkr-updates')
+RECOVER_HOOK = b'konkr-update-recover'
 TRANSACTION_RECORDS = ('transaction.json', 'state.json', 'recovery.log', 'failure.txt')
 # Per-install record written by the image build; not part of any package.
 OPT_KEEP = ('steamos-sm8650/IMAGE.txt',)
-UPDATER = 'usr/share/konkr-update/konkr-update.py'
+UPDATER = 'usr/share/pbos-update/pbos-update.py'
+# Where updaters from before the rename look for a package's own updater; the
+# image keeps a copy of this one there.
+LEGACY_UPDATER = 'usr/share/konkr-update/konkr-update.py'
 # Written by make-steamos-sm8650.sh: the release tag the image was built as,
 # and the feature release it belongs to (patch releases' deltas are from it).
 VERSION_FILE = 'usr/share/pb-os/version'
@@ -56,7 +63,7 @@ BASE_FILE = 'usr/share/pb-os/base'
 RELEASES = ('https://api.github.com/repos/project-barry/pb-os-updates/releases',
             'https://api.github.com/repos/project-barry/pb-os/releases')
 # Dev devices also take test builds from pb-os-dev. Only testers turn that
-# on, with their passphrase (`konkr-update.py channel dev`, `pbosctl
+# on, with their passphrase (`pbos-update.py channel dev`, `pbosctl
 # update-channel dev`, or PB-OS Utils: tap the Installed line 7 times):
 # /etc/pb-os/update-channel then holds "dev", the tester's name and a
 # signature over this device's machine-id, checked against the tester's
@@ -69,7 +76,7 @@ RELEASES = ('https://api.github.com/repos/project-barry/pb-os-updates/releases',
 # signature).
 DEV_RELEASES = 'https://api.github.com/repos/project-barry/pb-os-dev/releases'
 CHANNEL_FILE = Path('/etc/pb-os/update-channel')
-TESTERS = Path('/usr/share/konkr-update/dev_testers')
+TESTERS = Path('/usr/share/pbos-update/dev_testers')
 MACHINE_ID = Path('/etc/machine-id')
 # scrypt cost: 32 MiB and about a tenth of a second per try on the devices.
 SCRYPT = dict(n=2 ** 15, r=8, p=1, maxmem=64 << 20, dklen=32)
@@ -79,7 +86,7 @@ WRONG_PASSPHRASE_WAIT = 3
 # pb-os-<tag>-<image>.from-<installed tag>.delta.tar.gz (delta).
 # Downloads install only when the release's SHA256SUMS carries a signature
 # (SHA256SUMS.sig, scripts/sign-release.sh) from a key in this file.
-SIGNERS = Path('/usr/share/konkr-update/allowed_signers')
+SIGNERS = Path('/usr/share/pbos-update/allowed_signers')
 SIGNER, NAMESPACE = 'pb-os-release', 'pb-os-update'
 # One image for every device: its packages are named 'pb-os'. Earlier
 # releases had one image per SoC, and each device still takes its own SoC's
@@ -414,7 +421,7 @@ def retarget_kernel(src, dst, rootarg, helper=BOOTIMG):
     image = module.BootImg(src.read_bytes())
     if image.id != image.expected_id(): raise ValueError('KERNEL header checksum mismatch')
     raw = module.ramdisk_bytes(image.ramdisk)
-    if b'konkr-update-recover' not in raw: raise ValueError('KERNEL has no update recovery hook')
+    if RECOVER_HOOK not in raw: raise ValueError('KERNEL has no update recovery hook')
     dst.write_bytes(image.build(module.retarget(image.cmdline, rootarg)))
 
 
@@ -587,8 +594,8 @@ def stage(source_package, expected, move=False, version=None):
         kernel = payload / 'boot/KERNEL'
         retarget_kernel(kernel if kernel.is_file() else Path('/boot/KERNEL'), work / 'next-KERNEL', rootarg, helper)
         # The package's own updater applies it, so apply fixes need no reflash.
-        bundled = payload / 'root' / UPDATER
-        recovery_runtime(work / 'recovery', helper, bundled if bundled.is_file() else None)
+        bundled = next((p for p in (payload / 'root' / UPDATER, payload / 'root' / LEGACY_UPDATER) if p.is_file()), None)
+        recovery_runtime(work / 'recovery', helper, bundled)
         state(work, 'staged')
         pending.parent.mkdir(parents=True, exist_ok=True)
         pending.write_text(work.name + '\n'); os.chmod(pending, 0o600)
@@ -791,7 +798,7 @@ def check_space(kind, size, have=0):
 # The same files downloaded to the steamos user's Downloads folder (a browser
 # in Desktop Mode) work too; they are removed from there once the update is
 # staged.
-MEDIA = Path('/run/konkr-update/media')
+MEDIA = Path('/run/pbos-update/media')
 MEDIA_FS = {'vfat': 'vfat', 'exfat': 'exfat', 'ext4': 'ext4', 'ntfs': 'ntfs3'}
 DOWNLOADS = Path('/home/steamos/Downloads')
 # build-update-package.py --release: every part but the last is this size.
@@ -1042,9 +1049,11 @@ DEVICE_PLUGINS = {'dual-screen': ('AYN Thor',)}
 
 
 # Home folders a package installs whole besides the plugins: the Android apps
-# payload (konkr-apk's Lepton overlays), kept off the root partition. A delta
+# payload (pbos-apk's Lepton overlay), kept off the root partition. A delta
 # carries it only when it changed; a full package without it removes it.
-HOME_DIRS = ('.local/share/konkr-android',)
+# LEGACY_HOME_DIRS are its names from older images, removed once it is in.
+HOME_DIRS = ('.local/share/pbos-android',)
+LEGACY_HOME_DIRS = ('.local/share/konkr-android',)
 
 
 def plugin_dirs(work, manifest):
@@ -1058,6 +1067,7 @@ def plugin_dirs(work, manifest):
     remove = sorted(set(manifest.get('remove_plugins', [])) | set(LEGACY_PLUGINS) | other)
     shipped = [d for d in HOME_DIRS if (work / 'payload/home/steamos' / d).is_dir()]
     gone = [] if is_delta(manifest) else [d for d in HOME_DIRS if d not in shipped]
+    if shipped: gone += list(LEGACY_HOME_DIRS)
     return ([f'{PLUGINS}/{n}' for n in install] + shipped,
             [f'{PLUGINS}/{n}' for n in remove if n not in install] + gone)
 
@@ -1219,7 +1229,7 @@ def plan_from_package(package, root, work, manifest):
     and unpack only what differs, plus home/, boot/ and the tools the restart
     runs. Reads the archive once more, not the installed files."""
     write, present, extract, members = [], set(), [], {}
-    always = {'root/' + UPDATER, 'root/' + str(BOOTIMG).lstrip('/')}
+    always = {'root/' + UPDATER, 'root/' + LEGACY_UPDATER, 'root/' + str(BOOTIMG).lstrip('/')}
     total = package.stat().st_size; shown = -1
     with tarfile.open(package, 'r:gz') as tf:
         for m in tf:
@@ -1780,7 +1790,7 @@ def main():
     try:
         if a.command in ('stage', 'update', 'local-update', 'cleanup'):
             if os.geteuid() != 0: raise ValueError('needs administrator access')
-            with open('/run/konkr-update.lock', 'w') as lock:
+            with open('/run/pbos-update.lock', 'w') as lock:
                 try: fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 except BlockingIOError:
                     if a.command == 'cleanup': return 0  # an update is being prepared; next time

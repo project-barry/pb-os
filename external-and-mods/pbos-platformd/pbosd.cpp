@@ -178,13 +178,13 @@ const std::string WEBHELPER_NAME = "steamwebhelper.sh";
 const std::string WEBHELPER_SH = WEBHELPER_DIR + "/" + WEBHELPER_NAME;
 const std::string WEBHELPER_EXEC =
     R"(exec taskset 0x7c $(pwd)/steamwebhelper "$@" &> ~/.steam/steam/logs/steamwebhelper.log)";
-const std::string KONKR_CEF =
+const std::string PBOS_CEF =
     "# SteamOS-ARM-SM8650: draw the Steam UI through ANGLE's Vulkan backend on\n"
     "# Turnip directly. The default (ANGLE -> GL -> zink -> Vulkan) converts every\n"
     "# UI draw call twice on the CPU and made menus/game pages sluggish.\n"
-    "KONKR_CEF_FLAGS=\"--use-gl=angle --use-angle=vulkan "
+    "PBOS_CEF_FLAGS=\"--use-gl=angle --use-angle=vulkan "
     "--enable-features=Vulkan,DefaultANGLEVulkan,VulkanFromANGLE\"\n"
-    R"(exec taskset 0x7c $(pwd)/steamwebhelper "$@" $KONKR_CEF_FLAGS &> ~/.steam/steam/logs/steamwebhelper.log)";
+    R"(exec taskset 0x7c $(pwd)/steamwebhelper "$@" $PBOS_CEF_FLAGS &> ~/.steam/steam/logs/steamwebhelper.log)";
 
 const std::pair<const char*, const char*> RGB_PRESETS[] = {
     {RGB_DEFAULT_MODE, RGB_DEFAULT_COLOR}, {"static", "ff3c00"}, {"static", "00b4ff"}, {"static", "a000ff"},
@@ -760,22 +760,30 @@ void ensure_gamepad_mode(const Conf& conf) {
 }
 
 // Re-apply the ANGLE-Vulkan flags if a Steam client update rewrote the
-// launcher (Steam restarts the UI on its own after updates).
+// launcher (Steam restarts the UI on its own after updates). A launcher
+// patched before the PB-OS rename gets the flags' new name.
 void ensure_webhelper_vulkan() {
+    const std::string old_flags = "KONKR_CEF_FLAGS";
     std::string s = pq::rd(WEBHELPER_SH);
-    if (s.empty() || s.find("KONKR_CEF_FLAGS") != std::string::npos || s.find(WEBHELPER_EXEC) == std::string::npos)
-        return;
     std::string out;
-    for (size_t i = 0;;) {
-        size_t at = s.find(WEBHELPER_EXEC, i);
-        if (at == std::string::npos) {
-            out += s.substr(i);
-            break;
+    if (s.find(old_flags) != std::string::npos) {
+        out = s;
+        for (size_t at; (at = out.find(old_flags)) != std::string::npos;)
+            out.replace(at, old_flags.size(), "PBOS_CEF_FLAGS");
+    } else {
+        if (s.empty() || s.find("PBOS_CEF_FLAGS") != std::string::npos || s.find(WEBHELPER_EXEC) == std::string::npos)
+            return;
+        for (size_t i = 0;;) {
+            size_t at = s.find(WEBHELPER_EXEC, i);
+            if (at == std::string::npos) {
+                out += s.substr(i);
+                break;
+            }
+            out += s.substr(i, at - i) + PBOS_CEF;
+            i = at + WEBHELPER_EXEC.size();
         }
-        out += s.substr(i, at - i) + KONKR_CEF;
-        i = at + WEBHELPER_EXEC.size();
+        out += "\n";
     }
-    out += "\n";
     std::string tmp = WEBHELPER_SH + ".tmp";
     struct stat st;
     int fd = open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0666);

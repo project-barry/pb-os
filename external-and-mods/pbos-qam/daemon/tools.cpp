@@ -7,7 +7,7 @@
 //          settings, armada-os/armada, GPL-2.0-or-later), kept in
 //          ~/.config/pb-os/game-profiles.json; /usr/bin/pbos-game-launch
 //          applies them when the game starts.
-// Update   pb-os updates: a front for /usr/share/konkr-update/konkr-update.py.
+// Update   pb-os updates: a front for /usr/share/pbos-update/pbos-update.py.
 //          The download and staging run as the transient unit pbos-update;
 //          this reads its log. An update on a drive or in ~/Downloads is
 //          looked for when a drive comes or goes (kernel uevents) or the
@@ -52,10 +52,10 @@ namespace {
 
 using pj::Value;
 
-const std::string UPDATER = "/usr/share/konkr-update/konkr-update.py";
+const std::string UPDATER = "/usr/share/pbos-update/pbos-update.py";
 const std::string UNIT = "pbos-update";
 const std::string LOG = "/run/pbos-update.log";
-const std::string PENDING = "/var/lib/konkr-update/pending";
+const std::string PENDING = "/var/lib/konkr-update/pending";  // name kept: pbos-update.py PENDING
 const std::string VERSION = "/usr/share/pb-os/version";
 constexpr double CHECK_EVERY = 6 * 3600;
 // A drive put in settles (partitions, SteamOS's own mount) this long first.
@@ -752,11 +752,22 @@ Value barry_desktop(const std::vector<std::string>& args) {
 // title). The tab's script drops the Steam title that no longer fits: the
 // Play Store without it (earlier images shipped it), Add Google Play once it
 // is there.
+// Steam titles and launch options from before the PB-OS rename name
+// /usr/bin/konkr-apk and konkr-game; the script moves them to pbos-apk and
+// pbos-game. Only looked at when Steam's files still mention them.
+bool steam_config_has(const std::string& file, const std::string& text) {
+    for (const auto& f : glob(desktop_user().home + "/.local/share/Steam/userdata/*/config/" + file))
+        if (rd(f).find(text) != std::string::npos) return true;
+    return false;
+}
+
 Value android_state() {
     Value out = Value::object();
     out["available"] = can_exec("/usr/bin/pbos-apk");
     out["google"] = is_file(desktop_user().home +
         "/.local/share/pbos-google-play/common/system/product/priv-app/Phonesky/Phonesky.apk");
+    out["old_titles"] = steam_config_has("shortcuts.vdf", "/usr/bin/konkr-apk");
+    out["old_launch"] = steam_config_has("localconfig.vdf", "konkr-game");
     return out;
 }
 

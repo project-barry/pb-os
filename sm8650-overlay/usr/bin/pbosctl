@@ -248,7 +248,7 @@ def main() -> None:
     elif a[0] == "update-channel" and len(a) == 2 and a[1] in ("dev", "prod", "status"):
         # The updater keeps the setting (/etc/pb-os/update-channel); dev asks
         # for a tester's passphrase.
-        cmd = ["/usr/bin/python3", "/usr/share/konkr-update/konkr-update.py", "channel"]
+        cmd = ["/usr/bin/python3", "/usr/share/pbos-update/pbos-update.py", "channel"]
         if a[1] != "status":
             need_root()
             cmd.append(a[1])
