@@ -10,14 +10,3 @@
 # it: keeps the doorbell live in s2idle (charger cable attach) and masks it
 # only for suspend-to-RAM.
 0502-wakeup-qcom-ipcc-remove-IRQF-NO-SUSPEND.patch
-#
-# Linux 7.3 + Retroid's series (retroid/) already contain these:
-# edt-ft5x06 input-name override and no_regmap_bulk_read (Retroid 0029/0030),
-0015-touchscreen-edt-ft5x06-allow-to-override-input-name.patch
-0053-edt-ft5x06-add-no_regmap_bulk_read-option.patch
-# q6apm-lpass MI2S port start at prepare (Retroid 0039),
-0612-ROCKNIX-odin3-q6apm-start-mi2s-port-at-prepare.patch
-# the HTR3212 LED driver, with suspend/resume (Retroid 0013),
-0033_leds--Add-driver-for-HEROIC-HTR3212.patch
-# and QCE runtime PM + interconnect scaling (merged in 7.3).
-v6_20260210_quic_utiwari_crypto_qce_add_runtime_pm_and_interconnect_bandwidth_scaling_support.patch

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Build the kernel (Linux 7.x) with GCC 15, as the Retroid Pocket 6
-# image runs it. The 7.2 recipe built with Ubuntu 24.04's GCC 13 died before
+# Build the kernel (Linux 7.2.8) with GCC 15, as the Retroid Pocket 6
+# image runs it. The same recipe built with Ubuntu 24.04's GCC 13 dies before
 # the initramfs on the RP6 (52.75 MiB image vs 47.1 MiB with GCC 15; an ABL
-# load-size limit near 52 MiB is suspected but not proven), so 7.x builds
+# load-size limit near 52 MiB is suspected but not proven), so 7.2 builds
 # go through a Fedora 43 container. Everything else is ./build.sh unchanged.
 #
 # Usage (aarch64 host with Docker; paths are the build VM's):

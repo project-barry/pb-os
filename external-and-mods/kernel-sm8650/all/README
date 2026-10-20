@@ -1,49 +1,17 @@
 SOC=all (one kernel for SM8550 and SM8650, see build.sh)
 
 rocknix/  ROCKNIX device patches rebased for the combined tree. A file here
-          replaces ROCKNIX's patch of the same name. For the other SoC's
-          patches (context only where they touched the same lines):
+          replaces ROCKNIX's patch of the same name. Each one is ROCKNIX's
+          patch with only the context changed where the other SoC's patches
+          touched the same lines:
   0063-gpu-drm-panel-add-pocket-fit-panel.patch (SM8650): Makefile hunk
           after the SM8550 AR06/AR02 panel lines.
-          For Linux 7.3 + ../retroid (ROCKNIX's recipe is for 7.2):
-  0001-pcie-update-sm8550-dtsi.patch (SM8550): context only (7.3 labels
-          the root ports pcie0_port0/pcie1_port0).
-  0007-audioreach-Add-dedicated-WSA2-support.patch (SM8650): 7.3 builds
-          the active channel mask from the channel map; that is the else
-          branch now.
-  0036_ASoC--qcom--sc8280xp-Add-support-for-Primary-I2S.patch (SM8550):
-          7.3 has per-card MI2S data (priv, hw_params); keeps it and adds
-          the optional i2s_clk and the Primary MI2S startup/shutdown.
-  0051, 0056 (SM8550 panels): Kconfig/Makefile context only.
-  0053-gpu-panel-st7703-add-Pocket-DS-lower-panel.patch (SM8550): 7.3
-          has the Pocket DS lower panel; only the optional avee rail is
-          left.
-  0057_Chipone-ICNA35XX-panel.patch (SM8550): 7.3 has a different
-          panel-chipone-icna35xx.c (per-device ayntec,* compatibles). Ours
-          replaces it whole: the AYN DTS use chipone,icna3512/3520 and
-          ../sm8550/patches/0651/0652 are written against it. Kconfig and
-          Makefile already have the entry.
-  0057_DDIC-CH13726A-panel.patch (SM8550): Kconfig context (7.3's own
-          panel-chipwealth-ch13726a.c matches ayntec,thor-panel-bottom,
-          ours ch13726a,* - no clash).
-  0060-Add-Silergy-SY7758-backlight-driver.patch (SM8650): 7.3 has an
-          upstream sy7758.c; ROCKNIX's replaces it whole (the one the
-          Pocket FIT and Pocket S2 were tested with). Kconfig and Makefile
-          already have the entry.
 
 patches/  port patches for the combined tree only, queued with the port
           patches by name:
   0506-mailbox-qcom-ipcc-every-soc-counts-its-doorbell-wakes.patch: on top
           of SM8550 0504/0505, gives SM8650 the "ipcc-wake" count (SM8650's
           0019 is written against the unmasked driver).
-  0561-input-rsinput-retroid-pocket-duo-compatible.patch: ROCKNIX's
-          rsinput (with rumble and our sleep patches) also matches
-          "retroidpocket,rsinput", the Retroid Pocket Duo's gamepad.
-  0660-drm-panel-il97680a-cmd-retroid-pocket-duo-bottom.patch: Retroid's
-          command-mode IL97680A driver (retroid/patches/0008) as
-          panel-ilitek-il97680a-cmd (DRM_PANEL_ILITEK_IL97680A_CMD), matching
-          only the Duo's bottom panel; ROCKNIX's video-mode driver keeps the
-          Nova.
 
 port-skip SM8650 port patches the combined tree leaves out (each replaced by
           an SM8550 twin or a patch in patches/). Port patches whose code is

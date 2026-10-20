@@ -1,4 +1,0 @@
-# ROCKNIX devices/SM8650 patches build.sh leaves out, one basename per line.
-#
-# SM8650 misc enhancements (Neil Armstrong, v2 2026-04-20): merged in 7.3.
-v2_20260420_neil_armstrong_arm64_qcom_sm8650_misc_enhancements.patch

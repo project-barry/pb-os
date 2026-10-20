@@ -29,20 +29,15 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PORT_ROOT="$(cd "${HERE}/../.." && pwd)"
 
 SOC="${SOC:-sm8650}"
-# Linux 7.3 with Retroid Pocket's own mainline series first (retroid/, see its
-# README), then ROCKNIX's released 7.2 recipe (tag 20260901; ROCKNIX has no
-# 7.3 recipe yet) and our patches. 7.x is built with GCC 15 (see below).
-# The previous kernel: KVER=7.2.8 (no Retroid series), and before that
-# KVER=7.1.2 ROCKNIX_REF=20260801 for SM8650.
-_kver=7.3 _rocknix_ref=20260901
+# ROCKNIX's released 7.2 recipe (tag 20260901) on the newest 7.2 stable
+# release, for both SoCs. Their 7.2 development branch black-screened the
+# Pocket FIT before the console on 2026-09-23; a GCC 13 build of 7.2 fails
+# the same way on the RP6, so 7.2 is built with GCC 15 (see below).
+# The previous SM8650 kernel: KVER=7.1.2 ROCKNIX_REF=20260801.
+_kver=7.2.8 _rocknix_ref=20260901
 KVER="${KVER:-$_kver}"
-# Kernel series (7.3 for both 7.3 and 7.3.y).
-KSERIES="$(echo "$KVER" | cut -d. -f1-2)"
-# ROCKNIX's version patch dir (patches/7.2) is named after the series it
-# targets, which can trail ours.
-ROCKNIX_SERIES="${ROCKNIX_SERIES:-7.2}"
-# Retroid Pocket's series for this kernel series (retroid/patches, retroid/skip).
-RETROID_DIR="${HERE}/retroid"
+# ROCKNIX's version patch dir is named after the series (patches/7.2).
+KSERIES="${KVER%.*}"
 if [[ "$SOC" == all ]]; then _localversion=-steamos; else _localversion="-${SOC}-steamos"; fi
 LOCALVERSION="${LOCALVERSION:-$_localversion}"
 ROCKNIX_REF="${ROCKNIX_REF:-$_rocknix_ref}"
@@ -60,29 +55,14 @@ DTBS_SM8650="sm8650-ayaneo-ps2 sm8650-konkr-pf"
 # "Retroid Pocket 6 TOP-DPAD" and "Retroid Pocket Nova" (ROCKNIX's Nova DTS is
 # the RP6 one with its own panel, touch and sticks).
 DTBS_SM8550="qcs8550-ayn-odin2 qcs8550-ayn-odin2mini qcs8550-ayn-odin2portal qcs8550-ayn-thor qcs8550-retroidpocket-rp6 qcs8550-retroidpocket-rp6-top-dpad qcs8550-retroidpocket-rpnova"
-# Retroid Pocket Duo (SM7750 "Eliza", Retroid's DTS from retroid/patches
-# 0070/0071), SOC=all only (DUO=0 leaves it out). Built into dtbs/ but not
-# appended to KERNEL: there is no OpenABL for SM7750, so the Duo gets a boot
-# image of its own, boot/KERNEL-rpduo (header v2 with the Duo DTB, for
-# `fastboot boot` through the stock ABL; sm7750/dts adds the IDs that ABL
-# matches). Untested: no Duo in hand.
-DTBS_SM7750="eliza-retroidpocket-rpduo"
 case "$SOC" in
   sm8650) SOCS=(SM8650); PORT_DIRS=("${HERE}"); DTBS="${DTBS:-$DTBS_SM8650}" ;;
   sm8550) SOCS=(SM8550); PORT_DIRS=("${HERE}/sm8550"); DTBS="${DTBS:-$DTBS_SM8550}" ;;
   # The model names differ, so each SoC's ABL still finds its own DTB in the
   # one list (alphabetical: qcs8550-* before sm8650-*).
-  all) SOCS=(SM8550 SM8650); PORT_DIRS=("${HERE}/sm8550" "${HERE}"); DTBS="${DTBS:-$DTBS_SM8550 $DTBS_SM8650}"; DUO="${DUO:-1}" ;;
+  all) SOCS=(SM8550 SM8650); PORT_DIRS=("${HERE}/sm8550" "${HERE}"); DTBS="${DTBS:-$DTBS_SM8550 $DTBS_SM8650}" ;;
   *) echo "unsupported SOC=${SOC} (sm8650, sm8550, all)" >&2; exit 1 ;;
 esac
-DUO="${DUO:-0}"
-# DTBs built and shipped in dtbs/ but not appended to KERNEL.
-DTBS_SEPARATE=""
-((DUO)) && DTBS_SEPARATE="$DTBS_SM7750"
-# Dirs whose dts/*.patch and dts/*.append apply: the ports', plus sm7750/
-# for the Duo.
-DTS_DIRS=("${PORT_DIRS[@]}")
-((DUO)) && DTS_DIRS+=("${HERE}/sm7750")
 # ROCKNIX patches with the same name in both SoCs' dirs are identical except
 # these, where SOC=all takes the SM8650 copy. 0060 (SY7758 backlight): two
 # different drivers for one file; the SM8550 one only serves AYANEO Pockets,
@@ -209,12 +189,10 @@ prepare_source() {
       [[ -e "$x" ]] && digest_src+=("$x")
     done
   done
-  digest_src+=("${RETROID_DIR}")
   ((${#SOCS[@]} > 1)) && digest_src+=("${HERE}/all")
-  ((DUO)) && digest_src+=("${HERE}/sm7750")
   # The DTB list is part of it: DTBs are registered in the Makefile only while
   # the source is (re)patched below.
-  patch_digest="$({ find "${digest_src[@]}" -type f -print0 | sort -z | xargs -0 -r sha256sum; echo "DTBS=$DTBS $DTBS_SEPARATE"; } | sha256sum | cut -d" " -f1)"
+  patch_digest="$({ find "${digest_src[@]}" -type f -print0 | sort -z | xargs -0 -r sha256sum; echo "DTBS=$DTBS"; } | sha256sum | cut -d" " -f1)"
   if [[ -f "${SRC}/.${SOC}-patched" && "$(cat "${SRC}/.${SOC}-patched")" == "$patch_digest" ]]; then
     log "source already patched: ${SRC}"
     return 0
@@ -237,25 +215,8 @@ prepare_source() {
     done <"${pd}/rocknix-skip"
   done
   local d p s
-  # Retroid Pocket's series goes first: the rest is rebased onto it.
-  local -A rp_skip=()
-  if [[ -f "${RETROID_DIR}/skip" ]]; then
-    while IFS= read -r line; do
-      line="${line%%#*}"; line="${line//[[:space:]]/}"
-      [[ -n "$line" ]] && rp_skip["$line"]=1
-    done <"${RETROID_DIR}/skip"
-  fi
-  for p in "${RETROID_DIR}/patches"/*.patch; do
-    [[ -e "$p" ]] || continue
-    if [[ -n "${rp_skip[$(basename "$p")]:-}" ]]; then
-      log "skip retroid/$(basename "$p") (retroid/skip)"; continue
-    fi
-    log "patch retroid/$(basename "$p")"
-    patch -d "$SRC" -p1 -N --no-backup-if-mismatch -s <"$p" \
-      || die "patch failed: $p"
-  done
   local -a dirs=(
-    "projects/ROCKNIX/packages/linux/patches/${ROCKNIX_SERIES}"
+    "projects/ROCKNIX/packages/linux/patches/${KSERIES}"
     "projects/ROCKNIX/packages/linux/patches/mainline"
     "@devices"
     "packages/linux/patches/default"
@@ -317,7 +278,7 @@ prepare_source() {
   # DT patches go after the copy: the ROCKNIX .dts/.dtsi files are not in the
   # kernel tree while the code patches above are applied.
   local app
-  for pd in "${DTS_DIRS[@]}"; do
+  for pd in "${PORT_DIRS[@]}"; do
     for p in "${pd}"/dts/*.patch; do
       [[ -e "$p" ]] || continue
       log "patch dts/$(basename "$p")"
@@ -331,24 +292,10 @@ prepare_source() {
     done
   done
   local mk="${SRC}/arch/arm64/boot/dts/qcom/Makefile" dtb
-  for dtb in $DTBS $DTBS_SEPARATE; do
+  for dtb in $DTBS; do
     grep -q "${dtb}.dtb" "$mk" || echo "dtb-\$(CONFIG_ARCH_QCOM) += ${dtb}.dtb" >>"$mk"
   done
   printf "%s\n" "$patch_digest" > "${SRC}/.${SOC}-patched"
-}
-
-# stage_linux_fw <dir> <path>=<sha256>...: linux-firmware files at
-# LINUX_FW_REF, checked against their pinned sums, into <dir>/<path>.
-stage_linux_fw() {
-  local ext="$1" lfw="${CACHE}/linux-firmware-${LINUX_FW_REF}" e f sum
-  shift
-  for e in "$@"; do
-    f="${e%%=*}"
-    fetch "https://gitlab.com/kernel-firmware/linux-firmware/-/raw/${LINUX_FW_REF}/${f}" "${lfw}/${f}"
-    sum="$(sha256sum "${lfw}/${f}" | cut -d" " -f1)"
-    [[ "$sum" == "${e#*=}" ]] || die "${f}: sha256 ${sum} != pinned ${e#*=}"
-    install -D -m0644 "${lfw}/${f}" "${ext}/${f}"
-  done
 }
 
 stage_builtin_firmware() {
@@ -376,21 +323,21 @@ stage_builtin_firmware() {
         cp -L "${EXTRA_FW_SRC}/SM8650/qcom/sm8650/ayaneo/ps2/gen70900_zap.mbn" "${ext}/qcom/sm8650/ayaneo/ps2/"
         ;;
       SM8550)
-        stage_linux_fw "$ext" \
-          qcom/a740_sqe.fw=96fee336424b139100fc60b5b45a907360e4b3936d7e1d00406b9bd80ca48473 \
-          qcom/gmu_gen70200.bin=1a2a419c39046d3141fc5fed5aa7f971de2db40cc7a1d89693c3e26fad64dd98 \
-          qcom/sm8550/a740_zap.mbn=386bbdc25ae94a9398e33e7580eecfdcef6c472682a1e3123e1374bcffe7cde3
+        local lfw="${CACHE}/linux-firmware-${LINUX_FW_REF}" f sum
+        local -A want=(
+          [qcom/a740_sqe.fw]=96fee336424b139100fc60b5b45a907360e4b3936d7e1d00406b9bd80ca48473
+          [qcom/gmu_gen70200.bin]=1a2a419c39046d3141fc5fed5aa7f971de2db40cc7a1d89693c3e26fad64dd98
+          [qcom/sm8550/a740_zap.mbn]=386bbdc25ae94a9398e33e7580eecfdcef6c472682a1e3123e1374bcffe7cde3
+        )
+        for f in "${!want[@]}"; do
+          fetch "https://gitlab.com/kernel-firmware/linux-firmware/-/raw/${LINUX_FW_REF}/${f}" "${lfw}/${f}"
+          sum="$(sha256sum "${lfw}/${f}" | cut -d" " -f1)"
+          [[ "$sum" == "${want[$f]}" ]] || die "${f}: sha256 ${sum} != pinned ${want[$f]}"
+          install -D -m0644 "${lfw}/${f}" "${ext}/${f}"
+        done
         ;;
     esac
   done
-  # Retroid Pocket Duo: Adreno 722 microcode. Its zap shader is signed for
-  # the device (qcom/eliza/retroidpocket/rpduo/gen71700_zap.mbn in the DTS)
-  # and has to come from the Duo itself.
-  if ((DUO)); then
-    stage_linux_fw "$ext" \
-      qcom/gen71700_sqe.fw=9e2bfb1aa7e0465faea5c70b65d124c70db2e532eb02a5584bc561cf765c53df \
-      qcom/gen71700_gmu.bin=75b2c1757ef5709924d068a25e8e6ae485d6342af30ba14090fa53dafe76a61a
-  fi
   cp -L "${regdb}/regulatory.db" "${regdb}/regulatory.db.p7s" "$ext/"
   (cd "$ext" && find . -type f | sed 's|^\./||' | sort | xargs) >"${WORK}/extra-firmware.list"
 }
@@ -436,7 +383,6 @@ configure() {
   for s in "${SOCS[@]}"; do
     [[ -f "${HERE}/steamos-${s,,}.config" ]] && cat "${HERE}/steamos-${s,,}.config" >>"$frag"
   done
-  ((DUO)) && cat "${HERE}/steamos-sm7750.config" >>"$frag"
   local line opt val
   while IFS= read -r line; do
     [[ -z "$line" || "$line" == \#* ]] && continue
@@ -522,21 +468,6 @@ pack_kernel_img() {
   md5sum "$out" | awk '{print $1"  KERNEL"}' >"$(dirname "$out")/KERNEL.md5"
 }
 
-# Retroid Pocket Duo: boot image for its stock ABL (`fastboot boot`): header
-# v2, the Duo DTB in the dtb section, the same initramfs, and the Duo's
-# cmdline (cmdline.sh, CMDLINE_DEVICE=rpduo). The image builder patches the
-# real root in, as for KERNEL.
-pack_duo_img() {
-  local out="$1" img="${SRC}/arch/arm64/boot/Image" payload cmdline
-  payload="$(mktemp)"
-  gzip -9 -n -c "$img" >"$payload"
-  cmdline="$(SOC="$SOC" CMDLINE_DEVICE=rpduo bash -c "source '${HERE}/cmdline.sh'; build_cmdline 00000000-02")"
-  python3 "${HERE}/mkbootimg-v0.py" --kernel "$payload" --ramdisk "$INITRD" \
-    --dtb "${SRC}/arch/arm64/boot/dts/qcom/${DTBS_SM7750}.dtb" \
-    --cmdline "$cmdline" --out "$out"
-  rm -f "$payload"
-}
-
 install_output() {
   local o="${OUT_BASE}/${KREL}"
   rm -rf "$o"
@@ -566,11 +497,10 @@ install_output() {
   done
 
   local dtb
-  for dtb in $DTBS $DTBS_SEPARATE; do cp "${SRC}/arch/arm64/boot/dts/qcom/${dtb}.dtb" "$o/dtbs/"; done
+  for dtb in $DTBS; do cp "${SRC}/arch/arm64/boot/dts/qcom/${dtb}.dtb" "$o/dtbs/"; done
   cp "${SRC}/.config" "$o/config-${KREL}"
   cp "${SRC}/System.map" "$o/System.map-${KREL}"
   pack_kernel_img "$o/boot/KERNEL"
-  ((DUO)) && pack_duo_img "$o/boot/KERNEL-rpduo"
   ln -sfn "$KREL" "${OUT_BASE}/current"
   log "done: $o"
   ls -la "$o/boot" >&2
@@ -583,7 +513,6 @@ main() {
     [[ -d "$OUT_BASE/$KREL" ]] || die "no previously built kernel output"
     build_initramfs
     pack_kernel_img "$OUT_BASE/$KREL/boot/KERNEL"
-    ((DUO)) && pack_duo_img "$OUT_BASE/$KREL/boot/KERNEL-rpduo"
     log "repacked initramfs: $OUT_BASE/$KREL/boot/KERNEL"
     return
   fi

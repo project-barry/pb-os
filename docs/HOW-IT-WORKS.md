@@ -199,7 +199,7 @@ remove every trace of it.
 
 | Area | SM8550 (MaSi) | Pocket FIT (this project) |
 |------|---------------|--------------------|
-| Kernel | 7.0.14 + Armbian sm8550 | **7.3** (Retroid Pocket's 7.3 series + ROCKNIX 20260901 recipe, GCC 15) + port patches (`external-and-mods/kernel-sm8650/`) |
+| Kernel | 7.0.14 + Armbian sm8550 | **7.2.8** (ROCKNIX 20260901 SM8650 recipe, GCC 15) + Pocket FIT patches (`external-and-mods/kernel-sm8650/`) |
 | DTB selection | 14-slot index chain | OpenABL's **Device model** matches the DTB `model` string |
 | Root | initramfs + `root=UUID=` | tiny busybox initramfs (writes `bootlog.txt` to the FAT partition), `root=PARTUUID=` patched at image pack |
 | GPU userspace | patched A740 Turnip | Frame's stock Turnip/zink (A750) |
@@ -219,7 +219,7 @@ symlinks need a Linux filesystem, which exFAT is not. Build from a copy of
 this tree inside `/work` (normalised to root-owned 0644/0755):
 
 ```bash
-# Kernel: 7.x only boots when built with GCC 15, so it builds in a
+# Kernel: 7.2.8 only boots when built with GCC 15, so it builds in a
 # Fedora 43 container (needs Docker). SOC=sm8650 for the Pocket FIT,
 # SOC=sm8550 for the Retroid Pocket 6 and AYN Thor:
 SOC=sm8650 WORK=/work/kernel-sm8650 ROCKNIX_DIR=/work/rocknix-20260901 \

@@ -1,0 +1,28 @@
+From: lavachemist <48248311+lavachemist@users.noreply.github.com>
+Subject: [PATCH] ASoC: codecs: lpass-tx-macro: route TX SMIC MUX0 SWR_MIC10/11 to their own inputs
+
+TX SMIC MUX0 routes SWR_MIC10 to "TX SWR_INPUT11" and SWR_MIC11 to
+"TX SWR_INPUT10"; MUX1..MUX7 map each SWR_MICn to "TX SWR_INPUTn". The
+mux register selects SoundWire line 10 for SWR_MIC10, so DAPM powered the
+codec path behind the other input: with the codec mic routed to
+"TX SWR_INPUT10", DEC0 on SWR_MIC10 either never powered (no data, -EIO
+from the DSP) or powered a path that was not the one being read. Map
+MUX0 the same way as the other muxes.
+
+Tested on the Retroid Pocket Nova (WCD938x DMIC6 on SWR_MIC10).
+
+Fixes: d34f0c8ee2e3 ("ASoC: codecs: tx-macro: correct TX SMIC MUXn widgets on SM8350+")
+---
+--- a/sound/soc/codecs/lpass-tx-macro.c
++++ b/sound/soc/codecs/lpass-tx-macro.c
+@@ -1916,8 +1916,8 @@
+ 	{"TX SMIC MUX0", "SWR_MIC7", "TX SWR_INPUT7"},
+ 	{"TX SMIC MUX0", "SWR_MIC8", "TX SWR_INPUT8"},
+ 	{"TX SMIC MUX0", "SWR_MIC9", "TX SWR_INPUT9"},
+-	{"TX SMIC MUX0", "SWR_MIC10", "TX SWR_INPUT11"},
+-	{"TX SMIC MUX0", "SWR_MIC11", "TX SWR_INPUT10"},
++	{"TX SMIC MUX0", "SWR_MIC10", "TX SWR_INPUT10"},
++	{"TX SMIC MUX0", "SWR_MIC11", "TX SWR_INPUT11"},
+ 
+ 	{"TX DEC1 MUX", "SWR_MIC", "TX SMIC MUX1"},
+ 	{"TX SMIC MUX1", NULL, "TX_SWR_CLK"},

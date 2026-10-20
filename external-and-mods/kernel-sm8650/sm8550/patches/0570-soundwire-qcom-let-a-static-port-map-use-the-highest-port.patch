@@ -1,0 +1,32 @@
+From: lavachemist <48248311+lavachemist@users.noreply.github.com>
+Subject: [PATCH] soundwire: qcom: let a static port map use the highest port
+
+qcom_swrm_stream_alloc_ports() bounds the port number with
+maxport = ctrl->nports, but the ports are numbered 1..nports (bit 0 of
+port_mask is reserved at probe, pconfig has nports + 1 entries). Since
+6ccec91c3535 ("soundwire: qcom: Fix port exhaustion check in
+stream_alloc_ports") turned the check into pn >= maxport, a slave whose
+static port map points at the highest port is refused with "All ports
+busy" (-EBUSY) every time.
+
+On SM8550 the TX master has qcom,din-ports = 4 and the WCD938x TX slave
+maps its DMIC4..7 port to master port 4 (qcom,tx-port-mapping = <2 2 3 4>),
+so no DMIC4..7 capture could start. Use nports + 1 as the bound: the
+static map can reach port nports, and find_first_zero_bit() still returns
+nports + 1 when every port is taken, which the check catches. Tested on
+the Retroid Pocket Nova, whose built-in mic is DMIC6.
+
+Fixes: 6ccec91c3535 ("soundwire: qcom: Fix port exhaustion check in stream_alloc_ports")
+---
+--- a/drivers/soundwire/qcom.c
++++ b/drivers/soundwire/qcom.c
+@@ -1259,7 +1259,8 @@
+ 			continue;
+ 
+ 		port_mask = &ctrl->port_mask;
+-		maxport = ctrl->nports;
++		/* Ports are 1-based (bit 0 is reserved), so 1..nports are valid. */
++		maxport = ctrl->nports + 1;
+ 
+ 		list_for_each_entry(s_rt, &m_rt->slave_rt_list, m_rt_node) {
+ 			slave = s_rt->slave;

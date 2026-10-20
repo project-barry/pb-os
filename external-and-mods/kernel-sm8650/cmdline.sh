@@ -41,13 +41,6 @@ build_cmdline() {
     rootfstype=ext4
     errors=remount-ro
   )
-  # Per-device additions (CMDLINE_DEVICE; only boot images of their own).
-  case "${CMDLINE_DEVICE:-}" in
-    # Retroid Pocket Duo (KERNEL-rpduo): its signed firmware is copied from
-    # its own Android partitions at boot (rpduo-firmware) into a writable
-    # place the kernel also searches.
-    rpduo) parts+=(firmware_class.path=/var/lib/pbos-firmware) ;;
-  esac
   if [[ -n "${KERNEL_CMDLINE_EXTRA:-}" ]]; then
     local -a extra
     read -ra extra <<<"${KERNEL_CMDLINE_EXTRA}"

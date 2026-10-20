@@ -1,15 +1,10 @@
 #!/usr/bin/env python3
-"""Minimal Android boot image writer (header v0 or v2).
+"""Minimal Android boot image (header v0) writer for OpenABL (ROCKNIX ABL before it).
 
-v0, for OpenABL (ROCKNIX ABL before it): the layout ROCKNIX produces with AOSP
-mkbootimg.py: --kernel_offset 0 --ramdisk_offset 0 --tags_offset 0
---header_version 0 (base 0x10000000), ramdisk = b"dummy", os_version 12.0.0.
+Same layout ROCKNIX produces with AOSP mkbootimg.py:
+  --kernel_offset 0 --ramdisk_offset 0 --tags_offset 0 --header_version 0
+  (base 0x10000000), ramdisk = b"dummy", os_version 12.0.0.
 ABL decompresses the gzip kernel and scans the DTBs appended after it.
-
-v2 (--dtb), for a stock Qualcomm ABL (`fastboot boot` on a device with no
-OpenABL, e.g. the Retroid Pocket Duo): the DTB gets the image's own dtb
-section, which Qualcomm's ABL reads for header v2 (BootLinux.c), and no
-recovery DTBO. The cmdline sits at the same offset (0x40) in both.
 """
 from __future__ import annotations
 
@@ -40,7 +35,6 @@ def main() -> None:
     ap.add_argument("--ramdisk")
     ap.add_argument("--cmdline", default="")
     ap.add_argument("--pagesize", type=int, default=2048)
-    ap.add_argument("--dtb", help="header v2 with this DTB in its dtb section")
     ap.add_argument("--out", required=True)
     a = ap.parse_args()
 
@@ -50,13 +44,9 @@ def main() -> None:
     if len(cmd) >= 512:
         raise SystemExit(f"cmdline too long ({len(cmd)} >= 512)")
 
-    dtb = Path(a.dtb).read_bytes() if a.dtb else None
     today = datetime.date.today()
     sha = hashlib.sha1()
-    # As AOSP mkbootimg: kernel, ramdisk, second; v1+ adds the recovery DTBO,
-    # v2 the DTB.
-    blobs = [kernel, ramdisk, b""] + ([b"", dtb] if dtb is not None else [])
-    for blob in blobs:
+    for blob in (kernel, ramdisk, b""):
         sha.update(blob)
         sha.update(struct.pack("<I", len(blob)))
 
@@ -68,23 +58,14 @@ def main() -> None:
         0, BASE + 0x00F00000,          # second size / addr
         BASE + 0x0,                    # tags addr
         a.pagesize,
-        2 if dtb is not None else 0,   # header_version
+        0,                             # header_version
         os_version_field(12, 0, 0, today.year, today.month),
         b"",                           # name
         cmd,
         sha.digest().ljust(32, b"\0"),
         b"",                           # extra cmdline
     )
-    if dtb is not None:
-        hdr += struct.pack(
-            "<IQIIQ",
-            0, 0,                      # recovery DTBO size / offset
-            1660,                      # header_size (v2)
-            len(dtb), BASE + 0x01F00000,  # dtb size / addr
-        )
     img = pad(hdr, a.pagesize) + pad(kernel, a.pagesize) + pad(ramdisk, a.pagesize)
-    if dtb is not None:
-        img += pad(dtb, a.pagesize)
     Path(a.out).write_bytes(img)
     print(f"{a.out}: {len(img)} bytes, kernel {len(kernel)}, cmdline {len(cmd)} chars")
 
