@@ -576,19 +576,30 @@ steam_keyboard() {
 }
 
 keyboard_watch() {
-  local line closing="" rc
-  asx "logcat -v raw -s PbosKeyboard:I -T '$(date +%s).000'" | while :; do
-    if [[ -n "$closing" ]]; then
-      read -r -t 0.15 line && rc=0 || rc=$?
-      if ((rc > 128)); then closing=""; steam_keyboard close; continue; fi
-      ((rc == 0)) || break
-    else
-      read -r line || break
-    fi
-    case "$line" in
-      show) closing=""; steam_keyboard open ;;
-      hide) closing=1 ;;
-    esac
+  local line closing="" rc since
+  # Runs in the background for as long as Android does: no errexit here, or
+  # the first hiccup of the log pipe ends it without a word.
+  set +e +o pipefail
+  # Android's log can end under it (logd still settling right after a fast
+  # boot): follow it again, from where it left off, while Android runs.
+  while kill -0 "$lepton_pid" 2>/dev/null; do
+    since="$(date +%s).000"
+    asx "logcat -v raw -s PbosKeyboard:I -T '$since'" | while :; do
+      if [[ -n "$closing" ]]; then
+        read -r -t 0.15 line && rc=0 || rc=$?
+        if ((rc > 128)); then closing=""; steam_keyboard close; continue; fi
+        ((rc == 0)) || break
+      else
+        read -r line || break
+      fi
+      case "$line" in
+        show) closing=""; steam_keyboard open ;;
+        hide) closing=1 ;;
+      esac
+    done
+    kill -0 "$lepton_pid" 2>/dev/null || break
+    echo "pbos-apk: keyboard: Android's log ended, following it again" >&2
+    sleep 1
   done
 }
 
