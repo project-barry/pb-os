@@ -59,6 +59,8 @@ IME=rkr.simplekeyboard.inputmethod/.latin.LatinIME
 # The default keyboard, from the image's overlay: draws nothing and asks for
 # the device's own (Steam's, Barry's on the Thor), see keyboard_watch.
 PBOS_IME=org.projectbarry.pbos.keyboard/.PbosKeyboard
+# Barry Launcher's shell (AYN Thor's bottom screen).
+SHELLD=http://127.0.0.1:47824
 
 google_on() { [[ -f "${GP_ROOT}/common/system/product/priv-app/Phonesky/Phonesky.apk" ]]; }
 lepton_ver() { cat "${LEPTON_DIR}/images/version.txt" 2>/dev/null || true; }
@@ -572,7 +574,22 @@ sync_pads() {
 # was sent) closes it, unless "show" follows at once: moving from one field
 # to the next doesn't flash it.
 steam_keyboard() {
+  # Barry Launcher (AYN Thor) opens its own on the bottom screen when it can
+  # (shelld, as the PB-OS tab does). Steam's keyboard is not asked there: its
+  # overlay would keep all input after Barry's keyboard took its place.
+  barry_keyboard "$1" && return 0
   DISPLAY="${DISPLAY:-:0}" steam -ifrunning "steam://$1/keyboard" >/dev/null 2>&1 &
+}
+
+barry_keyboard() {
+  # A field on the top screen: the Trackpad app's keys ("top"), and its full
+  # trackpad again after ("top-down"), as Barry Launcher does for Steam's.
+  local apps what=top
+  apps="$(curl -fs -m 0.5 "${SHELLD}/apps" 2>/dev/null)" || return 1
+  [[ "$apps" == *'"trackpad"'* ]] || return 1
+  [[ "$1" == open ]] || what=top-down
+  curl -fs -m 2 -o /dev/null -H 'Content-Type: application/json' \
+    -d "{\"do\": \"${what}\", \"why\": \"Android text field\"}" "${SHELLD}/keyd"
 }
 
 keyboard_watch() {
