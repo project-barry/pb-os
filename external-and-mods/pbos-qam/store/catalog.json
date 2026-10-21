@@ -1,0 +1,290 @@
+{
+  "format": 1,
+  "apps": [
+    {
+      "id": "retroarch",
+      "name": "RetroArch",
+      "summary": "Many systems (libretro cores)",
+      "category": "emulators",
+      "icon": "https://dl.flathub.org/repo/appstream/aarch64/icons/128x128/org.libretro.RetroArch.png",
+      "install": {
+        "type": "flatpak",
+        "ref": "org.libretro.RetroArch"
+      },
+      "postInstall": "retroarch-cores-url"
+    },
+    {
+      "id": "dolphin",
+      "name": "Dolphin",
+      "summary": "GameCube and Wii",
+      "category": "emulators",
+      "icon": "https://dl.flathub.org/repo/appstream/aarch64/icons/128x128/org.DolphinEmu.dolphin-emu.png",
+      "install": {
+        "type": "flatpak",
+        "ref": "org.DolphinEmu.dolphin-emu"
+      }
+    },
+    {
+      "id": "primehack",
+      "name": "PrimeHack",
+      "summary": "Dolphin for the Metroid Prime trilogy",
+      "category": "emulators",
+      "icon": "https://dl.flathub.org/repo/appstream/aarch64/icons/128x128/io.github.shiiion.primehack.png",
+      "install": {
+        "type": "flatpak",
+        "ref": "io.github.shiiion.primehack"
+      }
+    },
+    {
+      "id": "ppsspp",
+      "name": "PPSSPP",
+      "summary": "PlayStation Portable",
+      "category": "emulators",
+      "icon": "https://dl.flathub.org/repo/appstream/aarch64/icons/128x128/org.ppsspp.PPSSPP.png",
+      "install": {
+        "type": "flatpak",
+        "ref": "org.ppsspp.PPSSPP"
+      }
+    },
+    {
+      "id": "duckstation",
+      "name": "DuckStation",
+      "summary": "PlayStation",
+      "category": "emulators",
+      "icon": "https://github.com/stenzek.png",
+      "install": {
+        "type": "appimage",
+        "releases": "https://api.github.com/repos/stenzek/duckstation/releases?per_page=10",
+        "asset": "^DuckStation-arm64\\.AppImage$",
+        "filename": "DuckStation.AppImage"
+      }
+    },
+    {
+      "id": "armsx2",
+      "name": "ARMSX2",
+      "summary": "PlayStation 2",
+      "category": "emulators",
+      "icon": "https://github.com/ARMSX2.png",
+      "install": {
+        "type": "appimage",
+        "releases": "https://api.github.com/repos/ARMSX2/ARMSX2/releases?per_page=15",
+        "asset": "Linux-arm64-4K-pages\\.AppImage$",
+        "filename": "ARMSX2.AppImage"
+      },
+      "note": "Nightly builds."
+    },
+    {
+      "id": "rpcs3",
+      "name": "RPCS3",
+      "summary": "PlayStation 3",
+      "category": "emulators",
+      "icon": "https://dl.flathub.org/repo/appstream/aarch64/icons/128x128/net.rpcs3.RPCS3.png",
+      "install": {
+        "type": "flatpak",
+        "ref": "net.rpcs3.RPCS3"
+      }
+    },
+    {
+      "id": "vita3k",
+      "name": "Vita3K",
+      "summary": "PlayStation Vita",
+      "category": "emulators",
+      "icon": "https://github.com/Vita3K.png",
+      "install": {
+        "type": "appimage",
+        "releases": "https://api.github.com/repos/Vita3K/Vita3K/releases?per_page=10",
+        "asset": "^Vita3K-aarch64\\.AppImage$",
+        "filename": "Vita3K.AppImage"
+      }
+    },
+    {
+      "id": "melonds",
+      "name": "melonDS",
+      "summary": "Nintendo DS",
+      "category": "emulators",
+      "icon": "https://dl.flathub.org/repo/appstream/aarch64/icons/128x128/net.kuribo64.melonDS.png",
+      "install": {
+        "type": "flatpak",
+        "ref": "net.kuribo64.melonDS"
+      },
+      "note": "On the AYN Thor, Quick Access → PB-OS → Display → Two-screen emulators puts the touch screen on the bottom screen."
+    },
+    {
+      "id": "azahar",
+      "name": "Azahar",
+      "summary": "Nintendo 3DS",
+      "category": "emulators",
+      "icon": "https://dl.flathub.org/repo/appstream/aarch64/icons/128x128/org.azahar_emu.Azahar.png",
+      "install": {
+        "type": "flatpak",
+        "ref": "org.azahar_emu.Azahar"
+      },
+      "note": "On the AYN Thor, Quick Access → PB-OS → Display → Two-screen emulators puts the touch screen on the bottom screen."
+    },
+    {
+      "id": "cemu",
+      "name": "Cemu",
+      "summary": "Wii U",
+      "category": "emulators",
+      "icon": "https://github.com/cemu-project.png",
+      "install": {
+        "type": "appimage",
+        "releases": "https://api.github.com/repos/pkgforge-dev/Cemu-AppImage-Enhanced/releases?per_page=20",
+        "asset": "^Cemu_Nightly-.*-anylinux-aarch64\\.AppImage$",
+        "filename": "Cemu.AppImage"
+      },
+      "note": "Cemu itself publishes no ARM build: this is pkgforge-dev's unofficial ARM build of Cemu's nightly."
+    },
+    {
+      "id": "xemu",
+      "name": "xemu",
+      "summary": "Original Xbox",
+      "category": "emulators",
+      "icon": "https://dl.flathub.org/repo/appstream/aarch64/icons/128x128/app.xemu.xemu.png",
+      "install": {
+        "type": "flatpak",
+        "ref": "app.xemu.xemu"
+      }
+    },
+    {
+      "id": "flycast",
+      "name": "Flycast",
+      "summary": "Dreamcast",
+      "category": "emulators",
+      "icon": "https://dl.flathub.org/repo/appstream/aarch64/icons/128x128/org.flycast.Flycast.png",
+      "install": {
+        "type": "flatpak",
+        "ref": "org.flycast.Flycast"
+      }
+    },
+    {
+      "id": "ymir",
+      "name": "Ymir",
+      "summary": "Sega Saturn",
+      "category": "emulators",
+      "icon": "https://dl.flathub.org/repo/appstream/aarch64/icons/128x128/io.github.strikerx3.ymir.png",
+      "install": {
+        "type": "flatpak",
+        "ref": "io.github.strikerx3.ymir"
+      }
+    },
+    {
+      "id": "bigpemu",
+      "name": "BigPEmu",
+      "summary": "Atari Jaguar",
+      "category": "emulators",
+      "icon": "https://dl.flathub.org/repo/appstream/aarch64/icons/128x128/com.richwhitehouse.BigPEmu.png",
+      "install": {
+        "type": "flatpak",
+        "ref": "com.richwhitehouse.BigPEmu"
+      }
+    },
+    {
+      "id": "mame",
+      "name": "MAME",
+      "summary": "Arcade machines",
+      "category": "emulators",
+      "icon": "https://dl.flathub.org/repo/appstream/aarch64/icons/128x128/org.mamedev.MAME.png",
+      "install": {
+        "type": "flatpak",
+        "ref": "org.mamedev.MAME"
+      }
+    },
+    {
+      "id": "scummvm",
+      "name": "ScummVM",
+      "summary": "Classic adventure games",
+      "category": "emulators",
+      "icon": "https://dl.flathub.org/repo/appstream/aarch64/icons/128x128/org.scummvm.ScummVM.png",
+      "install": {
+        "type": "flatpak",
+        "ref": "org.scummvm.ScummVM"
+      }
+    },
+    {
+      "id": "moonlight",
+      "name": "Moonlight",
+      "summary": "Stream games from your PC",
+      "category": "applications",
+      "icon": "https://dl.flathub.org/repo/appstream/aarch64/icons/128x128/com.moonlight_stream.Moonlight.png",
+      "install": {
+        "type": "flatpak",
+        "ref": "com.moonlight_stream.Moonlight"
+      }
+    },
+    {
+      "id": "chiaki",
+      "name": "chiaki-ng",
+      "summary": "PlayStation Remote Play",
+      "category": "applications",
+      "icon": "https://dl.flathub.org/repo/appstream/aarch64/icons/128x128/io.github.streetpea.Chiaki4deck.png",
+      "install": {
+        "type": "flatpak",
+        "ref": "io.github.streetpea.Chiaki4deck"
+      }
+    },
+    {
+      "id": "greenlight",
+      "name": "Greenlight",
+      "summary": "Xbox cloud gaming and remote play",
+      "category": "applications",
+      "icon": "https://dl.flathub.org/repo/appstream/aarch64/icons/128x128/io.github.unknownskl.greenlight.png",
+      "install": {
+        "type": "flatpak",
+        "ref": "io.github.unknownskl.greenlight"
+      }
+    },
+    {
+      "id": "prism-launcher",
+      "name": "Prism Launcher",
+      "summary": "Minecraft",
+      "category": "applications",
+      "icon": "https://dl.flathub.org/repo/appstream/aarch64/icons/128x128/org.prismlauncher.PrismLauncher.png",
+      "install": {
+        "type": "flatpak",
+        "ref": "org.prismlauncher.PrismLauncher"
+      }
+    },
+    {
+      "id": "es-de",
+      "name": "ES-DE",
+      "summary": "A front end for your ROM collection",
+      "category": "applications",
+      "icon": "https://gitlab.com/uploads/-/system/project/avatar/18817634/emulationstation_1024x1024.png",
+      "install": {
+        "type": "appimage",
+        "releases": "https://gitlab.com/api/v4/projects/es-de%2Femulationstation-de/releases?per_page=10",
+        "asset": "^ES-DE_aarch64\\.AppImage$",
+        "filename": "ES-DE.AppImage"
+      }
+    },
+    {
+      "id": "steam-rom-manager",
+      "name": "Steam ROM Manager",
+      "summary": "Adds your ROMs to Steam, with artwork",
+      "category": "applications",
+      "icon": "https://github.com/SteamGridDB.png",
+      "install": {
+        "type": "appimage",
+        "releases": "https://api.github.com/repos/SteamGridDB/steam-rom-manager/releases?per_page=20",
+        "asset": "^Steam-ROM-Manager-[0-9][0-9.]*-arm64\\.AppImage$",
+        "filename": "Steam-ROM-Manager.AppImage"
+      },
+      "desktopOnly": true,
+      "note": "It needs Steam closed: use it in Desktop Mode."
+    },
+    {
+      "id": "flatseal",
+      "name": "Flatseal",
+      "summary": "Flatpak apps' permissions",
+      "category": "applications",
+      "icon": "https://dl.flathub.org/repo/appstream/aarch64/icons/128x128/com.github.tchx84.Flatseal.png",
+      "install": {
+        "type": "flatpak",
+        "ref": "com.github.tchx84.Flatseal"
+      },
+      "desktopOnly": true,
+      "note": "Use it in Desktop Mode."
+    }
+  ]
+}

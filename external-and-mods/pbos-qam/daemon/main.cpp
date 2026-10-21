@@ -99,7 +99,7 @@ public:
     }
 
     bool start() {
-        for (auto make : {make_tools_section, make_barry_section, make_files_section}) {
+        for (auto make : {make_tools_section, make_barry_section, make_files_section, make_store_section}) {
             auto s = make();
             if (s->here()) sections_.push_back(std::move(s));
         }
@@ -424,7 +424,7 @@ int call(const std::string& section, const std::string& method, const std::strin
         std::fprintf(stderr, "ARGS must be a JSON list\n");
         return 2;
     }
-    for (auto make : {make_tools_section, make_barry_section, make_files_section}) {
+    for (auto make : {make_tools_section, make_barry_section, make_files_section, make_store_section}) {
         auto s = make();
         if (s->name() != section) continue;
         try {

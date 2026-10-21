@@ -1,26 +1,25 @@
 # Two screens for DS, 3DS and Wii U games on the AYN Thor
 
-> [!WARNING]
-> **Work in progress.** This needs a gamescope that PB-OS images don't ship
-> yet. The bottom screen itself works on a Thor; the emulators haven't been
-> tried there yet.
-
-In Game Mode, PB-OS's gamescope can show an emulator's second window on the
+In Game Mode, PB-OS's gamescope shows an emulator's second window on the
 Thor's bottom screen. The emulator draws one screen per window, the top window
 stays the game, and the bottom window replaces the Barry Launcher until the
-game closes.
+game closes. Touches on the bottom screen go to the emulator.
 
-PB-OS doesn't ship any emulators. Install them yourself, for example with
-EmuDeck. Nothing here changes EmuDeck; each emulator needs one setting
-changed, once, and remembers it.
+These are the emulators' own stock builds: no special builds that drive the
+bottom screen themselves are needed.
 
-## The quick way: the Barry Launcher plugin
+PB-OS doesn't ship any emulators. Install them from **Quick Access → PB-OS
+(Barry's head) → App Store → Emulators** (melonDS and Azahar come from
+Flathub), or yourself, for example with EmuDeck. Nothing here changes EmuDeck;
+each emulator needs one setting changed, once, and remembers it.
 
-The Thor does this for you: **Quick Access → PB-OS → Display → Two-screen
-emulators** is on by default. It finds melonDS, Azahar, Lime3DS,
+## The quick way: the Display page
+
+The Thor does this for you: **Quick Access → PB-OS (Barry's head) → Display
+→ Two-screen emulators** is on by default. It finds melonDS, Azahar, Lime3DS,
 Citra and Cemu (AppImage or Flatpak) and makes the changes below in their
-settings files, also for an emulator installed later or reset by EmuDeck,
-within half a minute and while that emulator isn't running (they write their
+settings files, also for an emulator installed later or reset by EmuDeck. It
+does that as soon as the emulator isn't running (emulators write their
 settings back when they quit). An emulator needs to have been opened once,
 so its settings file exists.
 
@@ -29,8 +28,8 @@ alone from then on. While it's on, changing these settings inside an
 emulator doesn't stick; turn the switch off first.
 
 DS games still need the standalone melonDS (see below). When Steam starts DS
-games in RetroArch, the plugin says how many, but leaves them as they are:
-switching them changes their Steam entries and where their saves live.
+games in RetroArch, the Display page says how many, but leaves them as they
+are: switching them changes their Steam entries and where their saves live.
 
 ## By hand
 
@@ -77,15 +76,16 @@ Azahar's interface must be in English. See [Other languages](#other-languages).
 
 Cemu's interface must be in English. See [Other languages](#other-languages).
 
-Cemu only publishes x86_64 builds, so on the Thor it runs through x86
-emulation (box64), or from an unofficial ARM build. It may be too slow for some
-games.
+Cemu only publishes x86_64 builds. The App Store installs pkgforge-dev's
+unofficial ARM build of Cemu's nightly; an x86_64 Cemu runs only through x86
+emulation (box64). Either may be too slow for some games.
 
 ## Keeping the settings
 
 EmuDeck's updates keep these settings. **Reset configuration** in EmuDeck puts
 its own settings back (it saves the old file with a `.bak` ending), so after a
-reset, change them again (with the plugin's switch on, it does that itself).
+reset, change them again (with the Two-screen emulators switch on, it does
+that itself).
 
 ## Other languages
 
