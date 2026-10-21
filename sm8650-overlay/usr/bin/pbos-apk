@@ -637,9 +637,12 @@ cmd_daemon() {
   export PBOS_LEPTON_GOOGLE="$google"
   # Rootless podman puts the container in its own libpod scope; gamescope
   # shows the shared Android's window for the running Steam title only when
-  # it comes from pbos-android.service. Keep the container in this unit.
+  # it comes from pbos-android.service. Keep the container in this unit. No
+  # process limit: podman's 2048 is near what Android with a browser open
+  # runs (1,478 tasks on the Nova), and enforcing it needs the pids
+  # controller in this unit's cgroup, which crun didn't always get.
   mkdir -p "${HOME}/.local/share/pbos-apk"
-  printf '[containers]\ncgroups = "split"\n' >"${HOME}/.local/share/pbos-apk/containers.conf"
+  printf '[containers]\ncgroups = "split"\npids_limit = 0\n' >"${HOME}/.local/share/pbos-apk/containers.conf"
   export CONTAINERS_CONF_OVERRIDE="${HOME}/.local/share/pbos-apk/containers.conf"
 
   local lepton_pid="" i
