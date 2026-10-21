@@ -1903,6 +1903,130 @@ function protonSoon(appids) {
 }
 let protonEvents = [];
 
+// ---------------------------------------------------------- import apk ---
+// Import APK (Personalization, at the bottom): APKs and bundles (.apk, .apkm,
+// .xapk, .apks) from Downloads, the SD card or a USB drive go to
+// ~/Android/Inbox, which pbos-apk installs from. Kept, a copy goes and the
+// file stays; not kept, the file itself goes (the inbox empties itself).
+const apkPlaces = callable("apk_places");
+const listApks = callable("list_apks");
+const importApks = callable("import_apks");
+const apkClose = callable("apk_close");
+
+// An Android package going down into a tray.
+const ImportApkIcon = svg([
+    jsx("path", { d: "M11 2h2v9.2l3.3-3.3 1.4 1.4L12 15l-5.7-5.7 1.4-1.4 3.3 3.3z" }, "a"),
+    jsx("path", { d: "M3 14h2v5h14v-5h2v7H3z" }, "t"),
+]);
+
+const mb = (n) => `${(n / 1048576).toFixed(n < 10485760 ? 1 : 0)} MB`;
+
+function ImportApkModal({ closeModal: close }) {
+    // Drives mounted for the pop-up (pbos-qamd) are let go when it closes.
+    const closeModal = () => { apkClose().catch(() => {}); close(); };
+    const [step, setStep] = useState("place");
+    const [places, setPlaces] = useState(null);
+    const [place, setPlace] = useState(null);
+    const [files, setFiles] = useState(null);
+    const [picked, setPicked] = useState(() => new Set());
+    const [busy, setBusy] = useState(false);
+    const [result, setResult] = useState(null);
+    useEffect(() => { apkPlaces().then(setPlaces).catch(() => setPlaces([])); }, []);
+
+    const open = (p) => {
+        setPlace(p);
+        setFiles(null);
+        setPicked(new Set());
+        setStep("list");
+        listApks(p.id).then(setFiles).catch(() => setFiles([]));
+    };
+    const toggle = (path, on) => setPicked((prev) => {
+        const next = new Set(prev);
+        if (on) next.add(path); else next.delete(path);
+        return next;
+    });
+    const install = (keep) => {
+        setBusy(true);
+        importApks([...picked], keep)
+            .then((r) => setResult(r))
+            .catch(() => setResult({ ok: false, done: 0, failed: [] }))
+            .finally(() => { setBusy(false); setStep("done"); });
+    };
+
+    const title = (t) => jsx("div", { style: { fontSize: "20px", fontWeight: "bold", marginBottom: "12px" }, children: t });
+    const text = (t) => jsx("div", { style: { marginBottom: "8px" }, children: t });
+    const buttons = (list) => jsx(DFL.Focusable, {
+        "flow-children": "horizontal",
+        style: { display: "flex", gap: "8px", marginTop: "16px", justifyContent: "flex-end" },
+        children: list.map(([label, onClick, disabled]) => jsx(DFL.DialogButton, {
+            style: { width: "auto", minWidth: "120px" }, disabled: !!disabled, onClick, children: label,
+        }, label)),
+    });
+
+    let body;
+    if (step === "place") {
+        body = [
+            title("Import APK"),
+            text("Where are the APKs?"),
+            !places ? text("Looking…") : jsx(DFL.Focusable, {
+                "flow-children": "vertical",
+                style: { display: "flex", flexDirection: "column", gap: "8px" },
+                children: places.map((p) => jsx(DFL.DialogButton, {
+                    disabled: !p.present, onClick: () => open(p),
+                    children: p.present ? p.label : `${p.label} (none found)`,
+                }, p.id)),
+            }),
+            buttons([["Cancel", closeModal]]),
+        ];
+    } else if (step === "list") {
+        const n = picked.size;
+        body = [
+            title(`APKs in ${place.label}`),
+            !files ? text("Looking…") : !files.length ? text("No APKs or APK bundles there.") : jsx(DFL.Focusable, {
+                "flow-children": "vertical",
+                style: { maxHeight: "50vh", overflowY: "auto" },
+                children: files.map((f) => jsx(DFL.ToggleField, {
+                    label: f.name,
+                    description: `${f.folder ? `${f.folder} · ` : ""}${mb(f.size)}`,
+                    checked: picked.has(f.path),
+                    onChange: (on) => toggle(f.path, on),
+                }, f.path)),
+            }),
+            buttons([["Back", () => setStep("place")], [n ? `Install (${n})` : "Install", () => setStep("keep"), !n]]),
+        ];
+    } else if (step === "keep") {
+        const n = picked.size;
+        body = [
+            title("Keep the files?"),
+            text(`After installing, keep ${n === 1 ? "the APK file" : `the ${n} APK files`} in ${place.label}, or delete ${n === 1 ? "it" : "them"}?`),
+            busy ? text("Moving…") : null,
+            buttons([["Back", () => setStep("list"), busy], ["Keep", () => install(true), busy], ["Delete", () => install(false), busy]]),
+        ];
+    } else {
+        const r = result || { done: 0, failed: [] };
+        body = [
+            title("Import APK"),
+            r.done ? text(`Installing ${r.done === 1 ? "1 app" : `${r.done} apps`}. Each one gets its own title in your Steam library once it is installed.`) : null,
+            r.failed && r.failed.length ? text(`Could not import: ${r.failed.join(", ")}`) : null,
+            r.stayed && r.stayed.length ? text(`Could not delete (the drive is read-only): ${r.stayed.join(", ")}`) : null,
+            !r.done && !(r.failed && r.failed.length) ? text("Nothing was imported.") : null,
+            buttons([["Close", closeModal]]),
+        ];
+    }
+    return jsx(DFL.ModalRoot, { closeModal, onCancel: closeModal, children: jsxs("div", { children: body }) });
+}
+
+function ImportApkPart() {
+    return jsx(DFL.PanelSection, {
+        children: row(jsx(DFL.ButtonItem, {
+            layout: "below",
+            description: "Install Android apps from Downloads, an SD card or a USB drive.",
+            onClick: () => DFL.showModal(jsx(ImportApkModal, {})),
+            children: "Import APK",
+        })),
+    });
+}
+
 // ------------------------------------------------------------- plugins ---
 // Each part goes on its page of the PB-OS list (PAGES in the loader). Those
 // every device has now; the device's own (lighting, hardware, power) once
@@ -1922,6 +2046,9 @@ P.plugin({ id: "install", page: "system", icon: InstallIcon, content: InstallTab
     // pbosd's buttons, or face buttons and sticks: Retroid Pocket 6 / Nova, AYN Thor.
     if (lights === "pbosd" || face) P.plugin({ id: "hardware", page: "hardware", icon: HardwareIcon, content: HardwareTab, order: 10 });
     if (power) P.plugin({ id: "power", page: "power", icon: PowerIcon, content: PowerTab, order: 10 });
+    // At the bottom of Personalization, where Android apps can be run.
+    const android = await getAndroid().catch(() => null);
+    if (android && android.available) P.plugin({ id: "import-apk", page: "personalization", icon: ImportApkIcon, content: ImportApkPart, order: 100 });
 })().catch((e) => P.fail("plugins", e));
 
 // Android titles that no longer fit: a Google Play Store title without

@@ -33,12 +33,15 @@
 //          sm8550-face-buttons, sm8550-stickcal and
 //          barry_launcher_desktop_switch.
 
+#include <fcntl.h>
 #include <sys/inotify.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <map>
 #include <mutex>
 #include <regex>
 #include <utility>
@@ -771,6 +774,223 @@ Value android_state() {
     return out;
 }
 
+// ----------------------------------------------------------- import apk --
+// "Import APK" (Personalization): APKs and bundles in Downloads, on the SD
+// card or on a USB drive go to ~/Android/Inbox, which pbos-apk installs from
+// (and empties). Kept: a copy goes; not kept: the file itself.
+const std::vector<std::string> APK_EXTS = {"apk", "apkm", "xapk", "apks"};
+
+// Drives of one kind ("sd": the card slot, "usb") as folders: where they are
+// mounted, else mounted here while Import APK is open (SteamOS mounts only
+// ext4 microSD cards; pbos-update mounts the others only while it looks).
+// The disk the system runs from is never listed.
+const std::string APK_MEDIA = "/run/pbos-qam/media";
+std::mutex apk_mount_lock;
+std::vector<std::string> apk_own_mounts;
+
+std::vector<std::string> drive_mounts(const std::string& kind) {
+    RunOpts o;
+    o.timeout = 5;
+    auto r = run({"lsblk", "-J", "-l", "-o", "NAME,PATH,PKNAME,FSTYPE,TRAN,MOUNTPOINTS"}, o);
+    auto parsed = Value::parse(r.out);
+    if (!parsed) return {};
+    std::map<std::string, Value> by_name;
+    for (const auto& d : (*parsed)["blockdevices"].items()) by_name[d["name"].str()] = d;
+    auto top = [&](Value d) {
+        while (by_name.count(d["pkname"].str())) d = by_name[d["pkname"].str()];
+        return d;
+    };
+    std::string system;
+    for (const auto& line : split_lines(rd("/proc/self/mounts"))) {
+        auto a = line.find(' ');
+        if (a == std::string::npos || line.compare(a + 1, 2, "/ ") != 0) continue;
+        std::string dev = basename(line.substr(0, a));
+        if (by_name.count(dev)) system = top(by_name[dev])["name"].str();
+    }
+    const std::map<std::string, std::string> FS = {{"vfat", "vfat"}, {"exfat", "exfat"}, {"ext4", "ext4"}, {"ntfs", "ntfs3"}};
+    std::vector<std::string> out;
+    for (const auto& [name, d] : by_name) {
+        Value disk = top(d);
+        std::string fs = d["fstype"].str();
+        if (!FS.count(fs) || disk["name"].str() == system) continue;
+        bool sd = disk["name"].str().rfind("mmcblk", 0) == 0, usb = disk["tran"].str() == "usb";
+        if (!((kind == "sd" && sd) || (kind == "usb" && usb))) continue;
+        std::string dir;
+        for (const auto& m : d["mountpoints"].items())
+            if (m.is_string() && !m.str().empty()) { dir = m.str(); break; }
+        if (dir.empty()) {
+            dir = APK_MEDIA + "/" + name;
+            makedirs(dir);
+            const User& u = desktop_user();
+            std::string opts = "nosuid,nodev,noexec";
+            if (fs != "ext4") opts += ",uid=" + std::to_string(u.uid) + ",gid=" + std::to_string(u.gid);
+            // Read-only when it can't be written (a locked card): Keep still works.
+            auto m = run({"mount", "-t", FS.at(fs), "-o", opts, d["path"].str(), dir}, o);
+            if (m.code != 0) m = run({"mount", "-t", FS.at(fs), "-o", "ro," + opts, d["path"].str(), dir}, o);
+            if (m.code != 0) {
+                log("tools: import apk: mounting %s failed: %s", d["path"].str().c_str(), trim(m.err + m.out).c_str());
+                ::rmdir(dir.c_str());
+                continue;
+            }
+            std::lock_guard<std::mutex> g(apk_mount_lock);
+            apk_own_mounts.push_back(dir);
+        }
+        out.push_back(dir);
+    }
+    return out;
+}
+
+// Import APK closed: the drives mounted for it go.
+Value apk_close() {
+    std::vector<std::string> mine;
+    {
+        std::lock_guard<std::mutex> g(apk_mount_lock);
+        mine.swap(apk_own_mounts);
+    }
+    for (const auto& dir : mine) {
+        run({"umount", dir});
+        ::rmdir(dir.c_str());
+    }
+    return Value();
+}
+
+std::vector<std::string> apk_roots(const std::string& place) {
+    if (place == "downloads") return {desktop_user().home + "/Downloads"};
+    if (place == "sd" || place == "usb") return drive_mounts(place);
+    return {};
+}
+
+bool apk_name(const std::string& name) {
+    auto dot = name.find_last_of('.');
+    return dot != std::string::npos && dot > 0 &&
+           std::find(APK_EXTS.begin(), APK_EXTS.end(), lower(name.substr(dot + 1))) != APK_EXTS.end();
+}
+
+// Every APK under dir, a few folders deep (a whole card is not walked).
+void find_apks(const std::string& root, const std::string& dir, int depth, Value& out) {
+    for (const auto& name : listdir(dir)) {
+        if (out.size() >= 500) return;
+        if (name.empty() || name[0] == '.') continue;
+        std::string path = join(dir, name);
+        if (is_link(path)) continue;
+        if (is_dir(path)) {
+            if (depth < 4) find_apks(root, path, depth + 1, out);
+            continue;
+        }
+        if (!is_file(path) || !apk_name(name)) continue;
+        struct stat st {};
+        if (::stat(path.c_str(), &st) != 0) continue;
+        Value f = Value::object();
+        f["path"] = path;
+        f["name"] = name;
+        f["folder"] = dir == root ? "" : dir.substr(root.size() + 1);
+        f["size"] = static_cast<long long>(st.st_size);
+        out.push(f);
+    }
+}
+
+Value apk_places() {
+    Value out = Value::array();
+    for (const auto& [id, label] : std::vector<std::pair<std::string, std::string>>{
+             {"downloads", "Downloads"}, {"sd", "SD card"}, {"usb", "USB drive"}}) {
+        Value p = Value::object();
+        p["id"] = id;
+        p["label"] = label;
+        p["present"] = id == "downloads" ? is_dir(apk_roots(id)[0]) : !drive_mounts(id).empty();
+        out.push(p);
+    }
+    return out;
+}
+
+Value list_apks(const std::string& place) {
+    Value files = Value::array();
+    for (const auto& r : apk_roots(place))
+        if (is_dir(r)) find_apks(r, r, 0, files);
+    return files;
+}
+
+bool copy_file(const std::string& from, const std::string& to) {
+    int in = ::open(from.c_str(), O_RDONLY | O_CLOEXEC);
+    if (in < 0) return false;
+    int out = ::open(to.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0644);
+    if (out < 0) { ::close(in); return false; }
+    std::vector<char> buf(1 << 20);
+    bool ok = true;
+    for (;;) {
+        ssize_t n = ::read(in, buf.data(), buf.size());
+        if (n == 0) break;
+        if (n < 0) { ok = false; break; }
+        for (ssize_t done = 0; done < n;) {
+            ssize_t w = ::write(out, buf.data() + done, n - done);
+            if (w <= 0) { ok = false; break; }
+            done += w;
+        }
+        if (!ok) break;
+    }
+    ok = ::fsync(out) == 0 && ok;
+    ::close(in);
+    ok = ::close(out) == 0 && ok;
+    if (!ok) ::unlink(to.c_str());
+    return ok;
+}
+
+// import_apks(paths, keep): each must be an APK found by list_apks.
+Value import_apks(const Value& paths, bool keep) {
+    const User& u = desktop_user();
+    std::string inbox = u.home + "/Android/Inbox";
+    if (!is_dir(inbox)) {
+        makedirs(inbox);
+        if (chown(inbox.c_str(), u.uid, u.gid) != 0) {}
+        if (chown(dirname(inbox).c_str(), u.uid, u.gid) != 0) {}
+    }
+    std::vector<std::string> roots;
+    for (const auto& place : {"downloads", "sd", "usb"})
+        for (const auto& r : apk_roots(place)) roots.push_back(realpath(r));
+    Value out = Value::object(), failed = Value::array(), stayed = Value::array();
+    long long done = 0;
+    for (const auto& item : paths.items()) {
+        std::string real = realpath(item.str());
+        bool inside = false;
+        for (const auto& r : roots) inside = inside || (!r.empty() && real.rfind(r + "/", 0) == 0);
+        std::string name = basename(real);
+        if (!inside || !is_file(real) || !apk_name(name)) {
+            failed.push(basename(item.str()));
+            continue;
+        }
+        // A free name in the inbox; written under a dot name, which the
+        // inbox ignores, until it is all there.
+        std::string dest = join(inbox, name);
+        for (int i = 2; exists(dest); i++) {
+            auto dot = name.find_last_of('.');
+            dest = join(inbox, name.substr(0, dot) + " (" + std::to_string(i) + ")" + name.substr(dot));
+        }
+        std::string part = join(inbox, "." + basename(dest) + ".part");
+        bool ok;
+        if (!keep && ::rename(real.c_str(), part.c_str()) == 0) {
+            ok = true;
+        } else {
+            ok = copy_file(real, part);
+            if (ok && !keep && ::unlink(real.c_str()) != 0) stayed.push(name);
+        }
+        if (ok) {
+            if (chown(part.c_str(), u.uid, u.gid) != 0) {}
+            ok = ::rename(part.c_str(), dest.c_str()) == 0;
+        }
+        if (ok) {
+            done++;
+            log("tools: import apk %s (%s)", name.c_str(), keep ? "kept" : "moved");
+        } else {
+            ::unlink(part.c_str());
+            failed.push(name);
+        }
+    }
+    out["ok"] = failed.size() == 0;
+    out["done"] = done;
+    out["failed"] = failed;
+    out["stayed"] = stayed;  // installed, but could not be deleted (read-only drive)
+    return out;
+}
+
 // ------------------------------------------------------------- keyboard --
 // Where Steam's keyboard is on the screen, in screen pixels (the tab's script
 // follows it; 0 0 0 0 once it closes), for PB-OS's gamescope: while it is up,
@@ -1186,6 +1406,10 @@ public:
         }
         if (m == "get_android") return android_state();
         if (m == "set_keyboard_rect") return set_keyboard_rect(a);
+        if (m == "apk_places") return apk_places();
+        if (m == "list_apks") return list_apks(arg(a, 0, "").str());
+        if (m == "import_apks") return import_apks(a.at(0), arg(a, 1, true).truthy());
+        if (m == "apk_close") return apk_close();
         if (m == "get_mtp") return mtp_state();
         if (m == "set_mtp") return set_mtp(arg(a, 0, false).truthy());
         if (m == "get_barry_desktop") return barry_desktop({"get"});
