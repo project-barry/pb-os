@@ -391,7 +391,7 @@ fetch_openabl() {
     log "Downloading OpenABL v${ver}"
     mkdir -p "${cache}"
     curl --connect-timeout 30 --retry 3 -fsSL -o "${tarball}.part" \
-      "https://github.com/OpenHandheldCollective/OpenABL/releases/download/v${ver}/openabl-v${ver}.tar.gz" \
+      "https://github.com/${PBOS_ABL_REPO:-OpenHandheldCollective/OpenABL}/releases/download/v${ver}/openabl-v${ver}.tar.gz" \
       || die "OpenABL v${ver} download failed (set ABL_TARBALL or SKIP_ABL=1)"
     mv "${tarball}.part" "${tarball}"
   fi

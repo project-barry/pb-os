@@ -1,9 +1,10 @@
-OpenABL (https://github.com/OpenHandheldCollective/OpenABL), v%VERSION%.
+OpenABL (https://github.com/OpenHandheldCollective/OpenABL), v%VERSION% from
+the PB-OS fork (https://github.com/project-barry/OpenABL): upstream v1.1 plus a
+fix for an intermittent hang on the logo before the kernel starts.
 GPL-3.0-or-later, Copyright (C) 2026-present Open Handheld Collective.
 LICENSE, LICENSES/ and LICENSES.md in this folder are OpenABL's.
 Source: openabl-v%VERSION%-source.tar.xz on
-https://github.com/OpenHandheldCollective/OpenABL/releases/tag/v%VERSION%
-(also https://github.com/project-barry/OpenABL).
+https://github.com/project-barry/OpenABL/releases/tag/v%VERSION%
 The scripts follow ROCKNIX's OpenABL scripts (GPL-2.0, ROCKNIX contributors);
 the per-SoC folders follow Armada (https://github.com/armada-os/armada).
 
