@@ -14,6 +14,8 @@ has something for:
 - Performance: a default mode and per-game settings.
 - Hardware, Power: where the device has them.
 - System: Software Update, Keyboard Languages (Thor), Move SteamOS.
+- App Store, an entry of its own after the pages: emulators and apps to
+  install (see below).
 
 Selecting an entry opens it. B or the back arrow returns to the list, and
 LB/RB step through the entries.
@@ -35,6 +37,7 @@ the user's own plugins, but PB-OS's settings no longer depend on it.
 | `daemon/tools.cpp` | | The PB-OS Tools backend (was `Decky/pbos-utils/main.py`). |
 | `daemon/barry.cpp` | | The Barry Launcher backend (was `Decky/sm8550/dual-screen/main.py`). |
 | `daemon/lights.cpp` | | The stick light engine (RP6, Nova, Odin 2s; was `pbos_lights.py`): `pbos-qamd --lights`, its own unit `pbos-utils-lights`, which the tools section starts. Effect frames are its only timer; LED devices coming back after sleep are heard as uevents, the charging indicator with inotify. |
+| `daemon/store.cpp`, `sections/store.js` | `/var/lib/pbos-qam/store.json` | The App Store: installs and uninstalls what `store/catalog.json` lists (`/usr/share/pbos-qam/store/catalog.json`) and adds it to Steam. |
 | `daemon/files.cpp` | | Folder listings for the tab's file picker (home and removable drives only). |
 | `daemon/heroart.cpp` | `/run/pbos-qam/steam-game.json` | AYN Thor: the game selected in Steam and its hero and logo images (the user's own art, Steam's, or SteamGridDB's with the user's own API key), for the bottom screen while Barry Launcher is closed. |
 | `daemon/barrylink.cpp` | `/run/pbos-qam/barry.sock` | AYN Thor: Barry Launcher's quick settings page calls a few methods here (brightness, charging, game profiles). Only the desktop user and root are answered. |
@@ -46,6 +49,45 @@ the user's own plugins, but PB-OS's settings no longer depend on it.
 packages remove the old `pbos-utils` and `dual-screen` Decky plugins
 (`build-update-package.py` REMOVE, `pbos-update.py` LEGACY_PLUGINS), and
 pbos-qamd also removes them at start if they are there.
+
+## App Store
+
+PB-OS ships no emulators. The App Store lists some (and a few apps) in
+`store/catalog.json`, and downloads the one the user picks:
+
+- `flatpak`: from Flathub, system-wide, then given the user's home and
+  removable drives (`flatpak override --system`).
+- `appimage`: the newest release asset matching `asset` (a regular
+  expression) in a GitHub or GitLab releases feed (`releases`), into
+  `~/Applications` as `filename`, with a desktop entry for Desktop Mode. A
+  prerelease only when the project publishes nothing else.
+
+After an install, the frontend adds the app to Steam's library
+(`SteamClient.Apps.AddShortcut`); apps marked `desktopOnly` get no shortcut.
+`postInstall: "retroarch-cores-url"` gives Flathub's RetroArch the aarch64
+core download address its build lacks, while the user's own setting is empty.
+
+Every file in the user's home (downloads, desktop entries, RetroArch's
+config) is written by a program run as the user (`setpriv`), never by the
+root daemon itself. An app already installed some other way (EmuDeck's
+Flatpaks in the user's installation, an AppImage of the same name the App
+Store didn't put there) shows as installed and is never updated or removed
+here. Updates are looked up when the page opens, at most hourly.
+
+Only entries with an aarch64 build belong in the catalog. The DS and 3DS
+emulators are Flathub's stock melonDS and Azahar: on the AYN Thor, gamescope
+puts their second window on the bottom screen
+([docs/thor-dual-screen-emulators.md](../../docs/thor-dual-screen-emulators.md)).
+
+The App Store follows Armada's Armada Store (armada-os/armada,
+`decky/armada-store`, GPL-2.0-or-later): its catalog format, release
+lookup, Flatpak progress and shortcut handling.
+
+```
+sudo pbos-qamd --call store get_status
+sudo pbos-qamd --call store install_now '["ppsspp"]'
+sudo pbos-qamd --call store uninstall_now '["ppsspp"]'
+```
 
 ## How it talks to Steam
 
@@ -109,7 +151,8 @@ Run it before every release, see [STEAM-INTERNALS.md](STEAM-INTERNALS.md).
 
 The daemon and the loader are GPL-2.0, the license of this repository's own
 software. The loader's tab hook and toaster follow Decky Loader's frontend
-(SteamDeckHomebrew/decky-loader, GPL-2.0). @decky/ui is
+(SteamDeckHomebrew/decky-loader, GPL-2.0). The App Store follows Armada's Armada Store
+(armada-os/armada, GPL-2.0-or-later). @decky/ui is
 SteamDeckHomebrew/decky-frontend-lib (LGPL-2.1), bundled in
 `frontend/dist/pbos-qam.js`. The section scripts carry the Decky plugins'
 components, which were GPL-3.0-or-later.

@@ -553,7 +553,9 @@ async function probe(DFL) {
     const fn = (path) => path.split(".").reduce((o, k) => (o ? o[k] : undefined), SC);
     for (const path of ["Apps.RegisterForAppDetails", "Apps.RegisterForAppOverviewChanges", "Apps.RegisterForGameActionStart",
         "Apps.SetAppLaunchOptions", "Apps.SetShortcutExe", "Apps.RemoveShortcut", "Apps.SpecifyCompatTool", "Settings.SpecifyGlobalCompatTool",
-        "GameSessions.RegisterForAppLifetimeNotifications"]) {
+        "GameSessions.RegisterForAppLifetimeNotifications",
+        // The App Store's shortcuts.
+        "Apps.AddShortcut", "Apps.SetShortcutName", "Apps.SetShortcutLaunchOptions", "Apps.RunGame"]) {
         item(`SteamClient.${path}`, typeof fn(path) === "function");
     }
     item("settingsStore.m_Settings", () => window.settingsStore && window.settingsStore.m_Settings, "strCompatTool");
