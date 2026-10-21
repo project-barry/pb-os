@@ -1,0 +1,145 @@
+#!/bin/bash
+# pbos-mtp conf|storages|gadget|bind|unbind|down — the MTP USB gadget behind
+# pbos-mtp.service. MTP lets a PC browse and copy the user's files over the
+# USB-C cable with nothing to install on either side, while the device keeps
+# running: unlike a mass_storage gadget it never hands /home away as a block
+# device.
+#
+# Order matters all the way through. The ffs.umtp function has to exist before
+# functionfs can be mounted (f_fs registers the filesystem with its first
+# instance, which is also why `functionfs` is missing from /proc/filesystems
+# until then), umtprd has to write its descriptors before the UDC is bound
+# (the unit is Type=notify, so `bind` runs from ExecStartPost once umtprd has
+# said READY=1), and the UDC has to be let go before any of it comes apart.
+#
+# The FunctionFS instance is called `umtp`, not `mtp`: on this kernel
+# `mount -t functionfs mtp` fails with ENOENT even from a fresh instance,
+# while every other name mounts from the same sequence. Nothing in the kernel
+# claims the name; see external-and-mods/uMTP-Responder/README.md.
+set -euo pipefail
+
+G=/sys/kernel/config/usb_gadget/pbos-mtp
+FFS=/dev/ffs-umtp
+LIB=/usr/lib/pbos-mtp
+TEMPLATE="$LIB/umtprd.conf"
+OVERRIDE=/etc/umtprd/umtprd.conf      # the user's own, used as-is when present
+RUNCONF=/run/pbos-mtp/umtprd.conf
+
+# The desktop user (uid 1000 on every PB-OS image) owns what MTP exposes.
+user() { getent passwd 1000 | cut -d: -f1; }
+home() { getent passwd 1000 | cut -d: -f6; }
+
+model() {
+    # "AYN Thor", "KONKR Pocket FIT", ... for the name the PC shows.
+    local m
+    m="$(tr -d '\0' < /sys/firmware/devicetree/base/model 2>/dev/null || true)"
+    [[ -n "$m" ]] && printf 'PB-OS (%s)' "$m" || printf 'PB-OS'
+}
+
+serial() {
+    # Steady across reboots and different per device, so a PC can tell two
+    # PB-OS handhelds apart and keep its per-device settings. The hostname is
+    # the fallback for the first boot, before machine-id is written.
+    local id
+    id="$(cat /etc/machine-id 2>/dev/null || true)"
+    id="${id//[^0-9a-f]/}"
+    [[ -n "$id" ]] || id="$(hostname 2>/dev/null | tr -cd '[:alnum:]')"
+    printf 'pbos-%s' "${id:0:12}"
+}
+
+storages() {
+    # The `storage` lines for umtprd's config: always Home and the Steam
+    # folder (the same files by a shorter path, for saves, mods and emulator
+    # content). A folder that does not exist yet is left out.
+    local h st
+    h="$(home)"
+    st="$h/.local/share/Steam"
+    [[ -d "$h" ]] && printf 'storage "%s" "Home" "rw"\n' "$h"
+    [[ -d "$st" ]] && printf 'storage "%s" "Steam" "rw"\n' "$st"
+    return 0
+}
+
+conf() {
+    # umtprd always reads $RUNCONF, so the unit needs no shell to find it:
+    # either the user's own config, linked there, or the image's template with
+    # this device's details and the Home and Steam folders filled in.
+    mkdir -p "$(dirname "$RUNCONF")"
+    if [[ -f "$OVERRIDE" ]]; then
+        ln -sfn "$OVERRIDE" "$RUNCONF"
+    else
+        local u st
+        u="$(user)"
+        st="$(mktemp)"
+        storages > "$st"
+        # `r` queues the storage lines after the marker, `d` drops the marker.
+        sed -e "s|@HOME@|$(home)|g" \
+            -e "s|@UID@|$(id -u "$u")|g" \
+            -e "s|@GID@|$(id -g "$u")|g" \
+            -e "s|@PRODUCT@|$(model)|g" \
+            -e "s|@SERIAL@|$(serial)|g" \
+            -e "/@STORAGES@/r $st" \
+            -e "/@STORAGES@/d" \
+            "$TEMPLATE" > "$RUNCONF.tmp"
+        rm -f "$st"
+        mv "$RUNCONF.tmp" "$RUNCONF"
+    fi
+    printf '%s\n' "$RUNCONF"
+}
+
+udc() { ls /sys/class/udc | head -1; }
+
+case "${1:-}" in
+conf)
+    conf
+    ;;
+storages)
+    storages
+    ;;
+gadget)
+    conf > /dev/null
+    mountpoint -q /sys/kernel/config || mount -t configfs none /sys/kernel/config
+    mkdir -p "$G/configs/c.1/strings/0x409" "$G/strings/0x409"
+    # 1d6b:0100 is the Linux Foundation's PTP gadget: honest about what this
+    # is, and hosts bind MTP from the interface descriptors anyway (class 6,
+    # subclass 1, protocol 1 plus the "MTP" interface string, from umtprd).
+    echo 0x1d6b > "$G/idVendor"
+    echo 0x0100 > "$G/idProduct"
+    echo 0x0200 > "$G/bcdUSB"
+    echo "Project Barry" > "$G/strings/0x409/manufacturer"
+    echo "$(model)"      > "$G/strings/0x409/product"
+    echo "$(serial)"     > "$G/strings/0x409/serialnumber"
+    echo "MTP" > "$G/configs/c.1/strings/0x409/configuration"
+    echo 250   > "$G/configs/c.1/MaxPower"
+    [[ -d "$G/functions/ffs.umtp" ]] || mkdir "$G/functions/ffs.umtp"
+    [[ -L "$G/configs/c.1/ffs.umtp" ]] || ln -s "$G/functions/ffs.umtp" "$G/configs/c.1/"
+    mkdir -p "$FFS"
+    mountpoint -q "$FFS" || mount -t functionfs umtp "$FFS"
+    ;;
+bind)
+    [[ -e "$G/UDC" ]] || exit 0                  # no gadget: nothing to bind
+    [[ -z "$(cat "$G/UDC")" ]] || exit 0         # already bound
+    udc > "$G/UDC"
+    ;;
+unbind)
+    # Before a sleep or a rest. See 60-pbos-mtp.conf.
+    if [[ -e "$G/UDC" && -n "$(cat "$G/UDC" 2>/dev/null)" ]]; then
+        echo "" > "$G/UDC"
+    fi
+    ;;
+down)
+    if [[ -e "$G/UDC" && -n "$(cat "$G/UDC" 2>/dev/null)" ]]; then
+        echo "" > "$G/UDC"
+    fi
+    mountpoint -q "$FFS" && umount "$FFS"
+    rm -f "$G/configs/c.1/ffs.umtp"
+    rmdir "$G/functions/ffs.umtp" "$G/configs/c.1/strings/0x409" "$G/configs/c.1" \
+          "$G/strings/0x409" "$G" 2>/dev/null || true
+    rmdir "$FFS" 2>/dev/null || true
+    rm -f "$RUNCONF"
+    ;;
+*)
+    echo "usage: pbos-mtp conf|storages|gadget|bind|unbind|down" >&2
+    exit 2
+    ;;
+esac
+exit 0

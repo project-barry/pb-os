@@ -5,4 +5,8 @@ Description=Android (Lepton) for pbos-apk apps
 ExecStart=/usr/bin/pbos-apk daemon
 # SIGTERM only to pbos-apk, which has Lepton kill its container cleanly.
 KillMode=mixed
+# The container runs in this unit (pbos-apk: podman cgroups "split", for
+# gamescope to find Android's window); it needs the unit's cgroup controllers
+# (pids) handed down to it.
+Delegate=yes
 TimeoutStopSec=30

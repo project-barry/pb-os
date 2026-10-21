@@ -70,7 +70,7 @@ const bridge = {
     },
     status: () => status,
     open: (key) => openPlugin(key),
-    plugins: () => plugins.map((p) => `${p.section}/${p.id}`),
+    plugins: () => entries(plugins).map((e) => e.key),
 };
 
 // --------------------------------------------------------------- Steam ---
@@ -181,6 +181,35 @@ function removePlugin(section, id) {
         plugins.splice(at, 1);
         pluginsChanged();
     }
+}
+
+// The PB-OS list: these pages, in this order (the layout the PB-OS team set
+// in its Quick Access editor, 2026-10-20). Sections add parts to a page with
+// plugin({ page, order, content }); a page shows its parts in order, and only
+// when some section gave it one. Plugins without a page keep an entry of
+// their own after the pages.
+const PAGES = [
+    { id: "display", title: "Display" },
+    { id: "personalization", title: "Personalization" },
+    { id: "apps", title: "Apps" },
+    { id: "performance", title: "Performance" },
+    { id: "hardware", title: "Hardware" },
+    { id: "power", title: "Power" },
+    { id: "system", title: "System" },
+];
+
+// The list's entries: { key, title, icon, parts }. Its icon is its first
+// part's.
+function entries(list) {
+    const out = [];
+    for (const pg of PAGES) {
+        const parts = list.filter((p) => p.page === pg.id).sort((a, b) => a.order - b.order);
+        if (parts.length) out.push({ key: `page/${pg.id}`, title: pg.title, icon: parts[0].icon, parts });
+    }
+    for (const g of ordered(list.filter((p) => !p.page))) {
+        for (const p of g.plugins) out.push({ key: `${p.section}/${p.id}`, title: p.title, icon: p.icon, parts: [p] });
+    }
+    return out;
 }
 
 function ordered(list) {
@@ -389,9 +418,9 @@ function makePanel(DFL) {
             const target = mark && mark.closest("[tabindex], button");
             if (target) target.focus();
         }, [open, list]);
-        const flat = ordered(list).flatMap((g) => g.plugins);
-        const key = (p) => `${p.section}/${p.id}`;
-        const active = flat.find((p) => key(p) === open);
+        const flat = entries(list);
+        const key = (e) => e.key;
+        const active = flat.find((e) => key(e) === open);
         if (active) {
             const step = (by) => {
                 const i = flat.indexOf(active);
@@ -413,9 +442,10 @@ function makePanel(DFL) {
                         jsx("div", { style: { flex: 0.9 }, children: active.title }),
                     ] }),
                     jsx("div", { style: { height: "100%", paddingTop: "8px" },
-                        // One error boundary per page: a page that failed must not
-                        // leave the next one showing its error.
-                        children: jsx(DFL.ErrorBoundary, { children: visible && jsx(active.content, {}) }, key(active)) }),
+                        // One error boundary per part: a part that failed must not
+                        // take the page's other parts, or the next page, with it.
+                        children: visible && active.parts.map((p) =>
+                            jsx(DFL.ErrorBoundary, { children: jsx(p.content, {}) }, `${key(active)}/${p.section}/${p.id}`)) }),
                 ],
             });
         }
@@ -426,8 +456,7 @@ function makePanel(DFL) {
             ] }),
             jsx("div", { ref: listRef, style: { paddingTop: "8px" }, children: list.length === 0
                 ? jsx(DFL.PanelSection, { children: jsx(DFL.PanelSectionRow, { children: jsx("div", { style: { fontSize: "12px", opacity: 0.75 }, children: "Loading…" }) }) })
-                // One list: what this device has, PB-OS Tools' entries then
-                // Barry Launcher's, without headings.
+                // One list: the pages this device has (PAGES), without headings.
                 : jsx(DFL.PanelSection, { children: flat.map((p) => jsx(DFL.PanelSectionRow, { children: jsx(DFL.ButtonItem, {
                     layout: "below", onClick: () => show(key(p)), autoFocus: key(p) === lastLeft,
                     children: jsxs("div", { "data-pbos-entry": key(p), style: { display: "flex", alignItems: "center", gap: "12px" }, children: [
@@ -523,7 +552,7 @@ async function probe(DFL) {
     const SC = window.SteamClient || {};
     const fn = (path) => path.split(".").reduce((o, k) => (o ? o[k] : undefined), SC);
     for (const path of ["Apps.RegisterForAppDetails", "Apps.RegisterForAppOverviewChanges", "Apps.RegisterForGameActionStart",
-        "Apps.SetAppLaunchOptions", "Apps.SpecifyCompatTool", "Settings.SpecifyGlobalCompatTool",
+        "Apps.SetAppLaunchOptions", "Apps.SetShortcutExe", "Apps.RemoveShortcut", "Apps.SpecifyCompatTool", "Settings.SpecifyGlobalCompatTool",
         "GameSessions.RegisterForAppLifetimeNotifications"]) {
         item(`SteamClient.${path}`, typeof fn(path) === "function");
     }

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Sign a release's SHA256SUMS with the pb-os release key. Devices download an
 # update only when SHA256SUMS.sig verifies against
-# external-and-mods/konkr-update/allowed_signers (shipped in every image).
+# external-and-mods/pbos-update/allowed_signers (shipped in every image).
 #
 # Usage: scripts/sign-release.sh <folder with SHA256SUMS> [private key]
 #   default key: ~/.ssh/pb-os-release; asks for its passphrase.
@@ -13,6 +13,6 @@ here="$(cd "$(dirname "$0")/.." && pwd)"
 [[ -f "$dir/SHA256SUMS" ]] || { echo "no $dir/SHA256SUMS" >&2; exit 1; }
 rm -f "$dir/SHA256SUMS.sig"
 ssh-keygen -Y sign -f "$key" -n pb-os-update "$dir/SHA256SUMS"
-ssh-keygen -Y verify -f "$here/external-and-mods/konkr-update/allowed_signers" \
+ssh-keygen -Y verify -f "$here/external-and-mods/pbos-update/allowed_signers" \
   -I pb-os-release -n pb-os-update -s "$dir/SHA256SUMS.sig" <"$dir/SHA256SUMS"
 echo "signed: $dir/SHA256SUMS.sig"

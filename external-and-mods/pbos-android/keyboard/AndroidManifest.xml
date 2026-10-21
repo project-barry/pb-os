@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="org.projectbarry.pbos.keyboard"
+    android:versionCode="5"
+    android:versionName="1.4">
+    <uses-sdk android:minSdkVersion="30" android:targetSdkVersion="30" />
+    <application android:label="PB-OS Keyboard" android:allowBackup="false">
+        <service
+            android:name=".PbosKeyboard"
+            android:label="PB-OS Keyboard"
+            android:permission="android.permission.BIND_INPUT_METHOD"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.view.InputMethod" />
+            </intent-filter>
+            <meta-data android:name="android.view.im" android:resource="@xml/method" />
+        </service>
+    </application>
+</manifest>

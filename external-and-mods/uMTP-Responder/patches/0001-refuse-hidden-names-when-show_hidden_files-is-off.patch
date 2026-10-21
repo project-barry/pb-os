@@ -1,0 +1,68 @@
+From d260b61de0373334fd5771004c604b3437de092a Mon Sep 17 00:00:00 2001
+From: lavachemist <lavachemist@users.noreply.github.com>
+Date: Tue, 20 Oct 2026 13:53:25 -0400
+Subject: [PATCH] Refuse hidden names when show_hidden_files is off
+
+With hidden files off a host cannot see dot files, but it could still
+create one by name (SendObjectInfo keeps a leading dot) or rename a
+visible file into one, overwriting e.g. a shell startup file in a shared
+home folder. Refuse both with Access Denied.
+---
+ src/mtp.c            | 16 ++++++++++++++++
+ src/mtp_properties.c |  9 +++++++++
+ 2 files changed, 25 insertions(+)
+
+diff --git a/src/mtp.c b/src/mtp.c
+index 97b8b6c..e5fc56f 100644
+--- a/src/mtp.c
++++ b/src/mtp.c
+@@ -266,6 +266,14 @@ int parse_incoming_dataset(mtp_ctx * ctx,void * datain,int size,uint32_t * newha
+ 					return ret_code;
+ 				}
+ 
++				// Hidden files off: a host may not create one by name either.
++				if( !ctx->usb_cfg.show_hidden_files && tmp_str[0] == '.' )
++				{
++					PRINT_WARN("MTP_OPERATION_SEND_OBJECT_INFO : Hidden name %s refused !",tmp_str);
++					ret_code = MTP_RESPONSE_ACCESS_DENIED;
++					return ret_code;
++				}
++
+ 				PRINT_DEBUG("MTP_OPERATION_SEND_OBJECT_INFO : 0x%x objectformat Size %d, Parent 0x%.8x, type: %x, strlen %d str:%s",objectformat,objectsize,parent_handle,type,string_len,tmp_str);
+ 
+ 				entry = get_entry_by_handle_and_storageid(ctx->fs_db, parent_handle,storage_id);
+@@ -361,6 +369,14 @@ int parse_incoming_dataset(mtp_ctx * ctx,void * datain,int size,uint32_t * newha
+ 					return ret_code;
+ 				}
+ 
++				// Hidden files off: a host may not create one by name either.
++				if( !ctx->usb_cfg.show_hidden_files && tmp_str[0] == '.' )
++				{
++					PRINT_WARN("MTP_OPERATION_SEND_OBJECT_INFO : Hidden name %s refused !",tmp_str);
++					ret_code = MTP_RESPONSE_ACCESS_DENIED;
++					return ret_code;
++				}
++
+ 				PRINT_DEBUG("MTP_OPERATION_SEND_OBJECT_INFO : 0x%x objectformat Size %d, Parent 0x%.8x, type: %x, strlen %d str:%s",objectformat,objectsize,parent_handle,type,string_len,tmp_str);
+ 
+ 				entry = get_entry_by_handle_and_storageid(ctx->fs_db, parent_handle,storage_id);
+diff --git a/src/mtp_properties.c b/src/mtp_properties.c
+index e180a35..a7fdfec 100644
+--- a/src/mtp_properties.c
++++ b/src/mtp_properties.c
+@@ -580,6 +580,15 @@ int setObjectPropValue(mtp_ctx * ctx,MTP_PACKET_HEADER * mtp_packet_hdr, uint32_
+ 					return MTP_RESPONSE_GENERAL_ERROR;
+ 				}
+ 
++				// Hidden files off: a host may not rename one into hiding either.
++				if( !ctx->usb_cfg.show_hidden_files && new_filename[0] == '.' )
++				{
++					PRINT_WARN("MTP_PROPERTY_OBJECT_FILE_NAME : Hidden name %s refused !",new_filename);
++					free(path);
++					free(new_filename);
++					return MTP_RESPONSE_ACCESS_DENIED;
++				}
++
+ 				old_filename = entry->name;
+ 
+ 				entry->name = new_filename;

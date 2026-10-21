@@ -565,13 +565,12 @@ if [[ ! -f "$R/usr/lib/lv2/dpl.lv2/dpl.so" ]]; then
 fi
 cp -r --no-preserve=mode,ownership "$SM8650_OVL/." "$R/"
 # konkrd/konkrctl were renamed pbosd/pbosctl. The build rootfs is reused, so
-# drop the old daemon (two would fight over the fan); keep the old command
-# name for scripts and habits.
+# drop the old daemon (two would fight over the fan) and the old command.
 rm -f "$R/usr/lib/konkr/konkrd" "$R/usr/lib/systemd/system/konkrd.service" \
   "$R/etc/konkrd.conf" "$R/etc/systemd/system/multi-user.target.wants/konkrd.service" \
   "$R/var/lib/overlays/etc/upper/konkrd.conf" \
-  "$R/var/lib/overlays/etc/upper/systemd/system/multi-user.target.wants/konkrd.service"
-ln -sfn pbosctl "$R/usr/bin/konkrctl"
+  "$R/var/lib/overlays/etc/upper/systemd/system/multi-user.target.wants/konkrd.service" \
+  "$R/usr/bin/konkrctl"
 # Drop-ins renamed konkr → pbos. The build rootfs is reused, so remove the old
 # names, or both copies would load (update packages delete them on devices).
 rm -f "$R/etc/ssh/sshd_config.d/10-konkr.conf" \
@@ -594,9 +593,9 @@ rm -rf "$R/usr/src/konkr-focusfix"
 rm -f "$R/usr/lib/konkr/pbosd" "$R/usr/lib/konkr/konkr-volume" "$R/usr/lib/konkr/konkr-standby" \
   "$R/usr/lib/steamos-sm8550/sm8550-fand" "$R/usr/lib/steamos-sm8550/sm8550-powerbuttond" \
   "$R/usr/lib/steamos-sm8550/sm8550-volume-keeper"
-# Units, commands and the APK handler renamed konkr → pbos. Steam shortcuts
-# (Android titles) and users' launch options call the old commands, so those
-# stay as links.
+# Units, commands and the APK handler renamed konkr → pbos. The PB-OS tab
+# moves Steam's Android titles and launch options to the new commands
+# (androidTitles in pbos-qam/sections/tools.js), so the old links go too.
 rm -f "$R/usr/lib/systemd/user/konkr-focusfix.service" \
   "$R/usr/lib/systemd/user/gamescope-session.target.wants/konkr-focusfix.service" \
   "$R/usr/lib/systemd/system/konkr-flatpak-appstream.service" \
@@ -609,9 +608,8 @@ rm -f "$R/usr/lib/systemd/user/konkr-focusfix.service" \
   "$R/usr/lib/systemd/user/konkr-apk-inbox.service" \
   "$R/usr/lib/systemd/user/default.target.wants/konkr-apk-inbox.path" \
   "$R/usr/share/applications/konkr-apk.desktop" \
-  "$R/usr/share/mime/packages/konkr-apk.xml"
-ln -sfn pbos-apk "$R/usr/bin/konkr-apk"
-ln -sfn pbos-game "$R/usr/bin/konkr-game"
+  "$R/usr/share/mime/packages/konkr-apk.xml" \
+  "$R/usr/bin/konkr-apk" "$R/usr/bin/konkr-game"
 if [[ "$SOC" == sm8550 ]]; then
   # SM8550 keeps the Odin 2 audio policy (sm8550-audio-pipewire: pro-audio +
   # MI2S speaker routes). 53 forces the SM8650-APS2 UCM profile and software
@@ -646,6 +644,7 @@ chmod 0755 "$R/usr/lib/steamos/sm8550-audio-setup" \
   "$R/usr/lib/konkr/konkr-suspend" "$R/usr/lib/konkr/konkr-sleep-mode" \
   "$R/usr/lib/pbos/pbos-focusfix" \
   "$R/usr/bin/pbos-apk" "$R/usr/lib/pbos/apk-info" "$R/usr/lib/pbos/pbos-hostname" \
+  "$R/usr/lib/pbos/google-play-fetch" \
   "$R/usr/lib/NetworkManager/dispatcher.d/60-pbos-timesync"
 # Game mode: re-activate the game after Quick Access / Steam menu closes.
 mkdir -p "$R/usr/lib/systemd/user/gamescope-session.target.wants"
@@ -653,10 +652,15 @@ ln -sfn ../pbos-focusfix.service \
   "$R/usr/lib/systemd/user/gamescope-session.target.wants/pbos-focusfix.service"
 # Android apps (pbos-apk + Lepton): .apk/.apkm/.xapk/.apks open in it, and
 # ~/Android/Inbox auto-installs. /etc links vanish under the /etc overlay.
+# Add Google Play rebuilds Lepton's services.jar on the device with these.
+for f in restore-services.py repack-jar.py compile-odex.sh; do
+  install -D -m0644 "${ROOT}/external-and-mods/pbos-android/framework/$f" \
+    "$R/usr/lib/pbos/android-framework/$f"
+done
 mkdir -p "$R/usr/lib/systemd/user/default.target.wants"
 ln -sfn ../pbos-apk-inbox.path \
   "$R/usr/lib/systemd/user/default.target.wants/pbos-apk-inbox.path"
-# First login adds a Google Play Store title.
+# Each login: the Add Google Play title (the Play Store once it is added).
 ln -sfn ../pbos-android-setup.service \
   "$R/usr/lib/systemd/user/default.target.wants/pbos-android-setup.service"
 # Lepton overlays (Play Store etc.) go to home: see "Android apps payload" below.
@@ -1172,37 +1176,22 @@ else
   HOME_DST="$R/home/steamos"
 fi
 mkdir -p "$HOME_DST"
-# Android apps payload: Lepton overlays (Play Store, keyboard, pad layout,
-# framework fixes; external-and-mods/pbos-android, binaries fetched/built,
-# not in git). ~210 MiB, kept off the root partition; pbos-apk reads it here
-# and the updater installs it like the bundled Decky plugins.
-# Release builds export the commit, which has only the payload's text files:
-# then the binaries come from this rootfs, the root copy earlier builds made
-# (moved here) or the home copy of the last build (kept).
-KAPAY="${ROOT}/external-and-mods/pbos-android/payload"
-KADST="$HOME_DST/.local/share/konkr-android"
-KAOLD="$R/usr/share/konkr-android"
-PHONESKY=common/system/product/priv-app/Phonesky/Phonesky.apk
-if [[ -f "$KAPAY/$PHONESKY" ]]; then
-  rm -rf "$KADST"
-elif [[ -f "$KAOLD/$PHONESKY" ]]; then
-  log "Android apps payload: moved from /usr/share/konkr-android"
-  rm -rf "$KADST"; mkdir -p "${KADST%/*}"; cp -a "$KAOLD" "$KADST"
-elif [[ -f "$KADST/$PHONESKY" ]]; then
-  log "Android apps payload: kept from the last build"
-fi
-rm -rf "$KAOLD"
-if [[ -f "$KAPAY/$PHONESKY" || -f "$KADST/$PHONESKY" ]]; then
-  mkdir -p "$KADST"
-  # exFAT/macOS leave ._* AppleDouble files; a ._x.apk breaks PackageManager.
-  rsync -a --no-owner --no-group --exclude '._*' --exclude '.DS_Store' "$KAPAY/" "$KADST/"
-  find "$KADST" -type d -exec chmod 0755 {} +
-  find "$KADST" -type f -exec chmod 0644 {} +
-  # Valve's prebaked dalvik-cache files are 0755; keep ours the same.
-  find "$KADST" -path '*/data/dalvik-cache/*' -type f -exec chmod 0755 {} +
-else
-  log "WARN: no Android apps payload (external-and-mods/pbos-android/build-payload.sh); Android apps will lack the Play Store and fixes"
-fi
+# Android apps payload: the Lepton overlay pbos-apk always uses (Steam pad key
+# layout, no freeform windows, PB-OS Keyboard;
+# external-and-mods/pbos-android/payload/common, the keyboard built by
+# external-and-mods/pbos-android/keyboard/build.sh). No Google apps: Google Play is the user's to add
+# (pbos-apk gapps fetches it into ~/.local/share/pbos-google-play). Kept in
+# home; the updater installs it like the bundled Decky plugins, and its copy
+# replaces the folder, so the Google apps earlier images shipped go with it.
+KAPAY="${ROOT}/external-and-mods/pbos-android/payload/common"
+KADST="$HOME_DST/.local/share/pbos-android"
+rm -rf "$KADST" "$HOME_DST/.local/share/konkr-android" "$R/usr/share/konkr-android"
+for f in system/etc/permissions/android.software.freeform_window_management.xml \
+         system/usr/keylayout/Vendor_28de_Product_11ff.kl \
+         system/app/PbosKeyboard/PbosKeyboard.apk; do
+  install -D -m0644 "$KAPAY/$f" "$KADST/common/$f"
+done
+find "$KADST" -type d -exec chmod 0755 {} +
 # Copy plugin tree (resolve lsfg .so symlink into a real file if needed)
 # .local/lib/liblsfg-vk.so is a link to the SM8550 builder's host library;
 # skip it (decky-lsfg-vk installs its own copy).
@@ -1333,15 +1322,16 @@ touch "$STEAM_HOME/.install-complete"
 # Steam UI through ANGLE-Vulkan on Turnip instead of ANGLE -> GL -> zink
 # (see pbosd ensure_webhelper_vulkan, which keeps it after client updates).
 WH="$STEAM_HOME/steamrtarm64/steamwebhelper.sh"
-if [[ -f "$WH" ]] && ! grep -q KONKR_CEF_FLAGS "$WH"; then
+[[ -f "$WH" ]] && sed -i 's/KONKR_CEF_FLAGS/PBOS_CEF_FLAGS/g' "$WH"  # patched before the PB-OS rename
+if [[ -f "$WH" ]] && ! grep -q PBOS_CEF_FLAGS "$WH"; then
   python3 - "$WH" <<'PY'
 import sys
 from pathlib import Path
 p = Path(sys.argv[1]); s = p.read_text()
 old = 'exec taskset 0x7c $(pwd)/steamwebhelper "$@" &> ~/.steam/steam/logs/steamwebhelper.log'
-new = ('KONKR_CEF_FLAGS="--use-gl=angle --use-angle=vulkan '
+new = ('PBOS_CEF_FLAGS="--use-gl=angle --use-angle=vulkan '
        '--enable-features=Vulkan,DefaultANGLEVulkan,VulkanFromANGLE"\n'
-       'exec taskset 0x7c $(pwd)/steamwebhelper "$@" $KONKR_CEF_FLAGS &> ~/.steam/steam/logs/steamwebhelper.log')
+       'exec taskset 0x7c $(pwd)/steamwebhelper "$@" $PBOS_CEF_FLAGS &> ~/.steam/steam/logs/steamwebhelper.log')
 if old in s:
     p.write_text(s.replace(old, new))
 PY
@@ -1452,6 +1442,25 @@ for _gear in ark kcalc filelight gwenview okular; do
       || die "required desktop app ${_gear} build failed"
   fi
 done
+# ---------------------------------------------------------------------------
+# MTP over USB (uMTP-Responder, built in the rootfs): a PC browses and copies
+# the user's files over the USB-C cable with nothing to install on either
+# side, while the device keeps running. Off by default, like SSH; the PB-OS
+# tab's Hardware section turns it on. The suspend drop-in lets the UDC go
+# around a sleep or a charge rest, so the host sees an unplug instead of a
+# gadget that stopped answering. See external-and-mods/uMTP-Responder.
+# ---------------------------------------------------------------------------
+log "== MTP over USB (uMTP-Responder)"
+UMTPRD_BUILD="${UMTPRD_BUILD:-${WORKDIR}/umtprd-build}"
+"${SCRIPT_DIR}/build-umtprd-in-rootfs.sh" "$R" "$UMTPRD_BUILD"
+cp -a "$UMTPRD_BUILD/dest/usr/." "$R/usr/"
+install_file "$OVL/usr/lib/pbos-mtp/pbos-mtp" "$R/usr/lib/pbos-mtp/pbos-mtp" 0755
+install_file "$OVL/usr/lib/pbos-mtp/umtprd.conf" "$R/usr/lib/pbos-mtp/umtprd.conf" 0644
+install_file "$OVL/usr/lib/systemd/system/pbos-mtp.service" \
+  "$R/usr/lib/systemd/system/pbos-mtp.service" 0644
+install_file "$OVL/usr/lib/systemd/system/systemd-suspend.service.d/60-pbos-mtp.conf" \
+  "$R/usr/lib/systemd/system/systemd-suspend.service.d/60-pbos-mtp.conf" 0644
+
 log "== vendor apps (UFS, MESA, Proton-ARM, Non-Steam, SRM)"
 STEAMOS_HOME="$HOME_DST" "${SCRIPT_DIR}/install-vendor-apps.sh" "$R" \
   || die "required vendor apps (installer/updater) failed"

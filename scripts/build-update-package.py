@@ -93,8 +93,8 @@ if a.prev_patch_state and not a.prev_base_state: raise SystemExit('--prev-patch-
 if a.prev_base_state and a.base_state: raise SystemExit('--prev-base-state is for a feature release, not with --base-state')
 # Image name in release assets; the updater maps DTB models to it (IMAGES).
 # SM8550 packages were named 'rp6' before the rename (alpha-v0.5.1 and
-# earlier; konkr-update.py OLD_NAMES); their state files still serve as delta bases.
-# The one image's packages are 'pb-os' (konkr-update.py IMAGE; updaters from
+# earlier; pbos-update.py OLD_NAMES); their state files still serve as delta bases.
+# The one image's packages are 'pb-os' (pbos-update.py IMAGE; updaters from
 # alpha-v0.5.2.3 on look for it).
 image = {'sm8650': 'pocketfit', 'sm8550': 'sm8550', 'all': 'pb-os'}[a.soc]
 OLD_IMAGES = {'sm8550': ('rp6',)}.get(a.soc, ())
@@ -155,7 +155,7 @@ def tree_state(base, hashes=None):
 
 # Android apps payload (Lepton overlays for pbos-apk): in home, not on the root
 # partition. Packages carry it like the bundled plugins; deltas only when it changed.
-ANDROID = 'home/steamos/.local/share/konkr-android'
+ANDROID = 'home/steamos/.local/share/pbos-android'
 
 
 def tree_digest(top):

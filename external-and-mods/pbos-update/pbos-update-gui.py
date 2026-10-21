@@ -6,7 +6,7 @@ import gi
 gi.require_version('Gtk', '3.0')
 from gi.repository import Gtk, GLib
 
-UPDATER = '/usr/share/konkr-update/konkr-update.py'
+UPDATER = '/usr/share/pbos-update/pbos-update.py'
 
 
 class Window(Gtk.Window):

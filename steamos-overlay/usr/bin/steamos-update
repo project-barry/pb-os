@@ -8,7 +8,7 @@
 # apply used to stamp CompletedOOBE and restart Steam during first boot,
 # which threw away the rest of the setup (and on some installs skipped it
 # entirely). Exit 7 lets the OOBE carry on to sign-in; Steam marks the
-# OOBE complete itself. OS updates go through konkr-update instead.
+# OOBE complete itself. OS updates go through pbos-update instead.
 set -uo pipefail
 
 STEAM_HOME="${STEAM_HOME:-/home/steamos}"

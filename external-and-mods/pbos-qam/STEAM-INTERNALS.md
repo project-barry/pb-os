@@ -63,7 +63,7 @@ view" and "running tab: drawn" are informational.
 | `DFL.*` components | PanelSection, ButtonItem, ToggleField, SliderField, DropdownItem, TextField, ConfirmModal, ModalRoot, showModal, Focusable, DialogButton, … | every page | sections |
 | `staticClasses.Title` | Quick Access's title style | the PB-OS header | `makePanel` |
 | Router.RunningApps | running games | Barry's companion apps, per-game performance | `sections/barry.js`, `sections/tools.js` |
-| `SteamClient.Apps.*`, `SteamClient.Settings.SpecifyGlobalCompatTool` | app details, overview changes, game start, launch options, compat tools | Proton PB-OS, game profiles | `sections/tools.js` |
+| `SteamClient.Apps.*`, `SteamClient.Settings.SpecifyGlobalCompatTool` | app details, overview changes, game start, launch options, compat tools; `SetShortcutExe`, `RemoveShortcut` | Proton PB-OS, game profiles; Android titles (moved to pbos-apk, stale ones removed) | `sections/tools.js` |
 | `SteamClient.GameSessions.RegisterForAppLifetimeNotifications` | a game starting or ending (`unAppID`, `bRunning`) | the Performance tab's per-game mode | `sections/tools.js` |
 | settingsStore, collectionStore | `m_Settings.strCompatTool`, local and all games | Proton PB-OS, game lists | `sections/tools.js`, `sections/barry.js` |
 | virtual keyboard manager | `SteamUIStore.ActiveWindowInstance.VirtualKeyboardManager` with `SetVirtualKeyboardShownInternal` | Barry's keyboard instead of Steam's (Thor) | `sections/barry.js` |

@@ -37,6 +37,10 @@ const setMcu = callable("set_mcu");
 // Face buttons by printed letter or by position (Retroid Pocket 6 / Nova, AYN Thor).
 const getFaceButtons = callable("get_face_buttons");
 const setFaceButtons = callable("set_face_buttons");
+const getMtp = callable("get_mtp");
+// Android apps: is Google Play added (see androidTitles).
+const getAndroid = callable("get_android");
+const setMtp = callable("set_mtp");
 // Barry Launcher in Desktop Mode (AYN Thor).
 const getBarryDesktop = callable("get_barry_desktop");
 const setBarryDesktop = callable("set_barry_desktop");
@@ -334,7 +338,7 @@ function UpdateTab() {
             },
         })));
     }
-    return jsx(DFL.PanelSection, { title: "pb-os update", children: items });
+    return jsx(DFL.PanelSection, { title: "Software Update", children: items });
 }
 
 // -------------------------------------------------------------- install ---
@@ -895,6 +899,43 @@ function FaceButtons({ inline }) {
     return inline ? jsx(SP_JSX.Fragment, { children: rows }) : jsx(DFL.PanelSection, { title: "Buttons", children: rows });
 }
 
+// ------------------------------------------------------------------- mtp ---
+// MTP over the USB-C cable (pbos-mtp.service): the PC sees Home and Steam,
+// with nothing to install at either end. Off by default, like SSH. One
+// switch: the folders are fixed, so there is nothing here to remove.
+function MtpShare() {
+    const [st, setSt] = useState(null);
+    useEffect(() => { getMtp().then(setSt).catch(() => setSt({ available: false })); }, []);
+    if (!st || !st.available) return null;
+
+    const desc = !st.enabled
+        ? "Let a PC browse and copy your Home and Steam folders over the USB-C cable"
+        : st.connected
+            ? "Connected: the PC can see your Home and Steam folders"
+            : "On: connect the USB-C cable to a PC";
+    return jsxs(DFL.PanelSection, { title: "USB File Transfer", children: [
+        row(jsx(DFL.ToggleField, {
+            label: "MTP over USB",
+            description: desc,
+            checked: st.enabled,
+            onChange: (v) => {
+                setSt({ ...st, enabled: v });
+                setMtp(v).then((r) => {
+                    setSt(r);
+                    toaster.toast({
+                        title: "PB-OS Tools",
+                        body: v ? "MTP on: the PC can see your Home and Steam folders" : "MTP off",
+                    });
+                }).catch(() => getMtp().then(setSt).catch(() => {}));
+            },
+        })),
+        note(lines(
+            "Closing the lid disconnects it, and a transfer still running is lost.",
+            "Changing a game's files while Steam is running can confuse Steam.",
+        )),
+    ] });
+}
+
 // ---------------------------------------------------------------- sticks ---
 // Stick calibration (AYN's Android tool, in Game Mode) and fine stick steps
 // for the rsinput pad; sm8550-stickcal does the work and keeps both switches.
@@ -1137,7 +1178,7 @@ function BarryDesktop() {
 function HardwareTab() {
     const { st, apply } = useControl();
     if (!st) return jsx(DFL.PanelSection, { children: note("Loading…") });
-    if (!st.available) return jsxs(SP_JSX.Fragment, { children: [jsx(FaceButtons, {}), jsx(Sticks, {}), jsx(BarryDesktop, {})] });
+    if (!st.available) return jsxs(SP_JSX.Fragment, { children: [jsx(FaceButtons, {}), jsx(Sticks, {}), jsx(MtpShare, {}), jsx(BarryDesktop, {})] });
     const buttons = st.buttons || {};
     const steamButtons = (st.buttons_mode || "steam") === "steam";
     return jsxs(SP_JSX.Fragment, { children: [
@@ -1172,13 +1213,14 @@ function HardwareTab() {
         jsxs(DFL.PanelSection, { title: "Hardware", children: [
             row(jsx(DFL.ToggleField, {
                 label: "Controller MCU link",
-                description: "Needed for the KONKR, Performance and Quick Access buttons and stick lighting (Lighting tab)",
+                description: "Needed for the KONKR, Performance and Quick Access buttons and stick lighting (Personalization › Lighting)",
                 checked: st.mcu_enabled,
                 onChange: (v) => apply(setMcu(v)).then(() => {
                     toaster.toast({ title: "PB-OS Tools", body: v ? "MCU link enabled" : "MCU link disabled" });
                 }),
             })),
         ] }),
+        jsx(MtpShare, {}),
     ] });
 }
 
@@ -1745,16 +1787,16 @@ function GamesTab() {
 }
 
 function onAvailable(title) {
-    toaster.toast({ title: "pb-os update", body: `${title} is available. Open PB-OS › Updates in Quick Access.`, duration: 6000 });
+    toaster.toast({ title: "pb-os update", body: `${title} is available. Open PB-OS › System in Quick Access.`, duration: 6000 });
 }
 
 function onLocal(version, place) {
-    toaster.toast({ title: "pb-os update", body: `pb-os ${version} is ${place}. Open PB-OS › Updates in Quick Access to install it.`, duration: 6000 });
+    toaster.toast({ title: "pb-os update", body: `pb-os ${version} is ${place}. Open PB-OS › System in Quick Access to install it.`, duration: 6000 });
 }
 
 function onMoveDone(direction, ok) {
     const what = direction === "sd" ? "Copy to microSD" : "Install to internal storage";
-    toaster.toast({ title: "PB-OS Tools", body: ok ? `${what} finished. Open PB-OS › Move SteamOS for the next steps.` : `${what} failed. Open PB-OS › Move SteamOS for details.`, duration: 8000 });
+    toaster.toast({ title: "PB-OS Tools", body: ok ? `${what} finished. Open PB-OS › System for the next steps.` : `${what} failed. Open PB-OS › System for details.`, duration: 8000 });
 }
 
 // Toast whenever the profile changes (Performance button, pbosctl or the
@@ -1861,26 +1903,256 @@ function protonSoon(appids) {
 }
 let protonEvents = [];
 
+// ---------------------------------------------------------- import apk ---
+// Import APK (Personalization, at the bottom): APKs and bundles (.apk, .apkm,
+// .xapk, .apks) from Downloads, the SD card or a USB drive go to
+// ~/Android/Inbox, which pbos-apk installs from. Kept, a copy goes and the
+// file stays; not kept, the file itself goes (the inbox empties itself).
+const apkPlaces = callable("apk_places");
+const listApks = callable("list_apks");
+const importApks = callable("import_apks");
+const apkClose = callable("apk_close");
+
+// An Android package going down into a tray.
+const ImportApkIcon = svg([
+    jsx("path", { d: "M11 2h2v9.2l3.3-3.3 1.4 1.4L12 15l-5.7-5.7 1.4-1.4 3.3 3.3z" }, "a"),
+    jsx("path", { d: "M3 14h2v5h14v-5h2v7H3z" }, "t"),
+]);
+
+const mb = (n) => `${(n / 1048576).toFixed(n < 10485760 ? 1 : 0)} MB`;
+
+function ImportApkModal({ closeModal: close }) {
+    // Drives mounted for the pop-up (pbos-qamd) are let go when it closes.
+    const closeModal = () => { apkClose().catch(() => {}); close(); };
+    const [step, setStep] = useState("place");
+    const [places, setPlaces] = useState(null);
+    const [place, setPlace] = useState(null);
+    const [files, setFiles] = useState(null);
+    const [picked, setPicked] = useState(() => new Set());
+    const [busy, setBusy] = useState(false);
+    const [result, setResult] = useState(null);
+    useEffect(() => { apkPlaces().then(setPlaces).catch(() => setPlaces([])); }, []);
+
+    const open = (p) => {
+        setPlace(p);
+        setFiles(null);
+        setPicked(new Set());
+        setStep("list");
+        listApks(p.id).then(setFiles).catch(() => setFiles([]));
+    };
+    const toggle = (path, on) => setPicked((prev) => {
+        const next = new Set(prev);
+        if (on) next.add(path); else next.delete(path);
+        return next;
+    });
+    const install = (keep) => {
+        setBusy(true);
+        importApks([...picked], keep)
+            .then((r) => setResult(r))
+            .catch(() => setResult({ ok: false, done: 0, failed: [] }))
+            .finally(() => { setBusy(false); setStep("done"); });
+    };
+
+    const title = (t) => jsx("div", { style: { fontSize: "20px", fontWeight: "bold", marginBottom: "12px" }, children: t });
+    const text = (t) => jsx("div", { style: { marginBottom: "8px" }, children: t });
+    const buttons = (list) => jsx(DFL.Focusable, {
+        "flow-children": "horizontal",
+        style: { display: "flex", gap: "8px", marginTop: "16px", justifyContent: "flex-end" },
+        children: list.map(([label, onClick, disabled]) => jsx(DFL.DialogButton, {
+            style: { width: "auto", minWidth: "120px" }, disabled: !!disabled, onClick, children: label,
+        }, label)),
+    });
+
+    let body;
+    if (step === "place") {
+        body = [
+            title("Import APK"),
+            text("Where are the APKs?"),
+            !places ? text("Looking…") : jsx(DFL.Focusable, {
+                "flow-children": "vertical",
+                style: { display: "flex", flexDirection: "column", gap: "8px" },
+                children: places.map((p) => jsx(DFL.DialogButton, {
+                    disabled: !p.present, onClick: () => open(p),
+                    children: p.present ? p.label : `${p.label} (none found)`,
+                }, p.id)),
+            }),
+            buttons([["Cancel", closeModal]]),
+        ];
+    } else if (step === "list") {
+        const n = picked.size;
+        body = [
+            title(`APKs in ${place.label}`),
+            !files ? text("Looking…") : !files.length ? text("No APKs or APK bundles there.") : jsx(DFL.Focusable, {
+                "flow-children": "vertical",
+                style: { maxHeight: "50vh", overflowY: "auto" },
+                children: files.map((f) => jsx(DFL.ToggleField, {
+                    label: f.name,
+                    description: `${f.folder ? `${f.folder} · ` : ""}${mb(f.size)}`,
+                    checked: picked.has(f.path),
+                    onChange: (on) => toggle(f.path, on),
+                }, f.path)),
+            }),
+            buttons([["Back", () => setStep("place")], [n ? `Install (${n})` : "Install", () => setStep("keep"), !n]]),
+        ];
+    } else if (step === "keep") {
+        const n = picked.size;
+        body = [
+            title("Keep the files?"),
+            text(`After installing, keep ${n === 1 ? "the APK file" : `the ${n} APK files`} in ${place.label}, or delete ${n === 1 ? "it" : "them"}?`),
+            busy ? text("Moving…") : null,
+            buttons([["Back", () => setStep("list"), busy], ["Keep", () => install(true), busy], ["Delete", () => install(false), busy]]),
+        ];
+    } else {
+        const r = result || { done: 0, failed: [] };
+        body = [
+            title("Import APK"),
+            r.done ? text(`Installing ${r.done === 1 ? "1 app" : `${r.done} apps`}. Each one gets its own title in your Steam library once it is installed.`) : null,
+            r.failed && r.failed.length ? text(`Could not import: ${r.failed.join(", ")}`) : null,
+            r.stayed && r.stayed.length ? text(`Could not delete (the drive is read-only): ${r.stayed.join(", ")}`) : null,
+            !r.done && !(r.failed && r.failed.length) ? text("Nothing was imported.") : null,
+            buttons([["Close", closeModal]]),
+        ];
+    }
+    return jsx(DFL.ModalRoot, { closeModal, onCancel: closeModal, children: jsxs("div", { children: body }) });
+}
+
+function ImportApkPart() {
+    return jsx(DFL.PanelSection, {
+        children: row(jsx(DFL.ButtonItem, {
+            layout: "below",
+            description: "Install Android apps from Downloads, an SD card or a USB drive.",
+            onClick: () => DFL.showModal(jsx(ImportApkModal, {})),
+            children: "Import APK",
+        })),
+    });
+}
+
 // ------------------------------------------------------------- plugins ---
-// Each former tab is a plugin in the PB-OS list. Games first on every
-// device; the device's own ones (lighting, performance, hardware, power)
-// once the backend has said which it has.
+// Each part goes on its page of the PB-OS list (PAGES in the loader). Those
+// every device has now; the device's own (lighting, hardware, power) once
+// the backend has said which it has.
 // Performance: the default mode (with pbosd's fan on the KONKR Pocket FIT /
 // AYANEO Pocket S2) and per-game settings.
-P.plugin({ id: "performance", title: "Performance", icon: PerformanceIcon, content: PerformanceTab, order: 10 });
-P.plugin({ id: "update", title: "Updates", icon: UpdateIcon, content: UpdateTab, order: 70 });
-P.plugin({ id: "install", title: "Move SteamOS", icon: InstallIcon, content: InstallTab, order: 80 });
+P.plugin({ id: "performance", page: "performance", icon: PerformanceIcon, content: PerformanceTab, order: 10 });
+P.plugin({ id: "update", page: "system", icon: UpdateIcon, content: UpdateTab, order: 10 });
+P.plugin({ id: "install", page: "system", icon: InstallIcon, content: InstallTab, order: 30 });
 (async () => {
     const lights = await getLights().then((s) => s.kind || "").catch(() => "");
     const [f, s] = await Promise.all([getFaceButtons().catch(() => ({})), stickState().catch(() => ({}))]);
     const face = !!f.supported || !!s.supported;
     const [rest, cc] = await Promise.all([getCharging().catch(() => ({})), getChargeControl().catch(() => ({}))]);
     const power = !!rest.supported || !!cc.supported;
-    if (lights) P.plugin({ id: "lights", title: "Lighting", icon: LightsIcon, content: LightsTab, order: 20 });
+    if (lights) P.plugin({ id: "lights", page: "personalization", icon: LightsIcon, content: LightsTab, order: 10 });
     // pbosd's buttons, or face buttons and sticks: Retroid Pocket 6 / Nova, AYN Thor.
-    if (lights === "pbosd" || face) P.plugin({ id: "hardware", title: "Hardware", icon: HardwareIcon, content: HardwareTab, order: 40 });
-    if (power) P.plugin({ id: "power", title: "Power", icon: PowerIcon, content: PowerTab, order: 50 });
+    if (lights === "pbosd" || face) P.plugin({ id: "hardware", page: "hardware", icon: HardwareIcon, content: HardwareTab, order: 10 });
+    if (power) P.plugin({ id: "power", page: "power", icon: PowerIcon, content: PowerTab, order: 10 });
+    // At the bottom of Personalization, where Android apps can be run.
+    const android = await getAndroid().catch(() => null);
+    if (android && android.available) P.plugin({ id: "import-apk", page: "personalization", icon: ImportApkIcon, content: ImportApkPart, order: 100 });
 })().catch((e) => P.fail("plugins", e));
+
+// Android titles that no longer fit: a Google Play Store title without
+// Google Play (earlier images shipped it; it can only fail now) or one that
+// does not open the Play Store (older images left some with no arguments),
+// and Add Google Play once it is added. Only pbos-apk's own titles. Titles
+// and launch options from before the PB-OS rename (/usr/bin/konkr-apk,
+// konkr-game) move to pbos-apk and pbos-game first; app ids stay. At Steam
+// start and when a title exits.
+const PBOS_APK = '"/usr/bin/pbos-apk"';
+async function androidTitles() {
+    const st = await getAndroid().catch(() => null);
+    if (!st || !st.available) return;
+    const cs = window.collectionStore;
+    const apps = new Map();
+    for (const c of [cs && cs.localGamesCollection, cs && cs.deckDesktopApps]) {
+        for (const app of (c && c.allApps) || []) {
+            if (st.old_launch || app.app_type === SHORTCUT_TYPE) apps.set(app.appid, [app.app_type, app.display_name || ""]);
+        }
+    }
+    for (const [appid, [type, name]] of apps) {
+        const play = type === SHORTCUT_TYPE && (name === "Google Play Store" || name === "Add Google Play");
+        if (!play && !st.old_launch && !(st.old_titles && type === SHORTCUT_TYPE)) continue;
+        const d = await appDetails(appid);
+        if (!d) continue;
+        if (st.old_launch && /\bkonkr-game\b/.test(d.strLaunchOptions || "")) {
+            SteamClient.Apps.SetAppLaunchOptions(appid, d.strLaunchOptions.replace(/\bkonkr-game\b/g, "pbos-game"));
+        }
+        if (type !== SHORTCUT_TYPE) continue;
+        const exe = d.strShortcutExe || "";
+        if (/\/konkr-apk"?$/.test(exe)) SteamClient.Apps.SetShortcutExe(appid, PBOS_APK);
+        if (!play || !/\/(konkr|pbos)-apk"?$/.test(exe)) continue;
+        const opts = d.strLaunchOptions || "";
+        const stale = opts.includes('"gapps"')
+            ? st.google
+            : !st.google || !opts.includes('"run" "com.android.vending"');
+        if (stale) SteamClient.Apps.RemoveShortcut(appid);
+    }
+}
+
+// Steam's keyboard over an app (an Android app's text field opens it, see
+// pbos-apk): while it is up, gamescope gives Steam's window every touch, so
+// nothing under or beside the keyboard can be tapped. pbos-qamd puts where
+// the keyboard is on the screen in PBOS_KEYBOARD_RECT (screen pixels), and
+// PB-OS's gamescope sends touches outside it to the app. Follows Steam's
+// keyboard as it opens, slides in, changes size and closes.
+const setKeyboardRect = callable("set_keyboard_rect");
+let keyboardSent = "";
+let keyboardDone = null;
+
+function sendKeyboardRect(rect) {
+    const key = rect.join(",");
+    if (key === keyboardSent) return;
+    keyboardSent = key;
+    setKeyboardRect(...rect).catch(() => {});
+}
+
+function measureKeyboard(win, el) {
+    const b = el.getBoundingClientRect();
+    if (!el.isConnected || b.width <= 0 || b.height <= 0) return sendKeyboardRect([0, 0, 0, 0]);
+    const s = win.devicePixelRatio || 1;
+    sendKeyboardRect([b.left, b.top, b.width, b.height].map((v) => Math.max(0, Math.round(v * s))));
+}
+
+function followKeyboard(win) {
+    const mod = DFL.findClassModule && DFL.findClassModule((m) => m.VirtualKeyboardContainer && m.Keyboard);
+    if (!mod || !win || !win.document) return null;
+    const sel = "." + mod.Keyboard.split(" ")[0];
+    let el = null, frames = 0, gone = false;
+    const resize = new win.ResizeObserver(() => el && measureKeyboard(win, el));
+    const again = () => el && measureKeyboard(win, el);
+    // Steam draws the keyboard a frame or two after it says it is up.
+    const find = () => {
+        if (gone) return;
+        el = win.document.querySelector(sel);
+        if (!el) { if (++frames < 60) win.requestAnimationFrame(find); return; }
+        measureKeyboard(win, el);
+        resize.observe(el);
+        el.addEventListener("animationend", again);
+        el.addEventListener("transitionend", again);
+    };
+    find();
+    return () => {
+        gone = true;
+        resize.disconnect();
+        if (el) {
+            el.removeEventListener("animationend", again);
+            el.removeEventListener("transitionend", again);
+        }
+        sendKeyboardRect([0, 0, 0, 0]);
+    };
+}
+
+function watchSteamKeyboard() {
+    const inst = window.SteamUIStore && window.SteamUIStore.ActiveWindowInstance;
+    const mgr = inst && (inst.VirtualKeyboardManager || inst.m_VirtualKeyboardManager);
+    const showing = mgr && mgr.IsShowingVirtualKeyboard;
+    if (!showing || typeof showing.Subscribe !== "function") return;
+    sendKeyboardRect([0, 0, 0, 0]);  // one left from an earlier Steam goes
+    showing.Subscribe((up) => {
+        if (keyboardDone) { keyboardDone(); keyboardDone = null; }
+        if (up) keyboardDone = followKeyboard(inst.BrowserWindow);
+    });
+}
 
 // While Steam runs (as the Decky plugin did while loaded): Proton PB-OS
 // follows Valve's picks, and the backend's news shows as toasts.
@@ -1890,10 +2162,11 @@ P.plugin({ id: "install", title: "Move SteamOS", icon: InstallIcon, content: Ins
 function reportGame(appid) { gameRunning(appid != null ? String(appid) : (runningGame() || "")).catch(() => {}); }
 reportGame();
 protonSoon(null);
+androidTitles().catch(() => {});
 protonEvents = [
     SteamClient.GameSessions.RegisterForAppLifetimeNotifications((n) => {
         if (n && n.bRunning) reportGame(n.unAppID);
-        else setTimeout(() => reportGame(), 1000);
+        else setTimeout(() => { reportGame(); androidTitles().catch(() => {}); }, 1000);
     }),
     SteamClient.Apps.RegisterForAppOverviewChanges(() => protonSoon(null)),
     SteamClient.Apps.RegisterForGameActionStart((_action, appid) => protonSoon([String(appid)])),
@@ -1908,4 +2181,5 @@ api.addEventListener("pbos_move_done", onMoveDone);
 api.addEventListener("barry_game_profile", (appid, on) => {
     setWrapper(String(appid), !!on).catch((e) => P.fail("barry game profile", e));
 });
+watchSteamKeyboard();
 });

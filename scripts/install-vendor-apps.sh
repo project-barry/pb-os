@@ -74,17 +74,22 @@ rm -f "$HOME_DST/Desktop/Easy UFS Installer.desktop" \
   "$R/etc/skel/Desktop/Easy UFS Installer.desktop"
 
 # Offline update staging GUI and privileged helper.
-mkdir -p "$R/usr/share/konkr-update"
-install -m0644 "$MOD/konkr-update/konkr-update.py" "$R/usr/share/konkr-update/konkr-update.py"
-install -m0644 "$MOD/konkr-update/konkr-update-gui.py" "$R/usr/share/konkr-update/konkr-update-gui.py"
-install -m0644 "$MOD/konkr-update/allowed_signers" "$R/usr/share/konkr-update/allowed_signers"
-install -m0644 "$MOD/konkr-update/dev_testers" "$R/usr/share/konkr-update/dev_testers"
-cat > "$bin/konkr-update-gui" <<'EOF'
+mkdir -p "$R/usr/share/pbos-update"
+install -m0644 "$MOD/pbos-update/pbos-update.py" "$R/usr/share/pbos-update/pbos-update.py"
+install -m0644 "$MOD/pbos-update/pbos-update-gui.py" "$R/usr/share/pbos-update/pbos-update-gui.py"
+install -m0644 "$MOD/pbos-update/allowed_signers" "$R/usr/share/pbos-update/allowed_signers"
+install -m0644 "$MOD/pbos-update/dev_testers" "$R/usr/share/pbos-update/dev_testers"
+# Updaters from before the PB-OS rename stage a package with the updater they
+# find at this path (pbos-update.py LEGACY_UPDATER); nothing else uses it.
+rm -rf "$R/usr/share/konkr-update"
+install -D -m0644 "$MOD/pbos-update/pbos-update.py" "$R/usr/share/konkr-update/konkr-update.py"
+rm -f "$bin/konkr-update-gui" "$apps/konkr-update.desktop"
+cat > "$bin/pbos-update-gui" <<'EOF'
 #!/bin/bash
-exec /usr/bin/python3 /usr/share/konkr-update/konkr-update-gui.py "$@"
+exec /usr/bin/python3 /usr/share/pbos-update/pbos-update-gui.py "$@"
 EOF
-chmod 0755 "$bin/konkr-update-gui"
-install -m0644 "$MOD/konkr-update/konkr-update.desktop" "$apps/konkr-update.desktop"
+chmod 0755 "$bin/pbos-update-gui"
+install -m0644 "$MOD/pbos-update/pbos-update.desktop" "$apps/pbos-update.desktop"
 
 # ── MESA Easy Manager (ARM-Manager, SteamOS password warning in app) ────────
 log "MESA Easy Manager"

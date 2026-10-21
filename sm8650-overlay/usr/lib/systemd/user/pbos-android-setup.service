@@ -1,5 +1,5 @@
 [Unit]
-Description=Add the Google Play Store to the Steam library
+Description=Add the Android starting title (Add Google Play or the Play Store) to the Steam library
 # pbos-apk setup exits at once when Steam already has the shortcut; on a
 # fresh install it waits for the Steam sign-in, then adds and verifies it.
 

@@ -80,6 +80,9 @@ Here is a link to all of our benchmark tests: [docs/benchmark-results.md](docs/b
 - **PB-OS tab in Quick Access** (Barry's head): PB-OS Tools and Barry Launcher settings with one native
   backend, instead of Decky plugins.
 - Two screen Gamescope mod - enabling native DS and 3DS emulation in Game Mode on supported dual screen devices.
+- **MTP over USB**, off by default: switch on **USB File Transfer** in the
+  PB-OS tab and a PC can browse and copy your files over the USB-C cable,
+  with nothing to install on either side and the handheld still running.
 
 ## Credits
 

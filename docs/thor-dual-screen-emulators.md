@@ -16,8 +16,8 @@ changed, once, and remembers it.
 
 ## The quick way: the Barry Launcher plugin
 
-The Thor does this for you: **Quick Access → Barry Launcher → Emulators tab
-(the Game Boy icon) → Two-screen emulators** is on by default. It finds melonDS, Azahar, Lime3DS,
+The Thor does this for you: **Quick Access → PB-OS → Display → Two-screen
+emulators** is on by default. It finds melonDS, Azahar, Lime3DS,
 Citra and Cemu (AppImage or Flatpak) and makes the changes below in their
 settings files, also for an emulator installed later or reset by EmuDeck,
 within half a minute and while that emulator isn't running (they write their

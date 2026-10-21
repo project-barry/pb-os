@@ -1003,7 +1003,7 @@ function GamesSection() {
     ] });
 }
 
-// The Dual Screen page and the Joystick RGB Dimmer page share the plugin's
+// The Dual Screen part and the dimmer (Lighting) part share the plugin's
 // old panel state: getState every 3 s while shown, sliders held a while.
 function useBarryState() {
     const [st, setSt] = useState(null);
@@ -1073,6 +1073,7 @@ function BottomSettings({ on }) {
             checked: !!bs.heroArt,
             onChange: (v) => change({ heroArt: v }),
         })),
+        jsx(ArtRows, {}),
         row(jsx(DFL.DropdownItem, {
             label: "Sleep after",
             description: "No touch on the bottom screen this long turns it dark; a touch or the AYN button wakes it.",
@@ -1109,7 +1110,9 @@ function ScreensPage() {
 
 // The bottom screen's art: SteamGridDB, for games Steam has no hero or logo
 // for, with the user's own API key (steamgriddb.com, Preferences, API).
-function ArtPage() {
+// Inside Dual Screen, under its own heading (Quick Access has no sections
+// inside sections).
+function ArtRows() {
     const [st, setSt] = useState(null);
     const [key, setKey] = useState("");
     const [error, setError] = useState("");
@@ -1123,8 +1126,11 @@ function ArtPage() {
             setError(""); setKey(""); setSt(r);
         }).catch(() => { setBusy(false); setError("Not saved."); });
     };
-    if (!st) return jsx(DFL.PanelSection, { children: note("Loading…") });
-    return jsxs(DFL.PanelSection, { title: "Bottom Screen Art", children: [
+    if (!st) return null;
+    const heading = DFL.staticClasses.PanelSectionTitle;
+    return [
+        row(jsx("div", { className: heading, style: heading ? undefined : { fontWeight: "bold", paddingTop: "8px" },
+            children: "Bottom Screen Art" })),
         note("The bottom screen shows the hero art and logo of the game selected on the top screen: your own art for it (as the SteamGridDB plugin sets it), else Steam's."),
         note(st.hasKey
             ? "SteamGridDB: on. Games without art get it from SteamGridDB."
@@ -1136,32 +1142,32 @@ function ArtPage() {
         ...(error ? [row(jsx("div", { style: { color: "#ff6b6b" }, children: error }))] : []),
         row(jsx(DFL.ButtonItem, { layout: "below", disabled: busy || !key.trim(), onClick: () => save(key), children: "Save key" })),
         ...(st.hasKey ? [row(jsx(DFL.ButtonItem, { layout: "below", disabled: busy, onClick: () => save(""), children: "Remove key" }))] : []),
-    ] });
+    ];
 }
 
 function DimmerPage() {
     const { st, rgb } = useBarryState();
     if (!st) return jsx(DFL.PanelSection, { children: note("Loading…") });
     if (st.rgbDimmer == null) return jsx(DFL.PanelSection, { children: note("The stick lights' controller isn't answering.") });
-    return jsxs(DFL.PanelSection, { title: "Joystick RGB Dimmer", children: [
+    return jsxs(DFL.PanelSection, { title: "Lighting", children: [
         slider("Lights dimmer", st.rgbDimmer, 20, rgb),
         note("This setting adjusts the brightness threshold of the performance dashboard settings"),
     ] });
 }
 
 // ------------------------------------------------------------- plugins ---
-// Each former tab is a plugin in the PB-OS list, in the old tab order.
-P.plugin({ id: "screens", title: "Dual Screen", icon: ThorIcon, content: ScreensPage, order: 10 });
-P.plugin({ id: "art", title: "Bottom Screen Art", icon: ThemesIcon, content: ArtPage, order: 15 });
-P.plugin({ id: "apps", title: "Apps", icon: AppsIcon, content: AppsSection, order: 20 });
-P.plugin({ id: "themes", title: "Themes", icon: ThemesIcon, content: ThemesSection, order: 30 });
-P.plugin({ id: "widgets", title: "Widgets", icon: WidgetsIcon, content: WidgetsSection, order: 35 });
-P.plugin({ id: "languages", title: "Keyboard Languages", icon: LanguagesIcon, content: LanguagesSection, order: 40 });
-P.plugin({ id: "games", title: "Companion Apps", icon: GamesIcon, content: GamesSection, order: 50 });
-P.plugin({ id: "emulators", title: "Emulators", icon: HandheldIcon, content: TwoScreenSection, order: 70 });
-// The dimmer only where the stick lights' controller answers.
+// Each part goes on its page of the PB-OS list (PAGES in the loader).
+P.plugin({ id: "screens", page: "display", icon: ThorIcon, content: ScreensPage, order: 10 });
+P.plugin({ id: "emulators", page: "display", icon: HandheldIcon, content: TwoScreenSection, order: 20 });
+P.plugin({ id: "themes", page: "personalization", icon: ThemesIcon, content: ThemesSection, order: 20 });
+P.plugin({ id: "widgets", page: "personalization", icon: WidgetsIcon, content: WidgetsSection, order: 30 });
+P.plugin({ id: "apps", page: "apps", icon: AppsIcon, content: AppsSection, order: 10 });
+P.plugin({ id: "games", page: "apps", icon: GamesIcon, content: GamesSection, order: 20 });
+P.plugin({ id: "languages", page: "system", icon: LanguagesIcon, content: LanguagesSection, order: 20 });
+// The dimmer, first under Personalization, only where the stick lights'
+// controller answers.
 getState().then((s) => {
-    if (s && s.rgbDimmer != null) P.plugin({ id: "lights", title: "Joystick RGB Dimmer", icon: RgbIcon, content: DimmerPage, order: 60 });
+    if (s && s.rgbDimmer != null) P.plugin({ id: "lights", page: "personalization", icon: RgbIcon, content: DimmerPage, order: 5 });
 }).catch((e) => P.fail("dimmer", e));
 
 // While Steam runs (as the Decky plugin did while loaded): Barry's keyboard

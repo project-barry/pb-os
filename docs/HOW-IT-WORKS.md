@@ -95,8 +95,9 @@ The same presets, without typing, on every device: PB-OS Tools → **Games**
 
 - Power LED (PM8550 LPG, RGB): profile colour flash on change (blue = Low Power, green = Balanced),
   then amber while charging, green when full, red pulse below 15%.
-- Stick RGB rings (MCU link): static / breath / rainbow / off from PB-OS
-  Utils → Lighting, `pbosctl rgb`, or the K button (with Steam Remap off).
+- Stick RGB rings (MCU link): static / breath / rainbow / off from Quick
+  Access → PB-OS → Personalization (Lighting), `pbosctl rgb`, or the K
+  button (with Steam Remap off).
 
 ### Quick Access panels (Decky)
 
@@ -282,6 +283,20 @@ Output: `/work/steamos-sm8650.img`.
 - SSH is off by default, like on the Steam Deck. After `passwd` and
   `sudo systemctl enable --now sshd` it allows password login for `steamos`
   (root off).
+- MTP over USB is off by default too, and the PB-OS tab's Hardware section
+  (**USB File Transfer**) turns it on: the device then shows up on a PC as
+  itself, with a Home and a Steam folder, and needs nothing installed at
+  either end. Those two folders are fixed; a complete config of your own at
+  `/etc/umtprd/umtprd.conf` replaces the generated one. It is uMTP-Responder
+  in a FunctionFS gadget (`pbos-mtp.service`, `external-and-mods/uMTP-Responder`), a system service
+  rather than a user one because closing the lid on a PC's port is a charge
+  rest, which freezes the user slice: a responder frozen in there leaves USB
+  alive but unanswered and hangs the host's file manager. Around a sleep or a
+  rest, `60-pbos-mtp.conf` lets the UDC go and takes it again on the wake, so
+  the host sees a plain unplug (a transfer still running is lost, as it would
+  be with the cable). On the Thor over SuperSpeed+ it writes at 364 MB/s and
+  reads at 118 MB/s; reads stay the slower side because the IN endpoint only
+  moves while the responder has a request queued.
 - Desktop mode: the Steam keyboard (Steam+X) works in Wayland apps, Discover
   gets the Flathub catalog, and KWin/plasmashell get the big-core boost too.
   Like the Steam Deck, no KDE on-screen keyboard is set up; plasma-keyboard
