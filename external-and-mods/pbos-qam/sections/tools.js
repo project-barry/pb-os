@@ -1962,6 +1962,71 @@ async function androidTitles() {
     }
 }
 
+// Steam's keyboard over an app (an Android app's text field opens it, see
+// pbos-apk): while it is up, gamescope gives Steam's window every touch, so
+// nothing under or beside the keyboard can be tapped. pbos-qamd puts where
+// the keyboard is on the screen in PBOS_KEYBOARD_RECT (screen pixels), and
+// PB-OS's gamescope sends touches outside it to the app. Follows Steam's
+// keyboard as it opens, slides in, changes size and closes.
+const setKeyboardRect = callable("set_keyboard_rect");
+let keyboardSent = "";
+let keyboardDone = null;
+
+function sendKeyboardRect(rect) {
+    const key = rect.join(",");
+    if (key === keyboardSent) return;
+    keyboardSent = key;
+    setKeyboardRect(...rect).catch(() => {});
+}
+
+function measureKeyboard(win, el) {
+    const b = el.getBoundingClientRect();
+    if (!el.isConnected || b.width <= 0 || b.height <= 0) return sendKeyboardRect([0, 0, 0, 0]);
+    const s = win.devicePixelRatio || 1;
+    sendKeyboardRect([b.left, b.top, b.width, b.height].map((v) => Math.max(0, Math.round(v * s))));
+}
+
+function followKeyboard(win) {
+    const mod = DFL.findClassModule && DFL.findClassModule((m) => m.VirtualKeyboardContainer && m.Keyboard);
+    if (!mod || !win || !win.document) return null;
+    const sel = "." + mod.Keyboard.split(" ")[0];
+    let el = null, frames = 0, gone = false;
+    const resize = new win.ResizeObserver(() => el && measureKeyboard(win, el));
+    const again = () => el && measureKeyboard(win, el);
+    // Steam draws the keyboard a frame or two after it says it is up.
+    const find = () => {
+        if (gone) return;
+        el = win.document.querySelector(sel);
+        if (!el) { if (++frames < 60) win.requestAnimationFrame(find); return; }
+        measureKeyboard(win, el);
+        resize.observe(el);
+        el.addEventListener("animationend", again);
+        el.addEventListener("transitionend", again);
+    };
+    find();
+    return () => {
+        gone = true;
+        resize.disconnect();
+        if (el) {
+            el.removeEventListener("animationend", again);
+            el.removeEventListener("transitionend", again);
+        }
+        sendKeyboardRect([0, 0, 0, 0]);
+    };
+}
+
+function watchSteamKeyboard() {
+    const inst = window.SteamUIStore && window.SteamUIStore.ActiveWindowInstance;
+    const mgr = inst && (inst.VirtualKeyboardManager || inst.m_VirtualKeyboardManager);
+    const showing = mgr && mgr.IsShowingVirtualKeyboard;
+    if (!showing || typeof showing.Subscribe !== "function") return;
+    sendKeyboardRect([0, 0, 0, 0]);  // one left from an earlier Steam goes
+    showing.Subscribe((up) => {
+        if (keyboardDone) { keyboardDone(); keyboardDone = null; }
+        if (up) keyboardDone = followKeyboard(inst.BrowserWindow);
+    });
+}
+
 // While Steam runs (as the Decky plugin did while loaded): Proton PB-OS
 // follows Valve's picks, and the backend's news shows as toasts.
 // The running game, for its performance mode: told now (Steam just loaded)
@@ -1989,4 +2054,5 @@ api.addEventListener("pbos_move_done", onMoveDone);
 api.addEventListener("barry_game_profile", (appid, on) => {
     setWrapper(String(appid), !!on).catch((e) => P.fail("barry game profile", e));
 });
+watchSteamKeyboard();
 });

@@ -567,12 +567,28 @@ sync_pads() {
 
 # PB-OS Keyboard (external-and-mods/pbos-android/keyboard) logs "show" when a
 # text field wants a keyboard: open Steam's, which types into Android through
-# gamescope. On the Thor, Barry's keyboard takes the place of Steam's.
+# gamescope. On the Thor, Barry's keyboard takes the place of Steam's. "hide"
+# (the app or Android wants the keyboard gone: focus left the field, a search
+# was sent) closes it, unless "show" follows at once: moving from one field
+# to the next doesn't flash it.
+steam_keyboard() {
+  DISPLAY="${DISPLAY:-:0}" steam -ifrunning "steam://$1/keyboard" >/dev/null 2>&1 &
+}
+
 keyboard_watch() {
-  local line
-  asx "logcat -v raw -s PbosKeyboard:I -T '$(date +%s).000'" | while read -r line; do
-    [[ "$line" == show ]] || continue
-    DISPLAY="${DISPLAY:-:0}" steam -ifrunning steam://open/keyboard >/dev/null 2>&1 &
+  local line closing="" rc
+  asx "logcat -v raw -s PbosKeyboard:I -T '$(date +%s).000'" | while :; do
+    if [[ -n "$closing" ]]; then
+      read -r -t 0.15 line && rc=0 || rc=$?
+      if ((rc > 128)); then closing=""; steam_keyboard close; continue; fi
+      ((rc == 0)) || break
+    else
+      read -r line || break
+    fi
+    case "$line" in
+      show) closing=""; steam_keyboard open ;;
+      hide) closing=1 ;;
+    esac
   done
 }
 
@@ -647,10 +663,10 @@ cmd_daemon() {
       say "Couldn't finish setting up Android for this version: apps that use the clipboard may close at start."
     fi
   fi
-  # Lepton ships no keyboard. PB-OS's opens the device's own; Android treats
-  # the Wayland keyboard as a hardware one and would never ask for it.
+  # Lepton ships no keyboard. PB-OS's opens the device's own; to Android it
+  # is a hardware keyboard (the Wayland one).
   asx 'ime enable '"$PBOS_IME"'; ime set '"$PBOS_IME"';
-       settings put secure show_ime_with_hard_keyboard 1' >/dev/null || true
+       settings put secure show_ime_with_hard_keyboard 0' >/dev/null || true
   if [[ -n "$google" ]]; then
     # Google Play's touch keyboard stays available in Android's settings.
     asx 'ime enable '"$IME" >/dev/null || true

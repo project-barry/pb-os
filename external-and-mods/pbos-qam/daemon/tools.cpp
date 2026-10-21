@@ -771,6 +771,28 @@ Value android_state() {
     return out;
 }
 
+// ------------------------------------------------------------- keyboard --
+// Where Steam's keyboard is on the screen, in screen pixels (the tab's script
+// follows it; 0 0 0 0 once it closes), for PB-OS's gamescope: while it is up,
+// touches outside it go to the app beneath instead of to Steam.
+Value set_keyboard_rect(const Value& a) {
+    long long v[4];
+    for (int i = 0; i < 4; i++) v[i] = std::max(0LL, std::min(16384LL, arg(a, i, 0).as_int(0)));
+    std::vector<std::string> argv = {"runuser", "-u", desktop_user().name, "--",
+                                     "env", "DISPLAY=:0", "xprop", "-root"};
+    if (v[2] > 0 && v[3] > 0) {
+        std::string rect = std::to_string(v[0]) + ", " + std::to_string(v[1]) + ", " +
+                           std::to_string(v[2]) + ", " + std::to_string(v[3]);
+        argv.insert(argv.end(), {"-f", "PBOS_KEYBOARD_RECT", "32c", "-set", "PBOS_KEYBOARD_RECT", rect});
+    } else {
+        argv.insert(argv.end(), {"-remove", "PBOS_KEYBOARD_RECT"});
+    }
+    RunOpts o;
+    o.timeout = 3;
+    run(argv, o);
+    return Value();
+}
+
 Value mtp_state() {
     Value out = Value::object();
     const auto udcs = glob("/sys/class/udc/*");
@@ -1163,6 +1185,7 @@ public:
             return face_buttons({"set", layout});
         }
         if (m == "get_android") return android_state();
+        if (m == "set_keyboard_rect") return set_keyboard_rect(a);
         if (m == "get_mtp") return mtp_state();
         if (m == "set_mtp") return set_mtp(arg(a, 0, false).truthy());
         if (m == "get_barry_desktop") return barry_desktop({"get"});
