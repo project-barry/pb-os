@@ -159,15 +159,14 @@ function AppRow({ app, info, job, update, onClick }) {
         ] }) }), app.id);
 }
 
-function AppPage({ app, store, back }) {
+function AppPage({ app, store }) {
     const { st, ups, jobList, refresh, setUps } = store;
     const job = jobList.find((j) => j.appId === app.id);
     const info = (st && st.installed[app.id]) || {};
     const shortcut = st && st.shortcuts[app.id];
     const update = info.installed && info.managed && ups[app.id];
     const run = (p, done) => p.then(() => { if (done) done(); refresh(); }).catch((e) => toast(app.name, String(e.message || e)));
-    const items = [button("Back", back, "back")];
-    items.push(note(app.summary, "sum"));
+    const items = [note(app.summary, "sum")];
     if (app.note) items.push(note(app.note, "note"));
     if (job) items.push(note(jobText(job), "job"));
     if (active(job)) {
@@ -202,18 +201,28 @@ function StorePage() {
     const store = useStore();
     const [v, setV] = useState(view);
     const go = (next) => { view = next; setV(next); };
+    // The frame's back arrow and B go up one level here: app, list, App Store.
+    useEffect(() => {
+        if (!P.setBack) return undefined;
+        const up = () => {
+            if (view.app) { go({ category: view.category, app: null }); return true; }
+            if (view.category) { go({ category: null, app: null }); return true; }
+            return false;
+        };
+        P.setBack(up);
+        return () => P.setBack(null, up);
+    }, []);
     const { cat, st, ups, jobList } = store;
     if (!cat) return jsx(DFL.PanelSection, { children: note("Loading…") });
     if (cat.error) return jsx(DFL.PanelSection, { children: note("The App Store's list can't be read.") });
     const jobOf = (id) => jobList.find((j) => j.appId === id);
     const app = v.app && cat.apps.find((a) => a.id === v.app);
-    if (app) return jsx(AppPage, { app, store, back: () => go({ category: v.category, app: null }) });
+    if (app) return jsx(AppPage, { app, store });
     const category = CATEGORIES.find((c) => c.key === v.category);
     if (category) {
         const apps = cat.apps.filter((a) => a.category === category.key)
             .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
         return jsx(DFL.PanelSection, { title: category.title, children: [
-            button("Back", () => go({ category: null, app: null }), "back"),
             ...apps.map((a) => jsx(AppRow, { app: a, info: st && st.installed[a.id], job: jobOf(a.id), update: ups[a.id],
                 onClick: () => go({ category: category.key, app: a.id }) }, a.id)),
         ] });

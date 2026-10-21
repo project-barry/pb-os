@@ -155,6 +155,16 @@ let lastLeft = null; // the plugin just closed: its entry takes the focus back
 
 const openWatchers = new Set();
 
+// A page with levels of its own (the App Store) takes the back arrow and B
+// first: its handler returns true when it went back a level itself, false on
+// its top level, where back returns to the list. setBack(null, fn) drops fn
+// only if it is still the one set (a page redrawn sets its own first).
+let backHandler = null;
+function setBack(fn, was) {
+    if (!fn && was && backHandler !== was) return;
+    backHandler = fn || null;
+}
+
 // Shows a plugin's page ("section/id"), or the list (null): the next time
 // the tab is drawn, or now if it is open. (For tests: pbos-qamd's probe
 // drives it through CEF.)
@@ -407,6 +417,7 @@ function makePanel(DFL) {
         useEffect(() => { openWatchers.add(setOpen); return () => openWatchers.delete(setOpen); }, []);
         const show = (key) => {
             if (!key && lastOpen) lastLeft = lastOpen;
+            if (key !== lastOpen) backHandler = null;
             lastOpen = key;
             setOpen(key);
         };
@@ -418,6 +429,7 @@ function makePanel(DFL) {
             const target = mark && mark.closest("[tabindex], button");
             if (target) target.focus();
         }, [open, list]);
+        const back = () => { if (backHandler && backHandler()) return; show(null); };
         const flat = entries(list);
         const key = (e) => e.key;
         const active = flat.find((e) => key(e) === open);
@@ -428,7 +440,7 @@ function makePanel(DFL) {
             };
             return jsxs(DFL.Focusable, {
                 className: "pbos-qam-panel",
-                onCancelButton: () => show(null),
+                onCancelButton: back,
                 onButtonDown: (evt) => {
                     const b = evt && evt.detail && evt.detail.button;
                     if (b === LB) step(-1);
@@ -436,7 +448,7 @@ function makePanel(DFL) {
                 },
                 children: [
                     jsxs(DFL.Focusable, { className: DFL.staticClasses.Title, style: titleStyle, children: [
-                        jsx(DFL.DialogButton, { style: smallButton, onClick: () => show(null),
+                        jsx(DFL.DialogButton, { style: smallButton, onClick: back,
                             children: jsx("svg", { viewBox: "0 0 24 24", width: "16", height: "16", fill: "currentColor", style: { display: "block", marginTop: "-3px" },
                                 children: jsx("path", { d: "M10.6 5 3.6 12l7 7 1.4-1.4L7.4 13H20v-2H7.4L12 6.4z" }) }) }),
                         jsx("div", { style: { flex: 0.9 }, children: active.title }),
@@ -613,6 +625,8 @@ async function start() {
         openFilePicker: (_select, startPath, includeFiles, includeFolders, _filter, extensions, showHidden) =>
             filePicker(DFL, startPath, includeFiles, includeFolders, extensions, showHidden),
         plugin: (p) => addPlugin(name, p),
+        // The open page's own back step (see setBack); null drops it.
+        setBack,
         unplug: (id) => removePlugin(name, id),
         fail: (where, e) => fail(`${name}: ${where}`, e),
     });
