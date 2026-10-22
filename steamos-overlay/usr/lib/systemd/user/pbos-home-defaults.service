@@ -1,0 +1,11 @@
+[Unit]
+Description=PB-OS defaults for the home folder (Steam ROM Manager, ROM folders)
+ConditionUser=!root
+Before=gamescope-session.service steam.service plasma-workspace.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/steamos/pbos-home-defaults
+
+[Install]
+WantedBy=default.target

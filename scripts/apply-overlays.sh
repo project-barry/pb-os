@@ -182,6 +182,17 @@ for u in pbos-proton.service pbos-proton.path; do
   install_file "$OVL/usr/lib/systemd/user/$u" "$R/usr/lib/systemd/user/$u" 0644
   ln -sfn "../$u" "$R/usr/lib/systemd/user/default.target.wants/$u"
 done
+# Home defaults at login, never replacing what exists: Steam ROM Manager's
+# parsers for the App Store's emulators and the ~/Emulation/roms folders.
+rm -rf "$R/usr/share/pb-os/home-defaults"
+mkdir -p "$R/usr/share/pb-os/home-defaults"
+cp -r "$OVL/usr/share/pb-os/home-defaults/." "$R/usr/share/pb-os/home-defaults/"
+chmod -R u=rwX,go=rX "$R/usr/share/pb-os/home-defaults"
+install_file "$OVL/usr/lib/steamos/pbos-home-defaults" "$R/usr/lib/steamos/pbos-home-defaults" 0755
+install_file "$OVL/usr/lib/systemd/user/pbos-home-defaults.service" \
+  "$R/usr/lib/systemd/user/pbos-home-defaults.service" 0644
+ln -sfn ../pbos-home-defaults.service \
+  "$R/usr/lib/systemd/user/default.target.wants/pbos-home-defaults.service"
 install_file "$OVL/usr/lib/steamos/odin-bin/steamvr" \
   "$R/usr/lib/steamos/odin-bin/steamvr" 0755
 backup "$R/usr/bin/steamos-select-branch" "$STOCK/usr/bin/steamos-select-branch"

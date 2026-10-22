@@ -285,6 +285,10 @@ persist_etc "xdg/kscreenlockerrc" "$OVL/etc/xdg/kscreenlockerrc" 0644
 if [[ -f "$OVL/etc/xdg/powerdevilrc" ]]; then
   persist_etc "xdg/powerdevilrc" "$OVL/etc/xdg/powerdevilrc" 0644
 fi
+# Desktop Mode starts clean: Plasma doesn't reopen the apps that were open
+# when the user went back to Game Mode. A system default, so a choice made in
+# System Settings → Session (the user's own ksmserverrc) still wins.
+persist_etc "xdg/ksmserverrc" "$OVL/etc/xdg/ksmserverrc" 0644
 mkdir -p "$HOME_DST/.config" "$R/etc/skel/.config"
 install -m 0644 "$OVL/etc/xdg/kscreenlockerrc" "$HOME_DST/.config/kscreenlockerrc"
 install -m 0644 "$OVL/etc/xdg/kscreenlockerrc" "$R/etc/skel/.config/kscreenlockerrc"

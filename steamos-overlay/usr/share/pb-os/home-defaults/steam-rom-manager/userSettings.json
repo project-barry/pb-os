@@ -1,0 +1,11 @@
+{
+  "version": 11,
+  "environmentVariables": {
+    "steamDirectory": "@HOME@/.local/share/Steam",
+    "userAccounts": [],
+    "romsDirectory": "@HOME@/Emulation/roms",
+    "retroarchPath": "",
+    "raCoresDirectory": "@HOME@/.var/app/org.libretro.RetroArch/config/retroarch/cores",
+    "localImagesDirectory": ""
+  }
+}

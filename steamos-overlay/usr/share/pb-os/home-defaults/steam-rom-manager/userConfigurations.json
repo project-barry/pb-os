@@ -1,0 +1,4381 @@
+[
+  {
+    "parserType": "Glob-regex",
+    "configTitle": "Nintendo Switch - Eden",
+    "executableModifier": "\"${exePath}\"",
+    "romDirectory": "@HOME@/Emulation/roms/switch",
+    "steamDirectory": "${steamdirglobal}",
+    "startInDirectory": "",
+    "titleModifier": "${fuzzyTitle}",
+    "executableArgs": "-f -g \"${filePath}\"",
+    "onlineImageQueries": [
+      "${fuzzyTitle}"
+    ],
+    "imagePool": "${fuzzyTitle}",
+    "imageProviders": [
+      "sgdb"
+    ],
+    "disabled": false,
+    "userAccounts": {
+      "specifiedAccounts": [
+        "Global"
+      ]
+    },
+    "parserInputs": {
+      "glob-regex": "${/^(?!.*\\[(?:UPD|DLC)\\])(.*)$/}@(.nca|.NCA|.nro|.NRO|.nso|.NSO|.nsp|.NSP|.xci|.XCI)"
+    },
+    "titleFromVariable": {
+      "caseInsensitiveVariables": false,
+      "skipFileIfVariableWasNotFound": false,
+      "limitToGroups": []
+    },
+    "fuzzyMatch": {
+      "replaceDiacritics": true,
+      "removeCharacters": true,
+      "removeBrackets": true
+    },
+    "executable": {
+      "path": "@HOME@/Applications/Eden.AppImage",
+      "shortcutPassthrough": false,
+      "appendArgsToExecutable": true
+    },
+    "imageProviderAPIs": {
+      "sgdb": {
+        "nsfw": false,
+        "humor": false,
+        "imageMotionTypes": [
+          "static"
+        ],
+        "styles": [],
+        "stylesHero": [],
+        "stylesLogo": [],
+        "stylesIcon": []
+      },
+      "steamCDN": {}
+    },
+    "controllers": {
+      "ps4": null,
+      "ps5": null,
+      "xbox360": null,
+      "xboxone": null,
+      "switch_joycon_left": null,
+      "switch_joycon_right": null,
+      "switch_pro": null,
+      "neptune": null
+    },
+    "defaultImage": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "localImages": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "steamInputEnabled": "1",
+    "drmProtect": false,
+    "steamCategories": [
+      "Switch"
+    ],
+    "overlayImages": {
+      "tall": "",
+      "long": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "version": 29,
+    "parserId": "pbos0001"
+  },
+  {
+    "parserType": "Glob-regex",
+    "configTitle": "Nintendo Switch - Eden (SD card)",
+    "executableModifier": "\"${exePath}\"",
+    "romDirectory": "/run/media",
+    "steamDirectory": "${steamdirglobal}",
+    "startInDirectory": "",
+    "titleModifier": "${fuzzyTitle}",
+    "executableArgs": "-f -g \"${filePath}\"",
+    "onlineImageQueries": [
+      "${fuzzyTitle}"
+    ],
+    "imagePool": "${fuzzyTitle}",
+    "imageProviders": [
+      "sgdb"
+    ],
+    "disabled": false,
+    "userAccounts": {
+      "specifiedAccounts": [
+        "Global"
+      ]
+    },
+    "parserInputs": {
+      "glob-regex": "*/*/Emulation/roms/switch/${/^(?!.*\\[(?:UPD|DLC)\\])(.*)$/}@(.nca|.NCA|.nro|.NRO|.nso|.NSO|.nsp|.NSP|.xci|.XCI)"
+    },
+    "titleFromVariable": {
+      "caseInsensitiveVariables": false,
+      "skipFileIfVariableWasNotFound": false,
+      "limitToGroups": []
+    },
+    "fuzzyMatch": {
+      "replaceDiacritics": true,
+      "removeCharacters": true,
+      "removeBrackets": true
+    },
+    "executable": {
+      "path": "@HOME@/Applications/Eden.AppImage",
+      "shortcutPassthrough": false,
+      "appendArgsToExecutable": true
+    },
+    "imageProviderAPIs": {
+      "sgdb": {
+        "nsfw": false,
+        "humor": false,
+        "imageMotionTypes": [
+          "static"
+        ],
+        "styles": [],
+        "stylesHero": [],
+        "stylesLogo": [],
+        "stylesIcon": []
+      },
+      "steamCDN": {}
+    },
+    "controllers": {
+      "ps4": null,
+      "ps5": null,
+      "xbox360": null,
+      "xboxone": null,
+      "switch_joycon_left": null,
+      "switch_joycon_right": null,
+      "switch_pro": null,
+      "neptune": null
+    },
+    "defaultImage": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "localImages": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "steamInputEnabled": "1",
+    "drmProtect": false,
+    "steamCategories": [
+      "Switch"
+    ],
+    "overlayImages": {
+      "tall": "",
+      "long": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "version": 29,
+    "parserId": "pbos0002"
+  },
+  {
+    "parserType": "Glob",
+    "configTitle": "Nintendo 3DS - Azahar(Flatpak)",
+    "executableModifier": "\"${exePath}\"",
+    "romDirectory": "@HOME@/Emulation/roms/n3ds",
+    "steamDirectory": "${steamdirglobal}",
+    "startInDirectory": "",
+    "titleModifier": "${fuzzyTitle}",
+    "executableArgs": "run org.azahar_emu.Azahar \"${filePath}\"",
+    "onlineImageQueries": [
+      "${fuzzyTitle}"
+    ],
+    "imagePool": "${fuzzyTitle}",
+    "imageProviders": [
+      "sgdb"
+    ],
+    "disabled": false,
+    "userAccounts": {
+      "specifiedAccounts": [
+        "Global"
+      ]
+    },
+    "parserInputs": {
+      "glob": "${title}@(.3ds|.3DS|.3dsx|.3DSX|.app|.APP|.axf|.AXF|.cci|.CCI|.cxi|.CXI|.elf|.ELF)"
+    },
+    "titleFromVariable": {
+      "caseInsensitiveVariables": false,
+      "skipFileIfVariableWasNotFound": false,
+      "limitToGroups": []
+    },
+    "fuzzyMatch": {
+      "replaceDiacritics": true,
+      "removeCharacters": true,
+      "removeBrackets": true
+    },
+    "executable": {
+      "path": "/usr/bin/flatpak",
+      "shortcutPassthrough": false,
+      "appendArgsToExecutable": true
+    },
+    "imageProviderAPIs": {
+      "sgdb": {
+        "nsfw": false,
+        "humor": false,
+        "imageMotionTypes": [
+          "static"
+        ],
+        "styles": [],
+        "stylesHero": [],
+        "stylesLogo": [],
+        "stylesIcon": []
+      },
+      "steamCDN": {}
+    },
+    "controllers": {
+      "ps4": null,
+      "ps5": null,
+      "xbox360": null,
+      "xboxone": null,
+      "switch_joycon_left": null,
+      "switch_joycon_right": null,
+      "switch_pro": null,
+      "neptune": null
+    },
+    "defaultImage": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "localImages": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "steamInputEnabled": "1",
+    "drmProtect": false,
+    "steamCategories": [
+      "3DS"
+    ],
+    "overlayImages": {
+      "tall": "",
+      "long": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "version": 29,
+    "parserId": "pbos0003"
+  },
+  {
+    "parserType": "Glob",
+    "configTitle": "Nintendo 3DS - Azahar(Flatpak) (SD card)",
+    "executableModifier": "\"${exePath}\"",
+    "romDirectory": "/run/media",
+    "steamDirectory": "${steamdirglobal}",
+    "startInDirectory": "",
+    "titleModifier": "${fuzzyTitle}",
+    "executableArgs": "run org.azahar_emu.Azahar \"${filePath}\"",
+    "onlineImageQueries": [
+      "${fuzzyTitle}"
+    ],
+    "imagePool": "${fuzzyTitle}",
+    "imageProviders": [
+      "sgdb"
+    ],
+    "disabled": false,
+    "userAccounts": {
+      "specifiedAccounts": [
+        "Global"
+      ]
+    },
+    "parserInputs": {
+      "glob": "*/*/Emulation/roms/n3ds/${title}@(.3ds|.3DS|.3dsx|.3DSX|.app|.APP|.axf|.AXF|.cci|.CCI|.cxi|.CXI|.elf|.ELF)"
+    },
+    "titleFromVariable": {
+      "caseInsensitiveVariables": false,
+      "skipFileIfVariableWasNotFound": false,
+      "limitToGroups": []
+    },
+    "fuzzyMatch": {
+      "replaceDiacritics": true,
+      "removeCharacters": true,
+      "removeBrackets": true
+    },
+    "executable": {
+      "path": "/usr/bin/flatpak",
+      "shortcutPassthrough": false,
+      "appendArgsToExecutable": true
+    },
+    "imageProviderAPIs": {
+      "sgdb": {
+        "nsfw": false,
+        "humor": false,
+        "imageMotionTypes": [
+          "static"
+        ],
+        "styles": [],
+        "stylesHero": [],
+        "stylesLogo": [],
+        "stylesIcon": []
+      },
+      "steamCDN": {}
+    },
+    "controllers": {
+      "ps4": null,
+      "ps5": null,
+      "xbox360": null,
+      "xboxone": null,
+      "switch_joycon_left": null,
+      "switch_joycon_right": null,
+      "switch_pro": null,
+      "neptune": null
+    },
+    "defaultImage": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "localImages": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "steamInputEnabled": "1",
+    "drmProtect": false,
+    "steamCategories": [
+      "3DS"
+    ],
+    "overlayImages": {
+      "tall": "",
+      "long": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "version": 29,
+    "parserId": "pbos0004"
+  },
+  {
+    "parserType": "Glob",
+    "configTitle": "Nintendo DS - MelonDS(Flatpak)",
+    "executableModifier": "\"${exePath}\"",
+    "romDirectory": "@HOME@/Emulation/roms/nds",
+    "steamDirectory": "${steamdirglobal}",
+    "startInDirectory": "",
+    "titleModifier": "${fuzzyTitle}",
+    "executableArgs": "run net.kuribo64.melonDS \"${filePath}\"",
+    "onlineImageQueries": [
+      "${fuzzyTitle}"
+    ],
+    "imagePool": "${fuzzyTitle}",
+    "imageProviders": [
+      "sgdb"
+    ],
+    "disabled": false,
+    "userAccounts": {
+      "specifiedAccounts": [
+        "Global"
+      ]
+    },
+    "parserInputs": {
+      "glob": "${title}@(.7z|.7Z|.dsi|.DSI|.ids|.IDS|.nds|.NDS|.rar|.RAR|.srl|.SRL|.zip|.ZIP)"
+    },
+    "titleFromVariable": {
+      "caseInsensitiveVariables": false,
+      "skipFileIfVariableWasNotFound": false,
+      "limitToGroups": []
+    },
+    "fuzzyMatch": {
+      "replaceDiacritics": true,
+      "removeCharacters": true,
+      "removeBrackets": true
+    },
+    "executable": {
+      "path": "/usr/bin/flatpak",
+      "shortcutPassthrough": false,
+      "appendArgsToExecutable": true
+    },
+    "imageProviderAPIs": {
+      "sgdb": {
+        "nsfw": false,
+        "humor": false,
+        "imageMotionTypes": [
+          "static"
+        ],
+        "styles": [],
+        "stylesHero": [],
+        "stylesLogo": [],
+        "stylesIcon": []
+      },
+      "steamCDN": {}
+    },
+    "controllers": {
+      "ps4": null,
+      "ps5": null,
+      "xbox360": null,
+      "xboxone": null,
+      "switch_joycon_left": null,
+      "switch_joycon_right": null,
+      "switch_pro": null,
+      "neptune": null
+    },
+    "defaultImage": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "localImages": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "steamInputEnabled": "1",
+    "drmProtect": false,
+    "steamCategories": [
+      "DS"
+    ],
+    "overlayImages": {
+      "tall": "",
+      "long": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "version": 29,
+    "parserId": "pbos0005"
+  },
+  {
+    "parserType": "Glob",
+    "configTitle": "Nintendo DS - MelonDS(Flatpak) (SD card)",
+    "executableModifier": "\"${exePath}\"",
+    "romDirectory": "/run/media",
+    "steamDirectory": "${steamdirglobal}",
+    "startInDirectory": "",
+    "titleModifier": "${fuzzyTitle}",
+    "executableArgs": "run net.kuribo64.melonDS \"${filePath}\"",
+    "onlineImageQueries": [
+      "${fuzzyTitle}"
+    ],
+    "imagePool": "${fuzzyTitle}",
+    "imageProviders": [
+      "sgdb"
+    ],
+    "disabled": false,
+    "userAccounts": {
+      "specifiedAccounts": [
+        "Global"
+      ]
+    },
+    "parserInputs": {
+      "glob": "*/*/Emulation/roms/nds/${title}@(.7z|.7Z|.dsi|.DSI|.ids|.IDS|.nds|.NDS|.rar|.RAR|.srl|.SRL|.zip|.ZIP)"
+    },
+    "titleFromVariable": {
+      "caseInsensitiveVariables": false,
+      "skipFileIfVariableWasNotFound": false,
+      "limitToGroups": []
+    },
+    "fuzzyMatch": {
+      "replaceDiacritics": true,
+      "removeCharacters": true,
+      "removeBrackets": true
+    },
+    "executable": {
+      "path": "/usr/bin/flatpak",
+      "shortcutPassthrough": false,
+      "appendArgsToExecutable": true
+    },
+    "imageProviderAPIs": {
+      "sgdb": {
+        "nsfw": false,
+        "humor": false,
+        "imageMotionTypes": [
+          "static"
+        ],
+        "styles": [],
+        "stylesHero": [],
+        "stylesLogo": [],
+        "stylesIcon": []
+      },
+      "steamCDN": {}
+    },
+    "controllers": {
+      "ps4": null,
+      "ps5": null,
+      "xbox360": null,
+      "xboxone": null,
+      "switch_joycon_left": null,
+      "switch_joycon_right": null,
+      "switch_pro": null,
+      "neptune": null
+    },
+    "defaultImage": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "localImages": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "steamInputEnabled": "1",
+    "drmProtect": false,
+    "steamCategories": [
+      "DS"
+    ],
+    "overlayImages": {
+      "tall": "",
+      "long": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "version": 29,
+    "parserId": "pbos0006"
+  },
+  {
+    "parserType": "Glob",
+    "configTitle": "Nintendo GameCube - Dolphin(Flatpak)",
+    "executableModifier": "\"${exePath}\"",
+    "romDirectory": "@HOME@/Emulation/roms/gc",
+    "steamDirectory": "${steamdirglobal}",
+    "startInDirectory": "",
+    "titleModifier": "${fuzzyTitle}",
+    "executableArgs": "run org.DolphinEmu.dolphin-emu -b -e \"${filePath}\"",
+    "onlineImageQueries": [
+      "${fuzzyTitle}"
+    ],
+    "imagePool": "${fuzzyTitle}",
+    "imageProviders": [
+      "sgdb"
+    ],
+    "disabled": false,
+    "userAccounts": {
+      "specifiedAccounts": [
+        "Global"
+      ]
+    },
+    "parserInputs": {
+      "glob": "${title}@(.ciso|.CISO|.dol|.DOL|.elf|.ELF|.gcm|.GCM|.gcz|.GCZ|.iso|.ISO|.json|.JSON|.nkit.iso|.NKIT.ISO|.rvz|.RVZ|.wad|.WAD|.wia|.WIA)"
+    },
+    "titleFromVariable": {
+      "caseInsensitiveVariables": false,
+      "skipFileIfVariableWasNotFound": false,
+      "limitToGroups": []
+    },
+    "fuzzyMatch": {
+      "replaceDiacritics": true,
+      "removeCharacters": true,
+      "removeBrackets": true
+    },
+    "executable": {
+      "path": "/usr/bin/flatpak",
+      "shortcutPassthrough": false,
+      "appendArgsToExecutable": true
+    },
+    "imageProviderAPIs": {
+      "sgdb": {
+        "nsfw": false,
+        "humor": false,
+        "imageMotionTypes": [
+          "static"
+        ],
+        "styles": [],
+        "stylesHero": [],
+        "stylesLogo": [],
+        "stylesIcon": []
+      },
+      "steamCDN": {}
+    },
+    "controllers": {
+      "ps4": null,
+      "ps5": null,
+      "xbox360": null,
+      "xboxone": null,
+      "switch_joycon_left": null,
+      "switch_joycon_right": null,
+      "switch_pro": null,
+      "neptune": null
+    },
+    "defaultImage": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "localImages": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "steamInputEnabled": "1",
+    "drmProtect": false,
+    "steamCategories": [
+      "GameCube"
+    ],
+    "overlayImages": {
+      "tall": "",
+      "long": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "version": 29,
+    "parserId": "pbos0007"
+  },
+  {
+    "parserType": "Glob",
+    "configTitle": "Nintendo GameCube - Dolphin(Flatpak) (SD card)",
+    "executableModifier": "\"${exePath}\"",
+    "romDirectory": "/run/media",
+    "steamDirectory": "${steamdirglobal}",
+    "startInDirectory": "",
+    "titleModifier": "${fuzzyTitle}",
+    "executableArgs": "run org.DolphinEmu.dolphin-emu -b -e \"${filePath}\"",
+    "onlineImageQueries": [
+      "${fuzzyTitle}"
+    ],
+    "imagePool": "${fuzzyTitle}",
+    "imageProviders": [
+      "sgdb"
+    ],
+    "disabled": false,
+    "userAccounts": {
+      "specifiedAccounts": [
+        "Global"
+      ]
+    },
+    "parserInputs": {
+      "glob": "*/*/Emulation/roms/gc/${title}@(.ciso|.CISO|.dol|.DOL|.elf|.ELF|.gcm|.GCM|.gcz|.GCZ|.iso|.ISO|.json|.JSON|.nkit.iso|.NKIT.ISO|.rvz|.RVZ|.wad|.WAD|.wia|.WIA)"
+    },
+    "titleFromVariable": {
+      "caseInsensitiveVariables": false,
+      "skipFileIfVariableWasNotFound": false,
+      "limitToGroups": []
+    },
+    "fuzzyMatch": {
+      "replaceDiacritics": true,
+      "removeCharacters": true,
+      "removeBrackets": true
+    },
+    "executable": {
+      "path": "/usr/bin/flatpak",
+      "shortcutPassthrough": false,
+      "appendArgsToExecutable": true
+    },
+    "imageProviderAPIs": {
+      "sgdb": {
+        "nsfw": false,
+        "humor": false,
+        "imageMotionTypes": [
+          "static"
+        ],
+        "styles": [],
+        "stylesHero": [],
+        "stylesLogo": [],
+        "stylesIcon": []
+      },
+      "steamCDN": {}
+    },
+    "controllers": {
+      "ps4": null,
+      "ps5": null,
+      "xbox360": null,
+      "xboxone": null,
+      "switch_joycon_left": null,
+      "switch_joycon_right": null,
+      "switch_pro": null,
+      "neptune": null
+    },
+    "defaultImage": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "localImages": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "steamInputEnabled": "1",
+    "drmProtect": false,
+    "steamCategories": [
+      "GameCube"
+    ],
+    "overlayImages": {
+      "tall": "",
+      "long": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "version": 29,
+    "parserId": "pbos0008"
+  },
+  {
+    "parserType": "Glob",
+    "configTitle": "Nintendo Wii - Dolphin(Flatpak)",
+    "executableModifier": "\"${exePath}\"",
+    "romDirectory": "@HOME@/Emulation/roms/wii",
+    "steamDirectory": "${steamdirglobal}",
+    "startInDirectory": "",
+    "titleModifier": "${fuzzyTitle}",
+    "executableArgs": "run org.DolphinEmu.dolphin-emu -b -e \"${filePath}\"",
+    "onlineImageQueries": [
+      "${fuzzyTitle}"
+    ],
+    "imagePool": "${fuzzyTitle}",
+    "imageProviders": [
+      "sgdb"
+    ],
+    "disabled": false,
+    "userAccounts": {
+      "specifiedAccounts": [
+        "Global"
+      ]
+    },
+    "parserInputs": {
+      "glob": "${title}@(.ciso|.CISO|.dol|.DOL|.elf|.ELF|.gcz|.GCZ|.iso|.ISO|.json|.JSON|.rvz|.RVZ|.wad|.WAD|.wbfs|.WBFS|.wia|.WIA)"
+    },
+    "titleFromVariable": {
+      "caseInsensitiveVariables": false,
+      "skipFileIfVariableWasNotFound": false,
+      "limitToGroups": []
+    },
+    "fuzzyMatch": {
+      "replaceDiacritics": true,
+      "removeCharacters": true,
+      "removeBrackets": true
+    },
+    "executable": {
+      "path": "/usr/bin/flatpak",
+      "shortcutPassthrough": false,
+      "appendArgsToExecutable": true
+    },
+    "imageProviderAPIs": {
+      "sgdb": {
+        "nsfw": false,
+        "humor": false,
+        "imageMotionTypes": [
+          "static"
+        ],
+        "styles": [],
+        "stylesHero": [],
+        "stylesLogo": [],
+        "stylesIcon": []
+      },
+      "steamCDN": {}
+    },
+    "controllers": {
+      "ps4": null,
+      "ps5": null,
+      "xbox360": null,
+      "xboxone": null,
+      "switch_joycon_left": null,
+      "switch_joycon_right": null,
+      "switch_pro": null,
+      "neptune": null
+    },
+    "defaultImage": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "localImages": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "steamInputEnabled": "1",
+    "drmProtect": false,
+    "steamCategories": [
+      "Wii"
+    ],
+    "overlayImages": {
+      "tall": "",
+      "long": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "version": 29,
+    "parserId": "pbos0009"
+  },
+  {
+    "parserType": "Glob",
+    "configTitle": "Nintendo Wii - Dolphin(Flatpak) (SD card)",
+    "executableModifier": "\"${exePath}\"",
+    "romDirectory": "/run/media",
+    "steamDirectory": "${steamdirglobal}",
+    "startInDirectory": "",
+    "titleModifier": "${fuzzyTitle}",
+    "executableArgs": "run org.DolphinEmu.dolphin-emu -b -e \"${filePath}\"",
+    "onlineImageQueries": [
+      "${fuzzyTitle}"
+    ],
+    "imagePool": "${fuzzyTitle}",
+    "imageProviders": [
+      "sgdb"
+    ],
+    "disabled": false,
+    "userAccounts": {
+      "specifiedAccounts": [
+        "Global"
+      ]
+    },
+    "parserInputs": {
+      "glob": "*/*/Emulation/roms/wii/${title}@(.ciso|.CISO|.dol|.DOL|.elf|.ELF|.gcz|.GCZ|.iso|.ISO|.json|.JSON|.rvz|.RVZ|.wad|.WAD|.wbfs|.WBFS|.wia|.WIA)"
+    },
+    "titleFromVariable": {
+      "caseInsensitiveVariables": false,
+      "skipFileIfVariableWasNotFound": false,
+      "limitToGroups": []
+    },
+    "fuzzyMatch": {
+      "replaceDiacritics": true,
+      "removeCharacters": true,
+      "removeBrackets": true
+    },
+    "executable": {
+      "path": "/usr/bin/flatpak",
+      "shortcutPassthrough": false,
+      "appendArgsToExecutable": true
+    },
+    "imageProviderAPIs": {
+      "sgdb": {
+        "nsfw": false,
+        "humor": false,
+        "imageMotionTypes": [
+          "static"
+        ],
+        "styles": [],
+        "stylesHero": [],
+        "stylesLogo": [],
+        "stylesIcon": []
+      },
+      "steamCDN": {}
+    },
+    "controllers": {
+      "ps4": null,
+      "ps5": null,
+      "xbox360": null,
+      "xboxone": null,
+      "switch_joycon_left": null,
+      "switch_joycon_right": null,
+      "switch_pro": null,
+      "neptune": null
+    },
+    "defaultImage": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "localImages": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "steamInputEnabled": "1",
+    "drmProtect": false,
+    "steamCategories": [
+      "Wii"
+    ],
+    "overlayImages": {
+      "tall": "",
+      "long": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "version": 29,
+    "parserId": "pbos0010"
+  },
+  {
+    "parserType": "Glob",
+    "configTitle": "Nintendo Wii U - Cemu",
+    "executableModifier": "\"${exePath}\"",
+    "romDirectory": "@HOME@/Emulation/roms/wiiu",
+    "steamDirectory": "${steamdirglobal}",
+    "startInDirectory": "",
+    "titleModifier": "${fuzzyTitle}",
+    "executableArgs": "-f -g \"${filePath}\"",
+    "onlineImageQueries": [
+      "${fuzzyTitle}"
+    ],
+    "imagePool": "${fuzzyTitle}",
+    "imageProviders": [
+      "sgdb"
+    ],
+    "disabled": false,
+    "userAccounts": {
+      "specifiedAccounts": [
+        "Global"
+      ]
+    },
+    "parserInputs": {
+      "glob": "${title}@(.iso|.ISO|.wad|.WAD|.wua|.WUA|.wud|.WUD|.wux|.WUX)"
+    },
+    "titleFromVariable": {
+      "caseInsensitiveVariables": false,
+      "skipFileIfVariableWasNotFound": false,
+      "limitToGroups": []
+    },
+    "fuzzyMatch": {
+      "replaceDiacritics": true,
+      "removeCharacters": true,
+      "removeBrackets": true
+    },
+    "executable": {
+      "path": "@HOME@/Applications/Cemu.AppImage",
+      "shortcutPassthrough": false,
+      "appendArgsToExecutable": true
+    },
+    "imageProviderAPIs": {
+      "sgdb": {
+        "nsfw": false,
+        "humor": false,
+        "imageMotionTypes": [
+          "static"
+        ],
+        "styles": [],
+        "stylesHero": [],
+        "stylesLogo": [],
+        "stylesIcon": []
+      },
+      "steamCDN": {}
+    },
+    "controllers": {
+      "ps4": null,
+      "ps5": null,
+      "xbox360": null,
+      "xboxone": null,
+      "switch_joycon_left": null,
+      "switch_joycon_right": null,
+      "switch_pro": null,
+      "neptune": null
+    },
+    "defaultImage": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "localImages": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "steamInputEnabled": "1",
+    "drmProtect": false,
+    "steamCategories": [
+      "Wii U"
+    ],
+    "overlayImages": {
+      "tall": "",
+      "long": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "version": 29,
+    "parserId": "pbos0011"
+  },
+  {
+    "parserType": "Glob",
+    "configTitle": "Nintendo Wii U - Cemu (SD card)",
+    "executableModifier": "\"${exePath}\"",
+    "romDirectory": "/run/media",
+    "steamDirectory": "${steamdirglobal}",
+    "startInDirectory": "",
+    "titleModifier": "${fuzzyTitle}",
+    "executableArgs": "-f -g \"${filePath}\"",
+    "onlineImageQueries": [
+      "${fuzzyTitle}"
+    ],
+    "imagePool": "${fuzzyTitle}",
+    "imageProviders": [
+      "sgdb"
+    ],
+    "disabled": false,
+    "userAccounts": {
+      "specifiedAccounts": [
+        "Global"
+      ]
+    },
+    "parserInputs": {
+      "glob": "*/*/Emulation/roms/wiiu/${title}@(.iso|.ISO|.wad|.WAD|.wua|.WUA|.wud|.WUD|.wux|.WUX)"
+    },
+    "titleFromVariable": {
+      "caseInsensitiveVariables": false,
+      "skipFileIfVariableWasNotFound": false,
+      "limitToGroups": []
+    },
+    "fuzzyMatch": {
+      "replaceDiacritics": true,
+      "removeCharacters": true,
+      "removeBrackets": true
+    },
+    "executable": {
+      "path": "@HOME@/Applications/Cemu.AppImage",
+      "shortcutPassthrough": false,
+      "appendArgsToExecutable": true
+    },
+    "imageProviderAPIs": {
+      "sgdb": {
+        "nsfw": false,
+        "humor": false,
+        "imageMotionTypes": [
+          "static"
+        ],
+        "styles": [],
+        "stylesHero": [],
+        "stylesLogo": [],
+        "stylesIcon": []
+      },
+      "steamCDN": {}
+    },
+    "controllers": {
+      "ps4": null,
+      "ps5": null,
+      "xbox360": null,
+      "xboxone": null,
+      "switch_joycon_left": null,
+      "switch_joycon_right": null,
+      "switch_pro": null,
+      "neptune": null
+    },
+    "defaultImage": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "localImages": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "steamInputEnabled": "1",
+    "drmProtect": false,
+    "steamCategories": [
+      "Wii U"
+    ],
+    "overlayImages": {
+      "tall": "",
+      "long": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "version": 29,
+    "parserId": "pbos0012"
+  },
+  {
+    "parserType": "Glob",
+    "configTitle": "Sony PlayStation - DuckStation",
+    "executableModifier": "\"${exePath}\"",
+    "romDirectory": "@HOME@/Emulation/roms/psx",
+    "steamDirectory": "${steamdirglobal}",
+    "startInDirectory": "",
+    "titleModifier": "${fuzzyTitle}",
+    "executableArgs": "-batch -fullscreen \"${filePath}\"",
+    "onlineImageQueries": [
+      "${fuzzyTitle}"
+    ],
+    "imagePool": "${fuzzyTitle}",
+    "imageProviders": [
+      "sgdb"
+    ],
+    "disabled": false,
+    "userAccounts": {
+      "specifiedAccounts": [
+        "Global"
+      ]
+    },
+    "parserInputs": {
+      "glob": "${title}@(.cue|.CUE|.chd|.CHD|.ecm|.ECM|.iso|.ISO|.m3u|.M3U|.mds|.MDS|.pbp|.PBP)"
+    },
+    "titleFromVariable": {
+      "caseInsensitiveVariables": false,
+      "skipFileIfVariableWasNotFound": false,
+      "limitToGroups": []
+    },
+    "fuzzyMatch": {
+      "replaceDiacritics": true,
+      "removeCharacters": true,
+      "removeBrackets": true
+    },
+    "executable": {
+      "path": "@HOME@/Applications/DuckStation.AppImage",
+      "shortcutPassthrough": false,
+      "appendArgsToExecutable": true
+    },
+    "imageProviderAPIs": {
+      "sgdb": {
+        "nsfw": false,
+        "humor": false,
+        "imageMotionTypes": [
+          "static"
+        ],
+        "styles": [],
+        "stylesHero": [],
+        "stylesLogo": [],
+        "stylesIcon": []
+      },
+      "steamCDN": {}
+    },
+    "controllers": {
+      "ps4": null,
+      "ps5": null,
+      "xbox360": null,
+      "xboxone": null,
+      "switch_joycon_left": null,
+      "switch_joycon_right": null,
+      "switch_pro": null,
+      "neptune": null
+    },
+    "defaultImage": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "localImages": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "steamInputEnabled": "1",
+    "drmProtect": false,
+    "steamCategories": [
+      "PS1"
+    ],
+    "overlayImages": {
+      "tall": "",
+      "long": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "version": 29,
+    "parserId": "pbos0013"
+  },
+  {
+    "parserType": "Glob",
+    "configTitle": "Sony PlayStation - DuckStation (SD card)",
+    "executableModifier": "\"${exePath}\"",
+    "romDirectory": "/run/media",
+    "steamDirectory": "${steamdirglobal}",
+    "startInDirectory": "",
+    "titleModifier": "${fuzzyTitle}",
+    "executableArgs": "-batch -fullscreen \"${filePath}\"",
+    "onlineImageQueries": [
+      "${fuzzyTitle}"
+    ],
+    "imagePool": "${fuzzyTitle}",
+    "imageProviders": [
+      "sgdb"
+    ],
+    "disabled": false,
+    "userAccounts": {
+      "specifiedAccounts": [
+        "Global"
+      ]
+    },
+    "parserInputs": {
+      "glob": "*/*/Emulation/roms/psx/${title}@(.cue|.CUE|.chd|.CHD|.ecm|.ECM|.iso|.ISO|.m3u|.M3U|.mds|.MDS|.pbp|.PBP)"
+    },
+    "titleFromVariable": {
+      "caseInsensitiveVariables": false,
+      "skipFileIfVariableWasNotFound": false,
+      "limitToGroups": []
+    },
+    "fuzzyMatch": {
+      "replaceDiacritics": true,
+      "removeCharacters": true,
+      "removeBrackets": true
+    },
+    "executable": {
+      "path": "@HOME@/Applications/DuckStation.AppImage",
+      "shortcutPassthrough": false,
+      "appendArgsToExecutable": true
+    },
+    "imageProviderAPIs": {
+      "sgdb": {
+        "nsfw": false,
+        "humor": false,
+        "imageMotionTypes": [
+          "static"
+        ],
+        "styles": [],
+        "stylesHero": [],
+        "stylesLogo": [],
+        "stylesIcon": []
+      },
+      "steamCDN": {}
+    },
+    "controllers": {
+      "ps4": null,
+      "ps5": null,
+      "xbox360": null,
+      "xboxone": null,
+      "switch_joycon_left": null,
+      "switch_joycon_right": null,
+      "switch_pro": null,
+      "neptune": null
+    },
+    "defaultImage": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "localImages": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "steamInputEnabled": "1",
+    "drmProtect": false,
+    "steamCategories": [
+      "PS1"
+    ],
+    "overlayImages": {
+      "tall": "",
+      "long": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "version": 29,
+    "parserId": "pbos0014"
+  },
+  {
+    "parserType": "Glob",
+    "configTitle": "Sony PlayStation 2 - ARMSX2",
+    "executableModifier": "\"${exePath}\"",
+    "romDirectory": "@HOME@/Emulation/roms/ps2",
+    "steamDirectory": "${steamdirglobal}",
+    "startInDirectory": "",
+    "titleModifier": "${fuzzyTitle}",
+    "executableArgs": "\"${filePath}\" -batch -fullscreen -nogui",
+    "onlineImageQueries": [
+      "${fuzzyTitle}"
+    ],
+    "imagePool": "${fuzzyTitle}",
+    "imageProviders": [
+      "sgdb"
+    ],
+    "disabled": false,
+    "userAccounts": {
+      "specifiedAccounts": [
+        "Global"
+      ]
+    },
+    "parserInputs": {
+      "glob": "${title}@(.bin|.BIN|.chd|.CHD|.cso|.CSO|.dump|.DUMP|.gz|.GZ|.img|.IMG|.iso|.ISO|.mdf|.MDF|.nrg|.NRG)"
+    },
+    "titleFromVariable": {
+      "caseInsensitiveVariables": false,
+      "skipFileIfVariableWasNotFound": false,
+      "limitToGroups": []
+    },
+    "fuzzyMatch": {
+      "replaceDiacritics": true,
+      "removeCharacters": true,
+      "removeBrackets": true
+    },
+    "executable": {
+      "path": "@HOME@/Applications/ARMSX2.AppImage",
+      "shortcutPassthrough": false,
+      "appendArgsToExecutable": true
+    },
+    "imageProviderAPIs": {
+      "sgdb": {
+        "nsfw": false,
+        "humor": false,
+        "imageMotionTypes": [
+          "static"
+        ],
+        "styles": [],
+        "stylesHero": [],
+        "stylesLogo": [],
+        "stylesIcon": []
+      },
+      "steamCDN": {}
+    },
+    "controllers": {
+      "ps4": null,
+      "ps5": null,
+      "xbox360": null,
+      "xboxone": null,
+      "switch_joycon_left": null,
+      "switch_joycon_right": null,
+      "switch_pro": null,
+      "neptune": null
+    },
+    "defaultImage": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "localImages": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "steamInputEnabled": "1",
+    "drmProtect": false,
+    "steamCategories": [
+      "PS2"
+    ],
+    "overlayImages": {
+      "tall": "",
+      "long": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "version": 29,
+    "parserId": "pbos0015"
+  },
+  {
+    "parserType": "Glob",
+    "configTitle": "Sony PlayStation 2 - ARMSX2 (SD card)",
+    "executableModifier": "\"${exePath}\"",
+    "romDirectory": "/run/media",
+    "steamDirectory": "${steamdirglobal}",
+    "startInDirectory": "",
+    "titleModifier": "${fuzzyTitle}",
+    "executableArgs": "\"${filePath}\" -batch -fullscreen -nogui",
+    "onlineImageQueries": [
+      "${fuzzyTitle}"
+    ],
+    "imagePool": "${fuzzyTitle}",
+    "imageProviders": [
+      "sgdb"
+    ],
+    "disabled": false,
+    "userAccounts": {
+      "specifiedAccounts": [
+        "Global"
+      ]
+    },
+    "parserInputs": {
+      "glob": "*/*/Emulation/roms/ps2/${title}@(.bin|.BIN|.chd|.CHD|.cso|.CSO|.dump|.DUMP|.gz|.GZ|.img|.IMG|.iso|.ISO|.mdf|.MDF|.nrg|.NRG)"
+    },
+    "titleFromVariable": {
+      "caseInsensitiveVariables": false,
+      "skipFileIfVariableWasNotFound": false,
+      "limitToGroups": []
+    },
+    "fuzzyMatch": {
+      "replaceDiacritics": true,
+      "removeCharacters": true,
+      "removeBrackets": true
+    },
+    "executable": {
+      "path": "@HOME@/Applications/ARMSX2.AppImage",
+      "shortcutPassthrough": false,
+      "appendArgsToExecutable": true
+    },
+    "imageProviderAPIs": {
+      "sgdb": {
+        "nsfw": false,
+        "humor": false,
+        "imageMotionTypes": [
+          "static"
+        ],
+        "styles": [],
+        "stylesHero": [],
+        "stylesLogo": [],
+        "stylesIcon": []
+      },
+      "steamCDN": {}
+    },
+    "controllers": {
+      "ps4": null,
+      "ps5": null,
+      "xbox360": null,
+      "xboxone": null,
+      "switch_joycon_left": null,
+      "switch_joycon_right": null,
+      "switch_pro": null,
+      "neptune": null
+    },
+    "defaultImage": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "localImages": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "steamInputEnabled": "1",
+    "drmProtect": false,
+    "steamCategories": [
+      "PS2"
+    ],
+    "overlayImages": {
+      "tall": "",
+      "long": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "version": 29,
+    "parserId": "pbos0016"
+  },
+  {
+    "parserType": "Glob",
+    "configTitle": "Sony PlayStation 3 - RPCS3(Flatpak) (ISO)",
+    "executableModifier": "\"${exePath}\"",
+    "romDirectory": "@HOME@/Emulation/roms/ps3",
+    "steamDirectory": "${steamdirglobal}",
+    "startInDirectory": "",
+    "titleModifier": "${fuzzyTitle}",
+    "executableArgs": "run net.rpcs3.RPCS3 --no-gui \"${filePath}\"",
+    "onlineImageQueries": [
+      "${fuzzyTitle}"
+    ],
+    "imagePool": "${fuzzyTitle}",
+    "imageProviders": [
+      "sgdb"
+    ],
+    "disabled": false,
+    "userAccounts": {
+      "specifiedAccounts": [
+        "Global"
+      ]
+    },
+    "parserInputs": {
+      "glob": "${title}@(.iso|.ISO)"
+    },
+    "titleFromVariable": {
+      "caseInsensitiveVariables": false,
+      "skipFileIfVariableWasNotFound": false,
+      "limitToGroups": [
+        "PS3"
+      ]
+    },
+    "fuzzyMatch": {
+      "replaceDiacritics": true,
+      "removeCharacters": true,
+      "removeBrackets": true
+    },
+    "executable": {
+      "path": "/usr/bin/flatpak",
+      "shortcutPassthrough": false,
+      "appendArgsToExecutable": true
+    },
+    "imageProviderAPIs": {
+      "sgdb": {
+        "nsfw": false,
+        "humor": false,
+        "imageMotionTypes": [
+          "static"
+        ],
+        "styles": [],
+        "stylesHero": [],
+        "stylesLogo": [],
+        "stylesIcon": []
+      },
+      "steamCDN": {}
+    },
+    "controllers": {
+      "ps4": null,
+      "ps5": null,
+      "xbox360": null,
+      "xboxone": null,
+      "switch_joycon_left": null,
+      "switch_joycon_right": null,
+      "switch_pro": null,
+      "neptune": null
+    },
+    "defaultImage": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "localImages": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "steamInputEnabled": "1",
+    "drmProtect": false,
+    "steamCategories": [
+      "PS3"
+    ],
+    "overlayImages": {
+      "tall": "",
+      "long": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "version": 29,
+    "parserId": "pbos0017"
+  },
+  {
+    "parserType": "Glob",
+    "configTitle": "Sony PlayStation 3 - RPCS3(Flatpak) (ISO) (SD card)",
+    "executableModifier": "\"${exePath}\"",
+    "romDirectory": "/run/media",
+    "steamDirectory": "${steamdirglobal}",
+    "startInDirectory": "",
+    "titleModifier": "${fuzzyTitle}",
+    "executableArgs": "run net.rpcs3.RPCS3 --no-gui \"${filePath}\"",
+    "onlineImageQueries": [
+      "${fuzzyTitle}"
+    ],
+    "imagePool": "${fuzzyTitle}",
+    "imageProviders": [
+      "sgdb"
+    ],
+    "disabled": false,
+    "userAccounts": {
+      "specifiedAccounts": [
+        "Global"
+      ]
+    },
+    "parserInputs": {
+      "glob": "*/*/Emulation/roms/ps3/${title}@(.iso|.ISO)"
+    },
+    "titleFromVariable": {
+      "caseInsensitiveVariables": false,
+      "skipFileIfVariableWasNotFound": false,
+      "limitToGroups": [
+        "PS3"
+      ]
+    },
+    "fuzzyMatch": {
+      "replaceDiacritics": true,
+      "removeCharacters": true,
+      "removeBrackets": true
+    },
+    "executable": {
+      "path": "/usr/bin/flatpak",
+      "shortcutPassthrough": false,
+      "appendArgsToExecutable": true
+    },
+    "imageProviderAPIs": {
+      "sgdb": {
+        "nsfw": false,
+        "humor": false,
+        "imageMotionTypes": [
+          "static"
+        ],
+        "styles": [],
+        "stylesHero": [],
+        "stylesLogo": [],
+        "stylesIcon": []
+      },
+      "steamCDN": {}
+    },
+    "controllers": {
+      "ps4": null,
+      "ps5": null,
+      "xbox360": null,
+      "xboxone": null,
+      "switch_joycon_left": null,
+      "switch_joycon_right": null,
+      "switch_pro": null,
+      "neptune": null
+    },
+    "defaultImage": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "localImages": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "steamInputEnabled": "1",
+    "drmProtect": false,
+    "steamCategories": [
+      "PS3"
+    ],
+    "overlayImages": {
+      "tall": "",
+      "long": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "version": 29,
+    "parserId": "pbos0018"
+  },
+  {
+    "parserType": "Glob",
+    "configTitle": "Sony PlayStation 3 - RPCS3(Flatpak) (Extracted ISO)",
+    "executableModifier": "\"${exePath}\"",
+    "romDirectory": "@HOME@/Emulation/roms/ps3",
+    "steamDirectory": "${steamdirglobal}",
+    "startInDirectory": "",
+    "titleModifier": "${fuzzyTitle}",
+    "executableArgs": "run net.rpcs3.RPCS3 --no-gui \"${filePath}\"",
+    "onlineImageQueries": [
+      "${fuzzyTitle}"
+    ],
+    "imagePool": "${fuzzyTitle}",
+    "imageProviders": [
+      "sgdb"
+    ],
+    "disabled": false,
+    "userAccounts": {
+      "specifiedAccounts": [
+        "Global"
+      ]
+    },
+    "parserInputs": {
+      "glob": "${title}/PS3_GAME/USRDIR/@(eboot.bin|EBOOT.BIN)"
+    },
+    "titleFromVariable": {
+      "caseInsensitiveVariables": false,
+      "skipFileIfVariableWasNotFound": false,
+      "limitToGroups": [
+        "PS3"
+      ]
+    },
+    "fuzzyMatch": {
+      "replaceDiacritics": true,
+      "removeCharacters": true,
+      "removeBrackets": true
+    },
+    "executable": {
+      "path": "/usr/bin/flatpak",
+      "shortcutPassthrough": false,
+      "appendArgsToExecutable": true
+    },
+    "imageProviderAPIs": {
+      "sgdb": {
+        "nsfw": false,
+        "humor": false,
+        "imageMotionTypes": [
+          "static"
+        ],
+        "styles": [],
+        "stylesHero": [],
+        "stylesLogo": [],
+        "stylesIcon": []
+      },
+      "steamCDN": {}
+    },
+    "controllers": {
+      "ps4": null,
+      "ps5": null,
+      "xbox360": null,
+      "xboxone": null,
+      "switch_joycon_left": null,
+      "switch_joycon_right": null,
+      "switch_pro": null,
+      "neptune": null
+    },
+    "defaultImage": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "localImages": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "steamInputEnabled": "1",
+    "drmProtect": false,
+    "steamCategories": [
+      "PS3"
+    ],
+    "overlayImages": {
+      "tall": "",
+      "long": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "version": 29,
+    "parserId": "pbos0019"
+  },
+  {
+    "parserType": "Glob",
+    "configTitle": "Sony PlayStation 3 - RPCS3(Flatpak) (Extracted ISO) (SD card)",
+    "executableModifier": "\"${exePath}\"",
+    "romDirectory": "/run/media",
+    "steamDirectory": "${steamdirglobal}",
+    "startInDirectory": "",
+    "titleModifier": "${fuzzyTitle}",
+    "executableArgs": "run net.rpcs3.RPCS3 --no-gui \"${filePath}\"",
+    "onlineImageQueries": [
+      "${fuzzyTitle}"
+    ],
+    "imagePool": "${fuzzyTitle}",
+    "imageProviders": [
+      "sgdb"
+    ],
+    "disabled": false,
+    "userAccounts": {
+      "specifiedAccounts": [
+        "Global"
+      ]
+    },
+    "parserInputs": {
+      "glob": "*/*/Emulation/roms/ps3/${title}/PS3_GAME/USRDIR/@(eboot.bin|EBOOT.BIN)"
+    },
+    "titleFromVariable": {
+      "caseInsensitiveVariables": false,
+      "skipFileIfVariableWasNotFound": false,
+      "limitToGroups": [
+        "PS3"
+      ]
+    },
+    "fuzzyMatch": {
+      "replaceDiacritics": true,
+      "removeCharacters": true,
+      "removeBrackets": true
+    },
+    "executable": {
+      "path": "/usr/bin/flatpak",
+      "shortcutPassthrough": false,
+      "appendArgsToExecutable": true
+    },
+    "imageProviderAPIs": {
+      "sgdb": {
+        "nsfw": false,
+        "humor": false,
+        "imageMotionTypes": [
+          "static"
+        ],
+        "styles": [],
+        "stylesHero": [],
+        "stylesLogo": [],
+        "stylesIcon": []
+      },
+      "steamCDN": {}
+    },
+    "controllers": {
+      "ps4": null,
+      "ps5": null,
+      "xbox360": null,
+      "xboxone": null,
+      "switch_joycon_left": null,
+      "switch_joycon_right": null,
+      "switch_pro": null,
+      "neptune": null
+    },
+    "defaultImage": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "localImages": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "steamInputEnabled": "1",
+    "drmProtect": false,
+    "steamCategories": [
+      "PS3"
+    ],
+    "overlayImages": {
+      "tall": "",
+      "long": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "version": 29,
+    "parserId": "pbos0020"
+  },
+  {
+    "parserType": "Glob",
+    "configTitle": "Sony PlayStation Portable - PPSSPP(Flatpak)",
+    "executableModifier": "\"${exePath}\"",
+    "romDirectory": "@HOME@/Emulation/roms/psp",
+    "steamDirectory": "${steamdirglobal}",
+    "startInDirectory": "",
+    "titleModifier": "${fuzzyTitle}",
+    "executableArgs": "run org.ppsspp.PPSSPP \"${filePath}\" --fullscreen",
+    "onlineImageQueries": [
+      "${fuzzyTitle}"
+    ],
+    "imagePool": "${fuzzyTitle}",
+    "imageProviders": [
+      "sgdb"
+    ],
+    "disabled": false,
+    "userAccounts": {
+      "specifiedAccounts": [
+        "Global"
+      ]
+    },
+    "parserInputs": {
+      "glob": "${title}@(.elf|.ELF|.cso|.CSO|.iso|.ISO|.pbp|.PBP|.prx|.PRX)"
+    },
+    "titleFromVariable": {
+      "caseInsensitiveVariables": false,
+      "skipFileIfVariableWasNotFound": false,
+      "limitToGroups": []
+    },
+    "fuzzyMatch": {
+      "replaceDiacritics": true,
+      "removeCharacters": true,
+      "removeBrackets": true
+    },
+    "executable": {
+      "path": "/usr/bin/flatpak",
+      "shortcutPassthrough": false,
+      "appendArgsToExecutable": true
+    },
+    "imageProviderAPIs": {
+      "sgdb": {
+        "nsfw": false,
+        "humor": false,
+        "imageMotionTypes": [
+          "static"
+        ],
+        "styles": [],
+        "stylesHero": [],
+        "stylesLogo": [],
+        "stylesIcon": []
+      },
+      "steamCDN": {}
+    },
+    "controllers": {
+      "ps4": null,
+      "ps5": null,
+      "xbox360": null,
+      "xboxone": null,
+      "switch_joycon_left": null,
+      "switch_joycon_right": null,
+      "switch_pro": null,
+      "neptune": null
+    },
+    "defaultImage": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "localImages": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "steamInputEnabled": "1",
+    "drmProtect": false,
+    "steamCategories": [
+      "PSP"
+    ],
+    "overlayImages": {
+      "tall": "",
+      "long": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "version": 29,
+    "parserId": "pbos0021"
+  },
+  {
+    "parserType": "Glob",
+    "configTitle": "Sony PlayStation Portable - PPSSPP(Flatpak) (SD card)",
+    "executableModifier": "\"${exePath}\"",
+    "romDirectory": "/run/media",
+    "steamDirectory": "${steamdirglobal}",
+    "startInDirectory": "",
+    "titleModifier": "${fuzzyTitle}",
+    "executableArgs": "run org.ppsspp.PPSSPP \"${filePath}\" --fullscreen",
+    "onlineImageQueries": [
+      "${fuzzyTitle}"
+    ],
+    "imagePool": "${fuzzyTitle}",
+    "imageProviders": [
+      "sgdb"
+    ],
+    "disabled": false,
+    "userAccounts": {
+      "specifiedAccounts": [
+        "Global"
+      ]
+    },
+    "parserInputs": {
+      "glob": "*/*/Emulation/roms/psp/${title}@(.elf|.ELF|.cso|.CSO|.iso|.ISO|.pbp|.PBP|.prx|.PRX)"
+    },
+    "titleFromVariable": {
+      "caseInsensitiveVariables": false,
+      "skipFileIfVariableWasNotFound": false,
+      "limitToGroups": []
+    },
+    "fuzzyMatch": {
+      "replaceDiacritics": true,
+      "removeCharacters": true,
+      "removeBrackets": true
+    },
+    "executable": {
+      "path": "/usr/bin/flatpak",
+      "shortcutPassthrough": false,
+      "appendArgsToExecutable": true
+    },
+    "imageProviderAPIs": {
+      "sgdb": {
+        "nsfw": false,
+        "humor": false,
+        "imageMotionTypes": [
+          "static"
+        ],
+        "styles": [],
+        "stylesHero": [],
+        "stylesLogo": [],
+        "stylesIcon": []
+      },
+      "steamCDN": {}
+    },
+    "controllers": {
+      "ps4": null,
+      "ps5": null,
+      "xbox360": null,
+      "xboxone": null,
+      "switch_joycon_left": null,
+      "switch_joycon_right": null,
+      "switch_pro": null,
+      "neptune": null
+    },
+    "defaultImage": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "localImages": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "steamInputEnabled": "1",
+    "drmProtect": false,
+    "steamCategories": [
+      "PSP"
+    ],
+    "overlayImages": {
+      "tall": "",
+      "long": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "version": 29,
+    "parserId": "pbos0022"
+  },
+  {
+    "parserType": "Glob",
+    "configTitle": "Microsoft Xbox - Xemu(Flatpak)",
+    "executableModifier": "\"${exePath}\"",
+    "romDirectory": "@HOME@/Emulation/roms/xbox",
+    "steamDirectory": "${steamdirglobal}",
+    "startInDirectory": "",
+    "titleModifier": "${fuzzyTitle}",
+    "executableArgs": "run app.xemu.xemu -full-screen -dvd_path \"${filePath}\"",
+    "onlineImageQueries": [
+      "${fuzzyTitle}"
+    ],
+    "imagePool": "${fuzzyTitle}",
+    "imageProviders": [
+      "sgdb"
+    ],
+    "disabled": false,
+    "userAccounts": {
+      "specifiedAccounts": [
+        "Global"
+      ]
+    },
+    "parserInputs": {
+      "glob": "${title}@(.iso|.ISO)"
+    },
+    "titleFromVariable": {
+      "caseInsensitiveVariables": false,
+      "skipFileIfVariableWasNotFound": false,
+      "limitToGroups": []
+    },
+    "fuzzyMatch": {
+      "replaceDiacritics": true,
+      "removeCharacters": true,
+      "removeBrackets": true
+    },
+    "executable": {
+      "path": "/usr/bin/flatpak",
+      "shortcutPassthrough": false,
+      "appendArgsToExecutable": true
+    },
+    "imageProviderAPIs": {
+      "sgdb": {
+        "nsfw": false,
+        "humor": false,
+        "imageMotionTypes": [
+          "static"
+        ],
+        "styles": [],
+        "stylesHero": [],
+        "stylesLogo": [],
+        "stylesIcon": []
+      },
+      "steamCDN": {}
+    },
+    "controllers": {
+      "ps4": null,
+      "ps5": null,
+      "xbox360": null,
+      "xboxone": null,
+      "switch_joycon_left": null,
+      "switch_joycon_right": null,
+      "switch_pro": null,
+      "neptune": null
+    },
+    "defaultImage": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "localImages": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "steamInputEnabled": "1",
+    "drmProtect": false,
+    "steamCategories": [
+      "Xbox"
+    ],
+    "overlayImages": {
+      "tall": "",
+      "long": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "version": 29,
+    "parserId": "pbos0023"
+  },
+  {
+    "parserType": "Glob",
+    "configTitle": "Microsoft Xbox - Xemu(Flatpak) (SD card)",
+    "executableModifier": "\"${exePath}\"",
+    "romDirectory": "/run/media",
+    "steamDirectory": "${steamdirglobal}",
+    "startInDirectory": "",
+    "titleModifier": "${fuzzyTitle}",
+    "executableArgs": "run app.xemu.xemu -full-screen -dvd_path \"${filePath}\"",
+    "onlineImageQueries": [
+      "${fuzzyTitle}"
+    ],
+    "imagePool": "${fuzzyTitle}",
+    "imageProviders": [
+      "sgdb"
+    ],
+    "disabled": false,
+    "userAccounts": {
+      "specifiedAccounts": [
+        "Global"
+      ]
+    },
+    "parserInputs": {
+      "glob": "*/*/Emulation/roms/xbox/${title}@(.iso|.ISO)"
+    },
+    "titleFromVariable": {
+      "caseInsensitiveVariables": false,
+      "skipFileIfVariableWasNotFound": false,
+      "limitToGroups": []
+    },
+    "fuzzyMatch": {
+      "replaceDiacritics": true,
+      "removeCharacters": true,
+      "removeBrackets": true
+    },
+    "executable": {
+      "path": "/usr/bin/flatpak",
+      "shortcutPassthrough": false,
+      "appendArgsToExecutable": true
+    },
+    "imageProviderAPIs": {
+      "sgdb": {
+        "nsfw": false,
+        "humor": false,
+        "imageMotionTypes": [
+          "static"
+        ],
+        "styles": [],
+        "stylesHero": [],
+        "stylesLogo": [],
+        "stylesIcon": []
+      },
+      "steamCDN": {}
+    },
+    "controllers": {
+      "ps4": null,
+      "ps5": null,
+      "xbox360": null,
+      "xboxone": null,
+      "switch_joycon_left": null,
+      "switch_joycon_right": null,
+      "switch_pro": null,
+      "neptune": null
+    },
+    "defaultImage": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "localImages": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "steamInputEnabled": "1",
+    "drmProtect": false,
+    "steamCategories": [
+      "Xbox"
+    ],
+    "overlayImages": {
+      "tall": "",
+      "long": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "version": 29,
+    "parserId": "pbos0024"
+  },
+  {
+    "parserType": "Glob",
+    "configTitle": "Sega Dreamcast - Flycast(Flatpak)",
+    "executableModifier": "\"${exePath}\"",
+    "romDirectory": "@HOME@/Emulation/roms/dreamcast",
+    "steamDirectory": "${steamdirglobal}",
+    "startInDirectory": "",
+    "titleModifier": "${fuzzyTitle}",
+    "executableArgs": "run org.flycast.Flycast -config window:fullscreen=yes \"${filePath}\"",
+    "onlineImageQueries": [
+      "${fuzzyTitle}"
+    ],
+    "imagePool": "${fuzzyTitle}",
+    "imageProviders": [
+      "sgdb"
+    ],
+    "disabled": false,
+    "userAccounts": {
+      "specifiedAccounts": [
+        "Global"
+      ]
+    },
+    "parserInputs": {
+      "glob": "${title}@(.cdi|.CDI|.cue|.CUE|.chd|.CHD|.gdi|.GDI)"
+    },
+    "titleFromVariable": {
+      "caseInsensitiveVariables": false,
+      "skipFileIfVariableWasNotFound": false,
+      "limitToGroups": []
+    },
+    "fuzzyMatch": {
+      "replaceDiacritics": true,
+      "removeCharacters": true,
+      "removeBrackets": true
+    },
+    "executable": {
+      "path": "/usr/bin/flatpak",
+      "shortcutPassthrough": false,
+      "appendArgsToExecutable": true
+    },
+    "imageProviderAPIs": {
+      "sgdb": {
+        "nsfw": false,
+        "humor": false,
+        "imageMotionTypes": [
+          "static"
+        ],
+        "styles": [],
+        "stylesHero": [],
+        "stylesLogo": [],
+        "stylesIcon": []
+      },
+      "steamCDN": {}
+    },
+    "controllers": {
+      "ps4": null,
+      "ps5": null,
+      "xbox360": null,
+      "xboxone": null,
+      "switch_joycon_left": null,
+      "switch_joycon_right": null,
+      "switch_pro": null,
+      "neptune": null
+    },
+    "defaultImage": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "localImages": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "steamInputEnabled": "1",
+    "drmProtect": false,
+    "steamCategories": [
+      "Dreamcast"
+    ],
+    "overlayImages": {
+      "tall": "",
+      "long": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "version": 29,
+    "parserId": "pbos0025"
+  },
+  {
+    "parserType": "Glob",
+    "configTitle": "Sega Dreamcast - Flycast(Flatpak) (SD card)",
+    "executableModifier": "\"${exePath}\"",
+    "romDirectory": "/run/media",
+    "steamDirectory": "${steamdirglobal}",
+    "startInDirectory": "",
+    "titleModifier": "${fuzzyTitle}",
+    "executableArgs": "run org.flycast.Flycast -config window:fullscreen=yes \"${filePath}\"",
+    "onlineImageQueries": [
+      "${fuzzyTitle}"
+    ],
+    "imagePool": "${fuzzyTitle}",
+    "imageProviders": [
+      "sgdb"
+    ],
+    "disabled": false,
+    "userAccounts": {
+      "specifiedAccounts": [
+        "Global"
+      ]
+    },
+    "parserInputs": {
+      "glob": "*/*/Emulation/roms/dreamcast/${title}@(.cdi|.CDI|.cue|.CUE|.chd|.CHD|.gdi|.GDI)"
+    },
+    "titleFromVariable": {
+      "caseInsensitiveVariables": false,
+      "skipFileIfVariableWasNotFound": false,
+      "limitToGroups": []
+    },
+    "fuzzyMatch": {
+      "replaceDiacritics": true,
+      "removeCharacters": true,
+      "removeBrackets": true
+    },
+    "executable": {
+      "path": "/usr/bin/flatpak",
+      "shortcutPassthrough": false,
+      "appendArgsToExecutable": true
+    },
+    "imageProviderAPIs": {
+      "sgdb": {
+        "nsfw": false,
+        "humor": false,
+        "imageMotionTypes": [
+          "static"
+        ],
+        "styles": [],
+        "stylesHero": [],
+        "stylesLogo": [],
+        "stylesIcon": []
+      },
+      "steamCDN": {}
+    },
+    "controllers": {
+      "ps4": null,
+      "ps5": null,
+      "xbox360": null,
+      "xboxone": null,
+      "switch_joycon_left": null,
+      "switch_joycon_right": null,
+      "switch_pro": null,
+      "neptune": null
+    },
+    "defaultImage": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "localImages": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "steamInputEnabled": "1",
+    "drmProtect": false,
+    "steamCategories": [
+      "Dreamcast"
+    ],
+    "overlayImages": {
+      "tall": "",
+      "long": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "version": 29,
+    "parserId": "pbos0026"
+  },
+  {
+    "parserType": "Glob",
+    "configTitle": "Sega Saturn - Ymir(Flatpak)",
+    "executableModifier": "\"${exePath}\"",
+    "romDirectory": "@HOME@/Emulation/roms/saturn",
+    "steamDirectory": "${steamdirglobal}",
+    "startInDirectory": "",
+    "titleModifier": "${fuzzyTitle}",
+    "executableArgs": "run io.github.strikerx3.ymir -d \"${filePath}\"",
+    "onlineImageQueries": [
+      "${fuzzyTitle}"
+    ],
+    "imagePool": "${fuzzyTitle}",
+    "imageProviders": [
+      "sgdb"
+    ],
+    "disabled": false,
+    "userAccounts": {
+      "specifiedAccounts": [
+        "Global"
+      ]
+    },
+    "parserInputs": {
+      "glob": "${title}@(.ccd|CCD|.chd|.CHD|.cue|.CUE|.iso|.ISO|.mds|MDS)"
+    },
+    "titleFromVariable": {
+      "caseInsensitiveVariables": false,
+      "skipFileIfVariableWasNotFound": false,
+      "limitToGroups": []
+    },
+    "fuzzyMatch": {
+      "replaceDiacritics": true,
+      "removeCharacters": true,
+      "removeBrackets": true
+    },
+    "executable": {
+      "path": "/usr/bin/flatpak",
+      "shortcutPassthrough": false,
+      "appendArgsToExecutable": true
+    },
+    "imageProviderAPIs": {
+      "sgdb": {
+        "nsfw": false,
+        "humor": false,
+        "imageMotionTypes": [
+          "static"
+        ],
+        "styles": [],
+        "stylesHero": [],
+        "stylesLogo": [],
+        "stylesIcon": []
+      },
+      "steamCDN": {}
+    },
+    "controllers": {
+      "ps4": null,
+      "ps5": null,
+      "xbox360": null,
+      "xboxone": null,
+      "switch_joycon_left": null,
+      "switch_joycon_right": null,
+      "switch_pro": null,
+      "neptune": null
+    },
+    "defaultImage": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "localImages": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "steamInputEnabled": "1",
+    "drmProtect": false,
+    "steamCategories": [
+      "Saturn"
+    ],
+    "overlayImages": {
+      "tall": "",
+      "long": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "version": 29,
+    "parserId": "pbos0027"
+  },
+  {
+    "parserType": "Glob",
+    "configTitle": "Sega Saturn - Ymir(Flatpak) (SD card)",
+    "executableModifier": "\"${exePath}\"",
+    "romDirectory": "/run/media",
+    "steamDirectory": "${steamdirglobal}",
+    "startInDirectory": "",
+    "titleModifier": "${fuzzyTitle}",
+    "executableArgs": "run io.github.strikerx3.ymir -d \"${filePath}\"",
+    "onlineImageQueries": [
+      "${fuzzyTitle}"
+    ],
+    "imagePool": "${fuzzyTitle}",
+    "imageProviders": [
+      "sgdb"
+    ],
+    "disabled": false,
+    "userAccounts": {
+      "specifiedAccounts": [
+        "Global"
+      ]
+    },
+    "parserInputs": {
+      "glob": "*/*/Emulation/roms/saturn/${title}@(.ccd|CCD|.chd|.CHD|.cue|.CUE|.iso|.ISO|.mds|MDS)"
+    },
+    "titleFromVariable": {
+      "caseInsensitiveVariables": false,
+      "skipFileIfVariableWasNotFound": false,
+      "limitToGroups": []
+    },
+    "fuzzyMatch": {
+      "replaceDiacritics": true,
+      "removeCharacters": true,
+      "removeBrackets": true
+    },
+    "executable": {
+      "path": "/usr/bin/flatpak",
+      "shortcutPassthrough": false,
+      "appendArgsToExecutable": true
+    },
+    "imageProviderAPIs": {
+      "sgdb": {
+        "nsfw": false,
+        "humor": false,
+        "imageMotionTypes": [
+          "static"
+        ],
+        "styles": [],
+        "stylesHero": [],
+        "stylesLogo": [],
+        "stylesIcon": []
+      },
+      "steamCDN": {}
+    },
+    "controllers": {
+      "ps4": null,
+      "ps5": null,
+      "xbox360": null,
+      "xboxone": null,
+      "switch_joycon_left": null,
+      "switch_joycon_right": null,
+      "switch_pro": null,
+      "neptune": null
+    },
+    "defaultImage": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "localImages": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "steamInputEnabled": "1",
+    "drmProtect": false,
+    "steamCategories": [
+      "Saturn"
+    ],
+    "overlayImages": {
+      "tall": "",
+      "long": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "version": 29,
+    "parserId": "pbos0028"
+  },
+  {
+    "parserType": "Glob",
+    "configTitle": "Arcade - MAME(Flatpak)",
+    "executableModifier": "\"${exePath}\"",
+    "romDirectory": "@HOME@/Emulation/roms/arcade",
+    "steamDirectory": "${steamdirglobal}",
+    "startInDirectory": "",
+    "titleModifier": "${fuzzyTitle}",
+    "executableArgs": "run org.mamedev.MAME -rompath \"${fileDir}\" \"${fileName}\"",
+    "onlineImageQueries": [
+      "${fuzzyTitle}"
+    ],
+    "imagePool": "${fuzzyTitle}",
+    "imageProviders": [
+      "sgdb"
+    ],
+    "disabled": false,
+    "userAccounts": {
+      "specifiedAccounts": [
+        "Global"
+      ]
+    },
+    "parserInputs": {
+      "glob": "${title}@(.7z|.7Z|.zip|.ZIP)"
+    },
+    "titleFromVariable": {
+      "caseInsensitiveVariables": false,
+      "skipFileIfVariableWasNotFound": false,
+      "limitToGroups": []
+    },
+    "fuzzyMatch": {
+      "replaceDiacritics": true,
+      "removeCharacters": true,
+      "removeBrackets": true
+    },
+    "executable": {
+      "path": "/usr/bin/flatpak",
+      "shortcutPassthrough": false,
+      "appendArgsToExecutable": true
+    },
+    "imageProviderAPIs": {
+      "sgdb": {
+        "nsfw": false,
+        "humor": false,
+        "imageMotionTypes": [
+          "static"
+        ],
+        "styles": [],
+        "stylesHero": [],
+        "stylesLogo": [],
+        "stylesIcon": []
+      },
+      "steamCDN": {}
+    },
+    "controllers": {
+      "ps4": null,
+      "ps5": null,
+      "xbox360": null,
+      "xboxone": null,
+      "switch_joycon_left": null,
+      "switch_joycon_right": null,
+      "switch_pro": null,
+      "neptune": null
+    },
+    "defaultImage": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "localImages": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "steamInputEnabled": "1",
+    "drmProtect": false,
+    "steamCategories": [
+      "Arcade"
+    ],
+    "overlayImages": {
+      "tall": "",
+      "long": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "version": 29,
+    "parserId": "pbos0029"
+  },
+  {
+    "parserType": "Glob",
+    "configTitle": "Arcade - MAME(Flatpak) (SD card)",
+    "executableModifier": "\"${exePath}\"",
+    "romDirectory": "/run/media",
+    "steamDirectory": "${steamdirglobal}",
+    "startInDirectory": "",
+    "titleModifier": "${fuzzyTitle}",
+    "executableArgs": "run org.mamedev.MAME -rompath \"${fileDir}\" \"${fileName}\"",
+    "onlineImageQueries": [
+      "${fuzzyTitle}"
+    ],
+    "imagePool": "${fuzzyTitle}",
+    "imageProviders": [
+      "sgdb"
+    ],
+    "disabled": false,
+    "userAccounts": {
+      "specifiedAccounts": [
+        "Global"
+      ]
+    },
+    "parserInputs": {
+      "glob": "*/*/Emulation/roms/arcade/${title}@(.7z|.7Z|.zip|.ZIP)"
+    },
+    "titleFromVariable": {
+      "caseInsensitiveVariables": false,
+      "skipFileIfVariableWasNotFound": false,
+      "limitToGroups": []
+    },
+    "fuzzyMatch": {
+      "replaceDiacritics": true,
+      "removeCharacters": true,
+      "removeBrackets": true
+    },
+    "executable": {
+      "path": "/usr/bin/flatpak",
+      "shortcutPassthrough": false,
+      "appendArgsToExecutable": true
+    },
+    "imageProviderAPIs": {
+      "sgdb": {
+        "nsfw": false,
+        "humor": false,
+        "imageMotionTypes": [
+          "static"
+        ],
+        "styles": [],
+        "stylesHero": [],
+        "stylesLogo": [],
+        "stylesIcon": []
+      },
+      "steamCDN": {}
+    },
+    "controllers": {
+      "ps4": null,
+      "ps5": null,
+      "xbox360": null,
+      "xboxone": null,
+      "switch_joycon_left": null,
+      "switch_joycon_right": null,
+      "switch_pro": null,
+      "neptune": null
+    },
+    "defaultImage": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "localImages": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "steamInputEnabled": "1",
+    "drmProtect": false,
+    "steamCategories": [
+      "Arcade"
+    ],
+    "overlayImages": {
+      "tall": "",
+      "long": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "version": 29,
+    "parserId": "pbos0030"
+  },
+  {
+    "parserType": "Glob",
+    "configTitle": "ScummVM(Flatpak)",
+    "executableModifier": "\"${exePath}\"",
+    "romDirectory": "@HOME@/Emulation/roms/scummvm",
+    "steamDirectory": "${steamdirglobal}",
+    "startInDirectory": "",
+    "titleModifier": "${fuzzyTitle}",
+    "executableArgs": "run org.scummvm.ScummVM --path=\"${filePath}\" --auto-detect",
+    "onlineImageQueries": [
+      "${fuzzyTitle}"
+    ],
+    "imagePool": "${fuzzyTitle}",
+    "imageProviders": [
+      "sgdb"
+    ],
+    "disabled": false,
+    "userAccounts": {
+      "specifiedAccounts": [
+        "Global"
+      ]
+    },
+    "parserInputs": {
+      "glob": "${title}"
+    },
+    "titleFromVariable": {
+      "caseInsensitiveVariables": false,
+      "skipFileIfVariableWasNotFound": false,
+      "limitToGroups": []
+    },
+    "fuzzyMatch": {
+      "replaceDiacritics": true,
+      "removeCharacters": true,
+      "removeBrackets": true
+    },
+    "executable": {
+      "path": "/usr/bin/flatpak",
+      "shortcutPassthrough": false,
+      "appendArgsToExecutable": true
+    },
+    "imageProviderAPIs": {
+      "sgdb": {
+        "nsfw": false,
+        "humor": false,
+        "imageMotionTypes": [
+          "static"
+        ],
+        "styles": [],
+        "stylesHero": [],
+        "stylesLogo": [],
+        "stylesIcon": []
+      },
+      "steamCDN": {}
+    },
+    "controllers": {
+      "ps4": null,
+      "ps5": null,
+      "xbox360": null,
+      "xboxone": null,
+      "switch_joycon_left": null,
+      "switch_joycon_right": null,
+      "switch_pro": null,
+      "neptune": null
+    },
+    "defaultImage": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "localImages": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "steamInputEnabled": "1",
+    "drmProtect": false,
+    "steamCategories": [
+      "ScummVM"
+    ],
+    "overlayImages": {
+      "tall": "",
+      "long": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "version": 29,
+    "parserId": "pbos0031"
+  },
+  {
+    "parserType": "Glob",
+    "configTitle": "ScummVM(Flatpak) (SD card)",
+    "executableModifier": "\"${exePath}\"",
+    "romDirectory": "/run/media",
+    "steamDirectory": "${steamdirglobal}",
+    "startInDirectory": "",
+    "titleModifier": "${fuzzyTitle}",
+    "executableArgs": "run org.scummvm.ScummVM --path=\"${filePath}\" --auto-detect",
+    "onlineImageQueries": [
+      "${fuzzyTitle}"
+    ],
+    "imagePool": "${fuzzyTitle}",
+    "imageProviders": [
+      "sgdb"
+    ],
+    "disabled": false,
+    "userAccounts": {
+      "specifiedAccounts": [
+        "Global"
+      ]
+    },
+    "parserInputs": {
+      "glob": "*/*/Emulation/roms/scummvm/${title}"
+    },
+    "titleFromVariable": {
+      "caseInsensitiveVariables": false,
+      "skipFileIfVariableWasNotFound": false,
+      "limitToGroups": []
+    },
+    "fuzzyMatch": {
+      "replaceDiacritics": true,
+      "removeCharacters": true,
+      "removeBrackets": true
+    },
+    "executable": {
+      "path": "/usr/bin/flatpak",
+      "shortcutPassthrough": false,
+      "appendArgsToExecutable": true
+    },
+    "imageProviderAPIs": {
+      "sgdb": {
+        "nsfw": false,
+        "humor": false,
+        "imageMotionTypes": [
+          "static"
+        ],
+        "styles": [],
+        "stylesHero": [],
+        "stylesLogo": [],
+        "stylesIcon": []
+      },
+      "steamCDN": {}
+    },
+    "controllers": {
+      "ps4": null,
+      "ps5": null,
+      "xbox360": null,
+      "xboxone": null,
+      "switch_joycon_left": null,
+      "switch_joycon_right": null,
+      "switch_pro": null,
+      "neptune": null
+    },
+    "defaultImage": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "localImages": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "steamInputEnabled": "1",
+    "drmProtect": false,
+    "steamCategories": [
+      "ScummVM"
+    ],
+    "overlayImages": {
+      "tall": "",
+      "long": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "version": 29,
+    "parserId": "pbos0032"
+  },
+  {
+    "parserType": "Glob",
+    "configTitle": "Nintendo NES - Retroarch(Flatpak) - Mesen",
+    "executableModifier": "\"${exePath}\"",
+    "romDirectory": "@HOME@/Emulation/roms/nes",
+    "steamDirectory": "${steamdirglobal}",
+    "startInDirectory": "",
+    "titleModifier": "${fuzzyTitle}",
+    "executableArgs": "run org.libretro.RetroArch -L ${os:win|cores|${os:mac|${racores}|${os:linux|${racores}}}}${/}mesen_libretro.${os:win|dll|${os:mac|dylib|${os:linux|so}}} \"${filePath}\"",
+    "onlineImageQueries": [
+      "${fuzzyTitle}"
+    ],
+    "imagePool": "${fuzzyTitle}",
+    "imageProviders": [
+      "sgdb"
+    ],
+    "disabled": false,
+    "userAccounts": {
+      "specifiedAccounts": [
+        "Global"
+      ]
+    },
+    "parserInputs": {
+      "glob": "${title}@(.7z|.7Z|.fds|.FDS|.nes|.NES|.unif|.UNIF|.unf|.UNF|.zip|.ZIP)"
+    },
+    "titleFromVariable": {
+      "caseInsensitiveVariables": false,
+      "skipFileIfVariableWasNotFound": false,
+      "limitToGroups": []
+    },
+    "fuzzyMatch": {
+      "replaceDiacritics": true,
+      "removeCharacters": true,
+      "removeBrackets": true
+    },
+    "executable": {
+      "path": "/usr/bin/flatpak",
+      "shortcutPassthrough": false,
+      "appendArgsToExecutable": true
+    },
+    "imageProviderAPIs": {
+      "sgdb": {
+        "nsfw": false,
+        "humor": false,
+        "imageMotionTypes": [
+          "static"
+        ],
+        "styles": [],
+        "stylesHero": [],
+        "stylesLogo": [],
+        "stylesIcon": []
+      },
+      "steamCDN": {}
+    },
+    "controllers": {
+      "ps4": null,
+      "ps5": null,
+      "xbox360": null,
+      "xboxone": null,
+      "switch_joycon_left": null,
+      "switch_joycon_right": null,
+      "switch_pro": null,
+      "neptune": null
+    },
+    "defaultImage": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "localImages": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "steamInputEnabled": "1",
+    "drmProtect": false,
+    "steamCategories": [
+      "NES"
+    ],
+    "overlayImages": {
+      "tall": "",
+      "long": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "version": 29,
+    "parserId": "pbos0033"
+  },
+  {
+    "parserType": "Glob",
+    "configTitle": "Nintendo NES - Retroarch(Flatpak) - Mesen (SD card)",
+    "executableModifier": "\"${exePath}\"",
+    "romDirectory": "/run/media",
+    "steamDirectory": "${steamdirglobal}",
+    "startInDirectory": "",
+    "titleModifier": "${fuzzyTitle}",
+    "executableArgs": "run org.libretro.RetroArch -L ${os:win|cores|${os:mac|${racores}|${os:linux|${racores}}}}${/}mesen_libretro.${os:win|dll|${os:mac|dylib|${os:linux|so}}} \"${filePath}\"",
+    "onlineImageQueries": [
+      "${fuzzyTitle}"
+    ],
+    "imagePool": "${fuzzyTitle}",
+    "imageProviders": [
+      "sgdb"
+    ],
+    "disabled": false,
+    "userAccounts": {
+      "specifiedAccounts": [
+        "Global"
+      ]
+    },
+    "parserInputs": {
+      "glob": "*/*/Emulation/roms/nes/${title}@(.7z|.7Z|.fds|.FDS|.nes|.NES|.unif|.UNIF|.unf|.UNF|.zip|.ZIP)"
+    },
+    "titleFromVariable": {
+      "caseInsensitiveVariables": false,
+      "skipFileIfVariableWasNotFound": false,
+      "limitToGroups": []
+    },
+    "fuzzyMatch": {
+      "replaceDiacritics": true,
+      "removeCharacters": true,
+      "removeBrackets": true
+    },
+    "executable": {
+      "path": "/usr/bin/flatpak",
+      "shortcutPassthrough": false,
+      "appendArgsToExecutable": true
+    },
+    "imageProviderAPIs": {
+      "sgdb": {
+        "nsfw": false,
+        "humor": false,
+        "imageMotionTypes": [
+          "static"
+        ],
+        "styles": [],
+        "stylesHero": [],
+        "stylesLogo": [],
+        "stylesIcon": []
+      },
+      "steamCDN": {}
+    },
+    "controllers": {
+      "ps4": null,
+      "ps5": null,
+      "xbox360": null,
+      "xboxone": null,
+      "switch_joycon_left": null,
+      "switch_joycon_right": null,
+      "switch_pro": null,
+      "neptune": null
+    },
+    "defaultImage": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "localImages": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "steamInputEnabled": "1",
+    "drmProtect": false,
+    "steamCategories": [
+      "NES"
+    ],
+    "overlayImages": {
+      "tall": "",
+      "long": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "version": 29,
+    "parserId": "pbos0034"
+  },
+  {
+    "parserType": "Glob",
+    "configTitle": "Nintendo SNES - Retroarch(Flatpak) - Snes9x",
+    "executableModifier": "\"${exePath}\"",
+    "romDirectory": "@HOME@/Emulation/roms/snes",
+    "steamDirectory": "${steamdirglobal}",
+    "startInDirectory": "",
+    "titleModifier": "${fuzzyTitle}",
+    "executableArgs": "run org.libretro.RetroArch -L ${os:win|cores|${os:mac|${racores}|${os:linux|${racores}}}}${/}snes9x_libretro.${os:win|dll|${os:mac|dylib|${os:linux|so}}} \"${filePath}\"",
+    "onlineImageQueries": [
+      "${fuzzyTitle}"
+    ],
+    "imagePool": "${fuzzyTitle}",
+    "imageProviders": [
+      "sgdb"
+    ],
+    "disabled": false,
+    "userAccounts": {
+      "specifiedAccounts": [
+        "Global"
+      ]
+    },
+    "parserInputs": {
+      "glob": "${title}@(.7z|.7Z|.bs|.BS|.fig|.FIG|.sfc|.SFC|.smc|.SMC|.swc|.SWC|.zip|.ZIP)"
+    },
+    "titleFromVariable": {
+      "caseInsensitiveVariables": false,
+      "skipFileIfVariableWasNotFound": false,
+      "limitToGroups": []
+    },
+    "fuzzyMatch": {
+      "replaceDiacritics": true,
+      "removeCharacters": true,
+      "removeBrackets": true
+    },
+    "executable": {
+      "path": "/usr/bin/flatpak",
+      "shortcutPassthrough": false,
+      "appendArgsToExecutable": true
+    },
+    "imageProviderAPIs": {
+      "sgdb": {
+        "nsfw": false,
+        "humor": false,
+        "imageMotionTypes": [
+          "static"
+        ],
+        "styles": [],
+        "stylesHero": [],
+        "stylesLogo": [],
+        "stylesIcon": []
+      },
+      "steamCDN": {}
+    },
+    "controllers": {
+      "ps4": null,
+      "ps5": null,
+      "xbox360": null,
+      "xboxone": null,
+      "switch_joycon_left": null,
+      "switch_joycon_right": null,
+      "switch_pro": null,
+      "neptune": null
+    },
+    "defaultImage": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "localImages": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "steamInputEnabled": "1",
+    "drmProtect": false,
+    "steamCategories": [
+      "SNES"
+    ],
+    "overlayImages": {
+      "tall": "",
+      "long": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "version": 29,
+    "parserId": "pbos0035"
+  },
+  {
+    "parserType": "Glob",
+    "configTitle": "Nintendo SNES - Retroarch(Flatpak) - Snes9x (SD card)",
+    "executableModifier": "\"${exePath}\"",
+    "romDirectory": "/run/media",
+    "steamDirectory": "${steamdirglobal}",
+    "startInDirectory": "",
+    "titleModifier": "${fuzzyTitle}",
+    "executableArgs": "run org.libretro.RetroArch -L ${os:win|cores|${os:mac|${racores}|${os:linux|${racores}}}}${/}snes9x_libretro.${os:win|dll|${os:mac|dylib|${os:linux|so}}} \"${filePath}\"",
+    "onlineImageQueries": [
+      "${fuzzyTitle}"
+    ],
+    "imagePool": "${fuzzyTitle}",
+    "imageProviders": [
+      "sgdb"
+    ],
+    "disabled": false,
+    "userAccounts": {
+      "specifiedAccounts": [
+        "Global"
+      ]
+    },
+    "parserInputs": {
+      "glob": "*/*/Emulation/roms/snes/${title}@(.7z|.7Z|.bs|.BS|.fig|.FIG|.sfc|.SFC|.smc|.SMC|.swc|.SWC|.zip|.ZIP)"
+    },
+    "titleFromVariable": {
+      "caseInsensitiveVariables": false,
+      "skipFileIfVariableWasNotFound": false,
+      "limitToGroups": []
+    },
+    "fuzzyMatch": {
+      "replaceDiacritics": true,
+      "removeCharacters": true,
+      "removeBrackets": true
+    },
+    "executable": {
+      "path": "/usr/bin/flatpak",
+      "shortcutPassthrough": false,
+      "appendArgsToExecutable": true
+    },
+    "imageProviderAPIs": {
+      "sgdb": {
+        "nsfw": false,
+        "humor": false,
+        "imageMotionTypes": [
+          "static"
+        ],
+        "styles": [],
+        "stylesHero": [],
+        "stylesLogo": [],
+        "stylesIcon": []
+      },
+      "steamCDN": {}
+    },
+    "controllers": {
+      "ps4": null,
+      "ps5": null,
+      "xbox360": null,
+      "xboxone": null,
+      "switch_joycon_left": null,
+      "switch_joycon_right": null,
+      "switch_pro": null,
+      "neptune": null
+    },
+    "defaultImage": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "localImages": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "steamInputEnabled": "1",
+    "drmProtect": false,
+    "steamCategories": [
+      "SNES"
+    ],
+    "overlayImages": {
+      "tall": "",
+      "long": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "version": 29,
+    "parserId": "pbos0036"
+  },
+  {
+    "parserType": "Glob",
+    "configTitle": "Nintendo 64 - Retroarch(Flatpak) - Mupen64Plus Next",
+    "executableModifier": "\"${exePath}\"",
+    "romDirectory": "@HOME@/Emulation/roms/n64",
+    "steamDirectory": "${steamdirglobal}",
+    "startInDirectory": "",
+    "titleModifier": "${fuzzyTitle}",
+    "executableArgs": "run org.libretro.RetroArch -L ${os:win|cores|${os:mac|${racores}|${os:linux|${racores}}}}${/}mupen64plus_next_libretro.${os:win|dll|${os:mac|dylib|${os:linux|so}}} \"${filePath}\"",
+    "onlineImageQueries": [
+      "${fuzzyTitle}"
+    ],
+    "imagePool": "${fuzzyTitle}",
+    "imageProviders": [
+      "sgdb"
+    ],
+    "disabled": false,
+    "userAccounts": {
+      "specifiedAccounts": [
+        "Global"
+      ]
+    },
+    "parserInputs": {
+      "glob": "${title}@(.7z|.7Z|.bin|.BIN|.n64|.N64|.ndd|.NDD|.u1|.U1|.v64|.V64|.z64|.Z64|.zip|.ZIP)"
+    },
+    "titleFromVariable": {
+      "caseInsensitiveVariables": false,
+      "skipFileIfVariableWasNotFound": false,
+      "limitToGroups": []
+    },
+    "fuzzyMatch": {
+      "replaceDiacritics": true,
+      "removeCharacters": true,
+      "removeBrackets": true
+    },
+    "executable": {
+      "path": "/usr/bin/flatpak",
+      "shortcutPassthrough": false,
+      "appendArgsToExecutable": true
+    },
+    "imageProviderAPIs": {
+      "sgdb": {
+        "nsfw": false,
+        "humor": false,
+        "imageMotionTypes": [
+          "static"
+        ],
+        "styles": [],
+        "stylesHero": [],
+        "stylesLogo": [],
+        "stylesIcon": []
+      },
+      "steamCDN": {}
+    },
+    "controllers": {
+      "ps4": null,
+      "ps5": null,
+      "xbox360": null,
+      "xboxone": null,
+      "switch_joycon_left": null,
+      "switch_joycon_right": null,
+      "switch_pro": null,
+      "neptune": null
+    },
+    "defaultImage": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "localImages": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "steamInputEnabled": "1",
+    "drmProtect": false,
+    "steamCategories": [
+      "N64"
+    ],
+    "overlayImages": {
+      "tall": "",
+      "long": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "version": 29,
+    "parserId": "pbos0037"
+  },
+  {
+    "parserType": "Glob",
+    "configTitle": "Nintendo 64 - Retroarch(Flatpak) - Mupen64Plus Next (SD card)",
+    "executableModifier": "\"${exePath}\"",
+    "romDirectory": "/run/media",
+    "steamDirectory": "${steamdirglobal}",
+    "startInDirectory": "",
+    "titleModifier": "${fuzzyTitle}",
+    "executableArgs": "run org.libretro.RetroArch -L ${os:win|cores|${os:mac|${racores}|${os:linux|${racores}}}}${/}mupen64plus_next_libretro.${os:win|dll|${os:mac|dylib|${os:linux|so}}} \"${filePath}\"",
+    "onlineImageQueries": [
+      "${fuzzyTitle}"
+    ],
+    "imagePool": "${fuzzyTitle}",
+    "imageProviders": [
+      "sgdb"
+    ],
+    "disabled": false,
+    "userAccounts": {
+      "specifiedAccounts": [
+        "Global"
+      ]
+    },
+    "parserInputs": {
+      "glob": "*/*/Emulation/roms/n64/${title}@(.7z|.7Z|.bin|.BIN|.n64|.N64|.ndd|.NDD|.u1|.U1|.v64|.V64|.z64|.Z64|.zip|.ZIP)"
+    },
+    "titleFromVariable": {
+      "caseInsensitiveVariables": false,
+      "skipFileIfVariableWasNotFound": false,
+      "limitToGroups": []
+    },
+    "fuzzyMatch": {
+      "replaceDiacritics": true,
+      "removeCharacters": true,
+      "removeBrackets": true
+    },
+    "executable": {
+      "path": "/usr/bin/flatpak",
+      "shortcutPassthrough": false,
+      "appendArgsToExecutable": true
+    },
+    "imageProviderAPIs": {
+      "sgdb": {
+        "nsfw": false,
+        "humor": false,
+        "imageMotionTypes": [
+          "static"
+        ],
+        "styles": [],
+        "stylesHero": [],
+        "stylesLogo": [],
+        "stylesIcon": []
+      },
+      "steamCDN": {}
+    },
+    "controllers": {
+      "ps4": null,
+      "ps5": null,
+      "xbox360": null,
+      "xboxone": null,
+      "switch_joycon_left": null,
+      "switch_joycon_right": null,
+      "switch_pro": null,
+      "neptune": null
+    },
+    "defaultImage": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "localImages": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "steamInputEnabled": "1",
+    "drmProtect": false,
+    "steamCategories": [
+      "N64"
+    ],
+    "overlayImages": {
+      "tall": "",
+      "long": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "version": 29,
+    "parserId": "pbos0038"
+  },
+  {
+    "parserType": "Glob",
+    "configTitle": "Nintendo Game Boy - Retroarch(Flatpak) - Gambatte",
+    "executableModifier": "\"${exePath}\"",
+    "romDirectory": "@HOME@/Emulation/roms/gb",
+    "steamDirectory": "${steamdirglobal}",
+    "startInDirectory": "",
+    "titleModifier": "${fuzzyTitle}",
+    "executableArgs": "run org.libretro.RetroArch -L ${os:win|cores|${os:mac|${racores}|${os:linux|${racores}}}}${/}gambatte_libretro.${os:win|dll|${os:mac|dylib|${os:linux|so}}} \"${filePath}\"",
+    "onlineImageQueries": [
+      "${fuzzyTitle}"
+    ],
+    "imagePool": "${fuzzyTitle}",
+    "imageProviders": [
+      "sgdb"
+    ],
+    "disabled": false,
+    "userAccounts": {
+      "specifiedAccounts": [
+        "Global"
+      ]
+    },
+    "parserInputs": {
+      "glob": "${title}@(.7z|.7Z|.gb|.GB|.dmg|.DMG|.zip|.ZIP)"
+    },
+    "titleFromVariable": {
+      "caseInsensitiveVariables": false,
+      "skipFileIfVariableWasNotFound": false,
+      "limitToGroups": []
+    },
+    "fuzzyMatch": {
+      "replaceDiacritics": true,
+      "removeCharacters": true,
+      "removeBrackets": true
+    },
+    "executable": {
+      "path": "/usr/bin/flatpak",
+      "shortcutPassthrough": false,
+      "appendArgsToExecutable": true
+    },
+    "imageProviderAPIs": {
+      "sgdb": {
+        "nsfw": false,
+        "humor": false,
+        "imageMotionTypes": [
+          "static"
+        ],
+        "styles": [],
+        "stylesHero": [],
+        "stylesLogo": [],
+        "stylesIcon": []
+      },
+      "steamCDN": {}
+    },
+    "controllers": {
+      "ps4": null,
+      "ps5": null,
+      "xbox360": null,
+      "xboxone": null,
+      "switch_joycon_left": null,
+      "switch_joycon_right": null,
+      "switch_pro": null,
+      "neptune": null
+    },
+    "defaultImage": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "localImages": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "steamInputEnabled": "1",
+    "drmProtect": false,
+    "steamCategories": [
+      "Game Boy"
+    ],
+    "overlayImages": {
+      "tall": "",
+      "long": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "version": 29,
+    "parserId": "pbos0039"
+  },
+  {
+    "parserType": "Glob",
+    "configTitle": "Nintendo Game Boy - Retroarch(Flatpak) - Gambatte (SD card)",
+    "executableModifier": "\"${exePath}\"",
+    "romDirectory": "/run/media",
+    "steamDirectory": "${steamdirglobal}",
+    "startInDirectory": "",
+    "titleModifier": "${fuzzyTitle}",
+    "executableArgs": "run org.libretro.RetroArch -L ${os:win|cores|${os:mac|${racores}|${os:linux|${racores}}}}${/}gambatte_libretro.${os:win|dll|${os:mac|dylib|${os:linux|so}}} \"${filePath}\"",
+    "onlineImageQueries": [
+      "${fuzzyTitle}"
+    ],
+    "imagePool": "${fuzzyTitle}",
+    "imageProviders": [
+      "sgdb"
+    ],
+    "disabled": false,
+    "userAccounts": {
+      "specifiedAccounts": [
+        "Global"
+      ]
+    },
+    "parserInputs": {
+      "glob": "*/*/Emulation/roms/gb/${title}@(.7z|.7Z|.gb|.GB|.dmg|.DMG|.zip|.ZIP)"
+    },
+    "titleFromVariable": {
+      "caseInsensitiveVariables": false,
+      "skipFileIfVariableWasNotFound": false,
+      "limitToGroups": []
+    },
+    "fuzzyMatch": {
+      "replaceDiacritics": true,
+      "removeCharacters": true,
+      "removeBrackets": true
+    },
+    "executable": {
+      "path": "/usr/bin/flatpak",
+      "shortcutPassthrough": false,
+      "appendArgsToExecutable": true
+    },
+    "imageProviderAPIs": {
+      "sgdb": {
+        "nsfw": false,
+        "humor": false,
+        "imageMotionTypes": [
+          "static"
+        ],
+        "styles": [],
+        "stylesHero": [],
+        "stylesLogo": [],
+        "stylesIcon": []
+      },
+      "steamCDN": {}
+    },
+    "controllers": {
+      "ps4": null,
+      "ps5": null,
+      "xbox360": null,
+      "xboxone": null,
+      "switch_joycon_left": null,
+      "switch_joycon_right": null,
+      "switch_pro": null,
+      "neptune": null
+    },
+    "defaultImage": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "localImages": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "steamInputEnabled": "1",
+    "drmProtect": false,
+    "steamCategories": [
+      "Game Boy"
+    ],
+    "overlayImages": {
+      "tall": "",
+      "long": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "version": 29,
+    "parserId": "pbos0040"
+  },
+  {
+    "parserType": "Glob",
+    "configTitle": "Nintendo Game Boy Color - Retroarch(Flatpak) - Gambatte",
+    "executableModifier": "\"${exePath}\"",
+    "romDirectory": "@HOME@/Emulation/roms/gbc",
+    "steamDirectory": "${steamdirglobal}",
+    "startInDirectory": "",
+    "titleModifier": "${fuzzyTitle}",
+    "executableArgs": "run org.libretro.RetroArch -L ${os:win|cores|${os:mac|${racores}|${os:linux|${racores}}}}${/}gambatte_libretro.${os:win|dll|${os:mac|dylib|${os:linux|so}}} \"${filePath}\"",
+    "onlineImageQueries": [
+      "${fuzzyTitle}"
+    ],
+    "imagePool": "${fuzzyTitle}",
+    "imageProviders": [
+      "sgdb"
+    ],
+    "disabled": false,
+    "userAccounts": {
+      "specifiedAccounts": [
+        "Global"
+      ]
+    },
+    "parserInputs": {
+      "glob": "${title}@(.7z|.7Z|.gb|.GB|.gbc|.GBC|.zip|.ZIP)"
+    },
+    "titleFromVariable": {
+      "caseInsensitiveVariables": false,
+      "skipFileIfVariableWasNotFound": false,
+      "limitToGroups": []
+    },
+    "fuzzyMatch": {
+      "replaceDiacritics": true,
+      "removeCharacters": true,
+      "removeBrackets": true
+    },
+    "executable": {
+      "path": "/usr/bin/flatpak",
+      "shortcutPassthrough": false,
+      "appendArgsToExecutable": true
+    },
+    "imageProviderAPIs": {
+      "sgdb": {
+        "nsfw": false,
+        "humor": false,
+        "imageMotionTypes": [
+          "static"
+        ],
+        "styles": [],
+        "stylesHero": [],
+        "stylesLogo": [],
+        "stylesIcon": []
+      },
+      "steamCDN": {}
+    },
+    "controllers": {
+      "ps4": null,
+      "ps5": null,
+      "xbox360": null,
+      "xboxone": null,
+      "switch_joycon_left": null,
+      "switch_joycon_right": null,
+      "switch_pro": null,
+      "neptune": null
+    },
+    "defaultImage": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "localImages": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "steamInputEnabled": "1",
+    "drmProtect": false,
+    "steamCategories": [
+      "Game Boy Color"
+    ],
+    "overlayImages": {
+      "tall": "",
+      "long": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "version": 29,
+    "parserId": "pbos0041"
+  },
+  {
+    "parserType": "Glob",
+    "configTitle": "Nintendo Game Boy Color - Retroarch(Flatpak) - Gambatte (SD card)",
+    "executableModifier": "\"${exePath}\"",
+    "romDirectory": "/run/media",
+    "steamDirectory": "${steamdirglobal}",
+    "startInDirectory": "",
+    "titleModifier": "${fuzzyTitle}",
+    "executableArgs": "run org.libretro.RetroArch -L ${os:win|cores|${os:mac|${racores}|${os:linux|${racores}}}}${/}gambatte_libretro.${os:win|dll|${os:mac|dylib|${os:linux|so}}} \"${filePath}\"",
+    "onlineImageQueries": [
+      "${fuzzyTitle}"
+    ],
+    "imagePool": "${fuzzyTitle}",
+    "imageProviders": [
+      "sgdb"
+    ],
+    "disabled": false,
+    "userAccounts": {
+      "specifiedAccounts": [
+        "Global"
+      ]
+    },
+    "parserInputs": {
+      "glob": "*/*/Emulation/roms/gbc/${title}@(.7z|.7Z|.gb|.GB|.gbc|.GBC|.zip|.ZIP)"
+    },
+    "titleFromVariable": {
+      "caseInsensitiveVariables": false,
+      "skipFileIfVariableWasNotFound": false,
+      "limitToGroups": []
+    },
+    "fuzzyMatch": {
+      "replaceDiacritics": true,
+      "removeCharacters": true,
+      "removeBrackets": true
+    },
+    "executable": {
+      "path": "/usr/bin/flatpak",
+      "shortcutPassthrough": false,
+      "appendArgsToExecutable": true
+    },
+    "imageProviderAPIs": {
+      "sgdb": {
+        "nsfw": false,
+        "humor": false,
+        "imageMotionTypes": [
+          "static"
+        ],
+        "styles": [],
+        "stylesHero": [],
+        "stylesLogo": [],
+        "stylesIcon": []
+      },
+      "steamCDN": {}
+    },
+    "controllers": {
+      "ps4": null,
+      "ps5": null,
+      "xbox360": null,
+      "xboxone": null,
+      "switch_joycon_left": null,
+      "switch_joycon_right": null,
+      "switch_pro": null,
+      "neptune": null
+    },
+    "defaultImage": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "localImages": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "steamInputEnabled": "1",
+    "drmProtect": false,
+    "steamCategories": [
+      "Game Boy Color"
+    ],
+    "overlayImages": {
+      "tall": "",
+      "long": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "version": 29,
+    "parserId": "pbos0042"
+  },
+  {
+    "parserType": "Glob",
+    "configTitle": "Nintendo Game Boy Advance - Retroarch(Flatpak) - mGBA",
+    "executableModifier": "\"${exePath}\"",
+    "romDirectory": "@HOME@/Emulation/roms/gba",
+    "steamDirectory": "${steamdirglobal}",
+    "startInDirectory": "",
+    "titleModifier": "${fuzzyTitle}",
+    "executableArgs": "run org.libretro.RetroArch -L ${os:win|cores|${os:mac|${racores}|${os:linux|${racores}}}}${/}mgba_libretro.${os:win|dll|${os:mac|dylib|${os:linux|so}}} \"${filePath}\"",
+    "onlineImageQueries": [
+      "${fuzzyTitle}"
+    ],
+    "imagePool": "${fuzzyTitle}",
+    "imageProviders": [
+      "sgdb"
+    ],
+    "disabled": false,
+    "userAccounts": {
+      "specifiedAccounts": [
+        "Global"
+      ]
+    },
+    "parserInputs": {
+      "glob": "${title}@(.7z|.7Z|.gba|.GBA|.zip|.ZIP)"
+    },
+    "titleFromVariable": {
+      "caseInsensitiveVariables": false,
+      "skipFileIfVariableWasNotFound": false,
+      "limitToGroups": []
+    },
+    "fuzzyMatch": {
+      "replaceDiacritics": true,
+      "removeCharacters": true,
+      "removeBrackets": true
+    },
+    "executable": {
+      "path": "/usr/bin/flatpak",
+      "shortcutPassthrough": false,
+      "appendArgsToExecutable": true
+    },
+    "imageProviderAPIs": {
+      "sgdb": {
+        "nsfw": false,
+        "humor": false,
+        "imageMotionTypes": [
+          "static"
+        ],
+        "styles": [],
+        "stylesHero": [],
+        "stylesLogo": [],
+        "stylesIcon": []
+      },
+      "steamCDN": {}
+    },
+    "controllers": {
+      "ps4": null,
+      "ps5": null,
+      "xbox360": null,
+      "xboxone": null,
+      "switch_joycon_left": null,
+      "switch_joycon_right": null,
+      "switch_pro": null,
+      "neptune": null
+    },
+    "defaultImage": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "localImages": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "steamInputEnabled": "1",
+    "drmProtect": false,
+    "steamCategories": [
+      "Game Boy Advance"
+    ],
+    "overlayImages": {
+      "tall": "",
+      "long": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "version": 29,
+    "parserId": "pbos0043"
+  },
+  {
+    "parserType": "Glob",
+    "configTitle": "Nintendo Game Boy Advance - Retroarch(Flatpak) - mGBA (SD card)",
+    "executableModifier": "\"${exePath}\"",
+    "romDirectory": "/run/media",
+    "steamDirectory": "${steamdirglobal}",
+    "startInDirectory": "",
+    "titleModifier": "${fuzzyTitle}",
+    "executableArgs": "run org.libretro.RetroArch -L ${os:win|cores|${os:mac|${racores}|${os:linux|${racores}}}}${/}mgba_libretro.${os:win|dll|${os:mac|dylib|${os:linux|so}}} \"${filePath}\"",
+    "onlineImageQueries": [
+      "${fuzzyTitle}"
+    ],
+    "imagePool": "${fuzzyTitle}",
+    "imageProviders": [
+      "sgdb"
+    ],
+    "disabled": false,
+    "userAccounts": {
+      "specifiedAccounts": [
+        "Global"
+      ]
+    },
+    "parserInputs": {
+      "glob": "*/*/Emulation/roms/gba/${title}@(.7z|.7Z|.gba|.GBA|.zip|.ZIP)"
+    },
+    "titleFromVariable": {
+      "caseInsensitiveVariables": false,
+      "skipFileIfVariableWasNotFound": false,
+      "limitToGroups": []
+    },
+    "fuzzyMatch": {
+      "replaceDiacritics": true,
+      "removeCharacters": true,
+      "removeBrackets": true
+    },
+    "executable": {
+      "path": "/usr/bin/flatpak",
+      "shortcutPassthrough": false,
+      "appendArgsToExecutable": true
+    },
+    "imageProviderAPIs": {
+      "sgdb": {
+        "nsfw": false,
+        "humor": false,
+        "imageMotionTypes": [
+          "static"
+        ],
+        "styles": [],
+        "stylesHero": [],
+        "stylesLogo": [],
+        "stylesIcon": []
+      },
+      "steamCDN": {}
+    },
+    "controllers": {
+      "ps4": null,
+      "ps5": null,
+      "xbox360": null,
+      "xboxone": null,
+      "switch_joycon_left": null,
+      "switch_joycon_right": null,
+      "switch_pro": null,
+      "neptune": null
+    },
+    "defaultImage": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "localImages": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "steamInputEnabled": "1",
+    "drmProtect": false,
+    "steamCategories": [
+      "Game Boy Advance"
+    ],
+    "overlayImages": {
+      "tall": "",
+      "long": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "version": 29,
+    "parserId": "pbos0044"
+  },
+  {
+    "parserType": "Glob",
+    "configTitle": "Sega Genesis/Mega Drive - Retroarch(Flatpak) - Genesis Plus GX",
+    "executableModifier": "\"${exePath}\"",
+    "romDirectory": "@HOME@/Emulation/roms/genesis",
+    "steamDirectory": "${steamdirglobal}",
+    "startInDirectory": "",
+    "titleModifier": "${fuzzyTitle}",
+    "executableArgs": "run org.libretro.RetroArch -L ${os:win|cores|${os:mac|${racores}|${os:linux|${racores}}}}${/}genesis_plus_gx_libretro.${os:win|dll|${os:mac|dylib|${os:linux|so}}} \"${filePath}\"",
+    "onlineImageQueries": [
+      "${fuzzyTitle}"
+    ],
+    "imagePool": "${fuzzyTitle}",
+    "imageProviders": [
+      "sgdb"
+    ],
+    "disabled": false,
+    "userAccounts": {
+      "specifiedAccounts": [
+        "Global"
+      ]
+    },
+    "parserInputs": {
+      "glob": "${title}@(.7z|.7Z|.gen|.GEN|.md|.MD|.smd|.SMD|.zip|.ZIP|.bin|.BIN)"
+    },
+    "titleFromVariable": {
+      "caseInsensitiveVariables": false,
+      "skipFileIfVariableWasNotFound": false,
+      "limitToGroups": []
+    },
+    "fuzzyMatch": {
+      "replaceDiacritics": true,
+      "removeCharacters": true,
+      "removeBrackets": true
+    },
+    "executable": {
+      "path": "/usr/bin/flatpak",
+      "shortcutPassthrough": false,
+      "appendArgsToExecutable": true
+    },
+    "imageProviderAPIs": {
+      "sgdb": {
+        "nsfw": false,
+        "humor": false,
+        "imageMotionTypes": [
+          "static"
+        ],
+        "styles": [],
+        "stylesHero": [],
+        "stylesLogo": [],
+        "stylesIcon": []
+      },
+      "steamCDN": {}
+    },
+    "controllers": {
+      "ps4": null,
+      "ps5": null,
+      "xbox360": null,
+      "xboxone": null,
+      "switch_joycon_left": null,
+      "switch_joycon_right": null,
+      "switch_pro": null,
+      "neptune": null
+    },
+    "defaultImage": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "localImages": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "steamInputEnabled": "1",
+    "drmProtect": false,
+    "steamCategories": [
+      "Genesis/Mega Drive"
+    ],
+    "overlayImages": {
+      "tall": "",
+      "long": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "version": 29,
+    "parserId": "pbos0045"
+  },
+  {
+    "parserType": "Glob",
+    "configTitle": "Sega Genesis/Mega Drive - Retroarch(Flatpak) - Genesis Plus GX (SD card)",
+    "executableModifier": "\"${exePath}\"",
+    "romDirectory": "/run/media",
+    "steamDirectory": "${steamdirglobal}",
+    "startInDirectory": "",
+    "titleModifier": "${fuzzyTitle}",
+    "executableArgs": "run org.libretro.RetroArch -L ${os:win|cores|${os:mac|${racores}|${os:linux|${racores}}}}${/}genesis_plus_gx_libretro.${os:win|dll|${os:mac|dylib|${os:linux|so}}} \"${filePath}\"",
+    "onlineImageQueries": [
+      "${fuzzyTitle}"
+    ],
+    "imagePool": "${fuzzyTitle}",
+    "imageProviders": [
+      "sgdb"
+    ],
+    "disabled": false,
+    "userAccounts": {
+      "specifiedAccounts": [
+        "Global"
+      ]
+    },
+    "parserInputs": {
+      "glob": "*/*/Emulation/roms/genesis/${title}@(.7z|.7Z|.gen|.GEN|.md|.MD|.smd|.SMD|.zip|.ZIP|.bin|.BIN)"
+    },
+    "titleFromVariable": {
+      "caseInsensitiveVariables": false,
+      "skipFileIfVariableWasNotFound": false,
+      "limitToGroups": []
+    },
+    "fuzzyMatch": {
+      "replaceDiacritics": true,
+      "removeCharacters": true,
+      "removeBrackets": true
+    },
+    "executable": {
+      "path": "/usr/bin/flatpak",
+      "shortcutPassthrough": false,
+      "appendArgsToExecutable": true
+    },
+    "imageProviderAPIs": {
+      "sgdb": {
+        "nsfw": false,
+        "humor": false,
+        "imageMotionTypes": [
+          "static"
+        ],
+        "styles": [],
+        "stylesHero": [],
+        "stylesLogo": [],
+        "stylesIcon": []
+      },
+      "steamCDN": {}
+    },
+    "controllers": {
+      "ps4": null,
+      "ps5": null,
+      "xbox360": null,
+      "xboxone": null,
+      "switch_joycon_left": null,
+      "switch_joycon_right": null,
+      "switch_pro": null,
+      "neptune": null
+    },
+    "defaultImage": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "localImages": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "steamInputEnabled": "1",
+    "drmProtect": false,
+    "steamCategories": [
+      "Genesis/Mega Drive"
+    ],
+    "overlayImages": {
+      "tall": "",
+      "long": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "version": 29,
+    "parserId": "pbos0046"
+  },
+  {
+    "parserType": "Glob",
+    "configTitle": "Sony PlayStation Vita - Vita3K (Installed Titles)",
+    "executableModifier": "\"${exePath}\"",
+    "romDirectory": "@HOME@/.local/share/Vita3K/Vita3K/ux0/app",
+    "steamDirectory": "${steamdirglobal}",
+    "startInDirectory": "",
+    "titleModifier": "${fuzzyTitle}",
+    "executableArgs": "-F -r \"${fileName}\"",
+    "onlineImageQueries": [
+      "${fuzzyTitle}"
+    ],
+    "imagePool": "${fuzzyTitle}",
+    "imageProviders": [
+      "sgdb"
+    ],
+    "disabled": false,
+    "userAccounts": {
+      "specifiedAccounts": [
+        "Global"
+      ]
+    },
+    "parserInputs": {
+      "glob": "${title}"
+    },
+    "titleFromVariable": {
+      "caseInsensitiveVariables": false,
+      "skipFileIfVariableWasNotFound": false,
+      "limitToGroups": []
+    },
+    "fuzzyMatch": {
+      "replaceDiacritics": true,
+      "removeCharacters": true,
+      "removeBrackets": true
+    },
+    "executable": {
+      "path": "@HOME@/Applications/Vita3K.AppImage",
+      "shortcutPassthrough": false,
+      "appendArgsToExecutable": true
+    },
+    "imageProviderAPIs": {
+      "sgdb": {
+        "nsfw": false,
+        "humor": false,
+        "imageMotionTypes": [
+          "static"
+        ],
+        "styles": [],
+        "stylesHero": [],
+        "stylesLogo": [],
+        "stylesIcon": []
+      },
+      "steamCDN": {}
+    },
+    "controllers": {
+      "ps4": null,
+      "ps5": null,
+      "xbox360": null,
+      "xboxone": null,
+      "switch_joycon_left": null,
+      "switch_joycon_right": null,
+      "switch_pro": null,
+      "neptune": null
+    },
+    "defaultImage": {
+      "long": "",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "localImages": {
+      "long": "${filePath}/sce_sys/pic0@(.png|.PNG|.jpg|.JPG)",
+      "tall": "",
+      "hero": "",
+      "logo": "",
+      "icon": "${filePath}/sce_sys/icon0@(.png|.PNG|.jpg|.JPG)"
+    },
+    "steamInputEnabled": "1",
+    "drmProtect": false,
+    "steamCategories": [
+      "PS Vita"
+    ],
+    "overlayImages": {
+      "tall": "",
+      "long": "",
+      "hero": "",
+      "logo": "",
+      "icon": ""
+    },
+    "version": 29,
+    "parserId": "pbos0047"
+  }
+]
