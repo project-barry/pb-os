@@ -421,6 +421,25 @@ fetch_openabl() {
   log "OpenABL v${ver} verified (${ABL_SOCS[*]})"
 }
 
+# The same payloads in the root filesystem, so update packages carry them too:
+# the PB-OS tab's boot-menu update (pbos-qamd notices section) installs them
+# from there, checked against releases.tsv's hashes.
+install_openabl_rootfs() {
+  [[ -n "${ABL_SRC}" ]] || return 0
+  local dst="${R}/usr/share/pb-os/openabl" soc f
+  sudo_run rm -rf "${dst}"
+  sudo_run install -d "${dst}/LICENSES"
+  printf '%s\n' "${PBOS_ABL_VERSION}" | sudo_run tee "${dst}/VERSION" >/dev/null
+  sudo_run install -m0644 "${ROOT}/abl/releases.tsv" "${ABL_SRC}/LICENSE" "${ABL_SRC}/LICENSES.md" "${dst}/"
+  for f in "${ABL_SRC}"/LICENSES/*; do
+    sudo_run install -m0644 "${f}" "${dst}/LICENSES/"
+  done
+  for soc in "${ABL_SOCS[@]}"; do
+    sudo_run install -d "${dst}/${soc}"
+    sudo_run install -m0644 "${ABL_SRC}/${soc}/abl_signed-${soc}.elf" "${dst}/${soc}/"
+  done
+}
+
 stage_openabl() {
   [[ -n "${ABL_SRC}" ]] || return 0
   local dst="${MNT}/boot/openabl" soc d s f
@@ -454,6 +473,7 @@ build_image() {
   [[ -x "${R}/usr/bin/bash" ]] || die "rootfs not ready"
   [[ -f "${KOUT}/boot/KERNEL" ]] || die "missing ${KOUT}/boot/KERNEL"
   fetch_openabl
+  install_openabl_rootfs
 
   if [[ "${AUTO_ROOT}" -eq 1 ]]; then
     local used_mib trim_mib

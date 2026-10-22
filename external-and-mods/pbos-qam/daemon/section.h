@@ -51,5 +51,6 @@ std::unique_ptr<Section> make_tools_section();
 std::unique_ptr<Section> make_barry_section();
 std::unique_ptr<Section> make_files_section();
 std::unique_ptr<Section> make_store_section();
+std::unique_ptr<Section> make_notices_section();
 
 }  // namespace pq
