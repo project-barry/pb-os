@@ -122,6 +122,20 @@
       "note": "On the AYN Thor, Quick Access → PB-OS → Display → Two-screen emulators puts the touch screen on the bottom screen."
     },
     {
+      "id": "eden",
+      "name": "Eden",
+      "summary": "Nintendo Switch",
+      "category": "emulators",
+      "icon": "https://git.eden-emu.dev/avatars/c641f0883b3375770ea4950e1f97208b32da7240667e1b4fad096d6d7bcb4db0",
+      "install": {
+        "type": "appimage",
+        "releases": "https://git.eden-emu.dev/api/v1/repos/eden-emu/eden/releases?limit=10",
+        "asset": "^Eden-Linux-v.*-aarch64-clang-pgo\\.AppImage$",
+        "filename": "Eden.AppImage"
+      },
+      "note": "Needs keys and firmware dumped from your own Switch."
+    },
+    {
       "id": "cemu",
       "name": "Cemu",
       "summary": "Wii U",
@@ -232,6 +246,19 @@
       "install": {
         "type": "flatpak",
         "ref": "io.github.unknownskl.greenlight"
+      }
+    },
+    {
+      "id": "heroic",
+      "name": "Heroic Games Launcher",
+      "summary": "Epic, GOG and Amazon games",
+      "category": "applications",
+      "icon": "https://github.com/Heroic-Games-Launcher.png",
+      "install": {
+        "type": "appimage",
+        "releases": "https://api.github.com/repos/Heroic-Games-Launcher/HeroicGamesLauncher/releases?per_page=10",
+        "asset": "^Heroic-[0-9][0-9.]*-linux-arm64\\.AppImage$",
+        "filename": "Heroic.AppImage"
       }
     },
     {
