@@ -6,9 +6,10 @@
 // GPL-2.0-or-later, decky/armada-store), which this follows:
 // - flatpak: from Flathub, system-wide (flatpak install --system), then given
 //   the user's home and removable drives (flatpak override).
-// - appimage: the newest release asset matching a pattern, from a GitHub or
-//   GitLab releases feed, into ~/Applications, with a desktop entry for
-//   Desktop Mode.
+// - appimage: the newest release asset matching a pattern, from a GitHub,
+//   GitLab or Forgejo releases feed, into ~/Applications, with a desktop
+//   entry for Desktop Mode. "linksInNotes" takes the downloads from links in
+//   the release notes, for feeds that attach none (Eden's nightlies).
 // Unlike Armada's, the DS and 3DS emulators are the stock ones (Flathub's
 // melonDS and Azahar): gamescope's dual-screen branch puts their second
 // window on the AYN Thor's bottom screen, and the Barry section's
@@ -242,8 +243,11 @@ Value fetch_json(const std::string& url) {
 }
 
 // The newest release (by its date) with an asset matching pattern. A
-// prerelease only when the project publishes nothing else.
-Release resolve_release(const std::string& feed, const std::string& pattern) {
+// prerelease only when the project publishes nothing else. links_in_notes:
+// a release without assets offers the HTTPS links in its notes instead,
+// named by their last path part.
+Release resolve_release(const std::string& feed, const std::string& pattern, bool links_in_notes = false) {
+    static const std::regex link_re("https://[^\\s()<>\\[\\]\"'`]+");
     Value data = fetch_json(feed);
     std::vector<Value> releases;
     if (data.is_object()) releases.push_back(data);
@@ -268,6 +272,13 @@ Release resolve_release(const std::string& feed, const std::string& pattern) {
                 for (const auto& a : assets.items())
                     list.emplace_back(a["name"].str(), a["browser_download_url"].str(),
                                       a["updated_at"].str(a["created_at"].str()));
+            if (list.empty() && links_in_notes) {
+                const std::string body = rel["body"].str();
+                for (auto it = std::sregex_iterator(body.begin(), body.end(), link_re); it != std::sregex_iterator(); ++it) {
+                    std::string url = it->str();
+                    list.emplace_back(url.substr(url.find_last_of('/') + 1), url, "");
+                }
+            }
             for (const auto& [name, url, adate] : list) {
                 if (url.empty() || !std::regex_search(name, re)) continue;
                 // A fixed tag ("nightly") keeps its date when its assets are
@@ -540,7 +551,7 @@ private:
             if (in["type"].str() != "appimage" || in["releases"].str().empty()) continue;
             if (!installed_info(app, state, fp)["managed"].truthy()) continue;
             try {
-                Release rel = resolve_release(in["releases"].str(), in["asset"].str());
+                Release rel = resolve_release(in["releases"].str(), in["asset"].str(), in["linksInNotes"].truthy());
                 up_tags_[app["id"].str()] = rel.tag;
                 up_stamps_[app["id"].str()] = rel.stamp;
             } catch (const std::exception&) {
@@ -734,7 +745,7 @@ private:
         std::string file = in["filename"].str();
         if (!plain_name(file)) throw std::runtime_error("Bad file name in the catalog");
         set_phase(j, "resolving");
-        Release rel = resolve_release(in["releases"].str(), in["asset"].str());
+        Release rel = resolve_release(in["releases"].str(), in["asset"].str(), in["linksInNotes"].truthy());
         if (rel.url.rfind("https://", 0) != 0) throw std::runtime_error("Refusing a download that isn't HTTPS");
         const Value before = load_state();
         std::string previous = before["appimages"][id]["filename"].str();

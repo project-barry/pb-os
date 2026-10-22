@@ -129,11 +129,12 @@
       "icon": "https://git.eden-emu.dev/avatars/c641f0883b3375770ea4950e1f97208b32da7240667e1b4fad096d6d7bcb4db0",
       "install": {
         "type": "appimage",
-        "releases": "https://git.eden-emu.dev/api/v1/repos/eden-emu/eden/releases?limit=10",
-        "asset": "^Eden-Linux-v.*-aarch64-clang-pgo\\.AppImage$",
+        "releases": "https://git.eden-emu.dev/api/v1/repos/eden-ci/nightly/releases?limit=10",
+        "linksInNotes": true,
+        "asset": "^Eden-Linux-[0-9a-f]+-aarch64-clang-pgo\\.AppImage$",
         "filename": "Eden.AppImage"
       },
-      "note": "Needs keys and firmware dumped from your own Switch."
+      "note": "Nightly builds. Needs keys and firmware dumped from your own Switch."
     },
     {
       "id": "cemu",
