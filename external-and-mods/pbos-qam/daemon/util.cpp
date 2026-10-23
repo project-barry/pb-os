@@ -91,6 +91,24 @@ bool is_digits(std::string_view s) {
     return !s.empty() && std::all_of(s.begin(), s.end(), [](char c) { return c >= '0' && c <= '9'; });
 }
 
+std::string base64(std::string_view in) {
+    const auto* data = reinterpret_cast<const unsigned char*>(in.data());
+    const size_t n = in.size();
+    static const char* t = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string out;
+    out.reserve((n + 2) / 3 * 4);
+    for (size_t i = 0; i < n; i += 3) {
+        unsigned v = data[i] << 16;
+        if (i + 1 < n) v |= data[i + 1] << 8;
+        if (i + 2 < n) v |= data[i + 2];
+        out += t[(v >> 18) & 63];
+        out += t[(v >> 12) & 63];
+        out += i + 1 < n ? t[(v >> 6) & 63] : '=';
+        out += i + 2 < n ? t[v & 63] : '=';
+    }
+    return out;
+}
+
 std::optional<std::string> read_file(const std::string& path) {
     int fd = open(path.c_str(), O_RDONLY | O_CLOEXEC);
     if (fd < 0) return std::nullopt;

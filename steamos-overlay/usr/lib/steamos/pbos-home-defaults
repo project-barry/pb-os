@@ -8,6 +8,9 @@
 #   microSD card (EmuDeck's folder layout), plus its Steam and RetroArch core
 #   folders. From SRM's own community presets (GPL-3.0, see CREDITS.md).
 # - ~/Emulation/roms/<system>: the empty folders those parsers read.
+# - Eden: player 1 on Steam's virtual gamepad (28de:11ff, what Steam Input
+#   gives every game in Game Mode), Switch buttons by position (A east).
+#   Only the controls: Eden fills in the rest of qt-config.ini itself.
 set -u
 
 DEFAULTS=/usr/share/pb-os/home-defaults
@@ -24,6 +27,7 @@ seed() {
 srm="$HOME/.config/steam-rom-manager/userData"
 seed "$DEFAULTS/steam-rom-manager/userConfigurations.json" "$srm/userConfigurations.json"
 seed "$DEFAULTS/steam-rom-manager/userSettings.json" "$srm/userSettings.json"
+seed "$DEFAULTS/eden/qt-config.ini" "$HOME/.config/eden/qt-config.ini"
 
 while read -r folder; do
   [[ -n "$folder" ]] && mkdir -p "$HOME/Emulation/roms/$folder"

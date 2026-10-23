@@ -66,6 +66,11 @@ PB-OS ships no emulators. The App Store lists some (and a few apps) in
 
 After an install, the frontend adds the app to Steam's library
 (`SteamClient.Apps.AddShortcut`); apps marked `desktopOnly` get no shortcut.
+The shortcut gets the app's own artwork, which ships in `store/art/<id>/`
+(cover, wide cover, hero, logo and icon, made by `store/make-art.py` from
+each project's logo in `store/art-src/`, sources and licenses in
+`store/art-src/SOURCES.md`). Shortcuts made before that get it once, unless
+the user already set a cover of their own.
 `postInstall: "retroarch-cores-url"` gives Flathub's RetroArch the aarch64
 core download address its build lacks, while the user's own setting is empty.
 

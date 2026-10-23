@@ -22,7 +22,10 @@
 // Steam shortcuts are made by the frontend (SteamClient.Apps.AddShortcut);
 // an install leaves its app on a pending list here until the frontend
 // records the shortcut, so an install that ends with Quick Access closed
-// still gets one.
+// still gets one. Each app's Steam artwork ships with the catalog
+// (store/art/ID/: capsule, wide, hero, logo, icon); the frontend gives it
+// to Steam with the shortcut, and once to shortcuts made before it shipped
+// unless the user has art of their own there ("art" in the state).
 //
 // Nothing polls: one job runs at a time on a worker thread, and its phase
 // and progress go to the frontend as "jobs" events. Updates are looked up
@@ -77,6 +80,7 @@ std::string share_dir() {
 }
 
 std::string catalog_path() { return share_dir() + "/store/catalog.json"; }
+std::string art_dir(const std::string& id) { return share_dir() + "/store/art/" + id; }
 
 double now_s() {
     timespec ts;
@@ -352,6 +356,8 @@ public:
         if (m == "record_shortcut") return record_shortcut(a.at(0).str(), a.at(1).as_int());
         if (m == "clear_shortcut") return clear_shortcut(a.at(0).str(), a.at(1));
         if (m == "prepare_shortcut") return prepare_shortcut(a.at(0).str());
+        if (m == "artwork") return artwork(a.at(0).str(), a.at(1).as_int());
+        if (m == "record_art") return record_art(a.at(0).str(), a.at(1).as_int());
         throw CallError("store has no method " + m);
     }
 
@@ -498,6 +504,7 @@ private:
         out["installed"] = installed;
         out["shortcuts"] = state["shortcuts"].is_object() ? state["shortcuts"] : Value::object();
         out["pending"] = state["pendingShortcuts"].is_array() ? state["pendingShortcuts"] : Value::array();
+        out["art"] = state["art"].is_object() ? state["art"] : Value::object();
         return out;
     }
 
@@ -958,6 +965,44 @@ private:
             if (!expected.is_null() && cur->as_int() != expected.as_int()) return;
             s["shortcuts"].erase(id);
         });
+        return true;
+    }
+
+    // The app's artwork for its shortcut: Steam's asset types (0 capsule,
+    // 1 hero, 2 logo, 3 wide) with file type and base64 data, the icon's
+    // path, and whether the user already has a capsule of their own for
+    // that shortcut in Steam's grid folder (then nothing is replaced).
+    Value artwork(const std::string& id, long long appid) {
+        if (!find_app(id) || appid <= 0) throw CallError("Bad shortcut");
+        static const std::pair<int, const char*> kinds[] = {{0, "capsule"}, {1, "hero"}, {2, "logo"}, {3, "wide"}};
+        const std::string dir = art_dir(id);
+        Value images = Value::array();
+        for (const auto& [type, name] : kinds) {
+            for (const char* ext : {"jpg", "png"}) {
+                auto data = read_file(dir + "/" + name + "." + ext);
+                if (!data) continue;
+                Value img = Value::object();
+                img["type"] = type;
+                img["ext"] = ext;
+                img["data"] = base64(*data);
+                images.push(std::move(img));
+                break;
+            }
+        }
+        // Only names are looked at in the user's Steam folder, nothing is read.
+        const std::string home = desktop_user().home;
+        std::string steam = realpath(home + "/.steam/steam");
+        if (!is_dir(steam)) steam = home + "/.local/share/Steam";
+        Value v = Value::object();
+        v["images"] = std::move(images);
+        v["icon"] = is_file(dir + "/icon.png") ? dir + "/icon.png" : "";
+        v["hasOwn"] = !glob(steam + "/userdata/*/config/grid/" + std::to_string(appid) + "p.*").empty();
+        return v;
+    }
+
+    Value record_art(const std::string& id, long long appid) {
+        if (!find_app(id) || appid <= 0) throw CallError("Bad shortcut");
+        mutate_state([&](Value& s) { s["art"][id] = appid; });
         return true;
     }
 

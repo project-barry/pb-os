@@ -23,6 +23,8 @@ std::vector<std::string> split_lines(std::string_view s);
 std::string lower(std::string_view s);
 // Python's str.isdigit for ASCII: non-empty, digits only.
 bool is_digits(std::string_view s);
+// Standard base64 (RFC 4648, padded).
+std::string base64(std::string_view data);
 
 std::optional<std::string> read_file(const std::string& path);
 // The file's text, stripped; def when it cannot be read (Python's rd()).

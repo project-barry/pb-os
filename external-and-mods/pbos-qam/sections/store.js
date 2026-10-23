@@ -20,6 +20,8 @@ const dismiss = callable("dismiss");
 const recordShortcut = callable("record_shortcut");
 const clearShortcut = callable("clear_shortcut");
 const prepareShortcut = callable("prepare_shortcut");
+const getArtwork = callable("artwork");
+const recordArt = callable("record_art");
 
 const CATEGORIES = [
     { key: "emulators", title: "Emulators" },
@@ -56,6 +58,22 @@ function removeFromSteam(appid) {
     apps.RemoveShortcut(appid);
 }
 
+// The app's own artwork (store/art/ID/, from the backend) on its shortcut:
+// capsule, wide, hero and logo through Steam's custom artwork, the icon by
+// path. A shortcut the user already gave a capsule keeps all of theirs.
+async function applyArt(id, appid) {
+    const apps = steamApps();
+    if (!apps || !apps.SetCustomArtworkForApp) return;
+    const art = await getArtwork(id, appid);
+    if (!art.hasOwn) {
+        for (const img of art.images) {
+            try { await apps.SetCustomArtworkForApp(appid, img.data, img.ext, img.type); } catch (e) { /* the rest still */ }
+        }
+        try { if (art.icon && apps.SetShortcutIcon) apps.SetShortcutIcon(appid, art.icon); } catch (e) { /* no icon */ }
+    }
+    await recordArt(id, appid);
+}
+
 // A non-Steam shortcut starts by its 64-bit game id: (appid << 32) | 0x02000000.
 function launch(appid) {
     const gameid = ((BigInt(appid >>> 0) << 32n) | 0x02000000n).toString();
@@ -89,15 +107,45 @@ async function addPending() {
             if (!app || !app.launch || !(st.installed[id] || {}).installed) continue;
             tried.add(id);  // AddShortcut may have run before a failure: never twice
             try {
-                await recordShortcut(id, await addToSteam(app.launch));
+                const appid = await addToSteam(app.launch);
+                await recordShortcut(id, appid);
+                try { await applyArt(id, appid); } catch (e) { P.fail("artwork", e); }
                 toast(app.name, "Added to your Steam library");
             } catch (e) {
                 toast(app.name, String(e.message || e));
             }
         }
+        await artPass(st);
     } catch (e) {
         P.fail("shortcuts", e);
     }
+}
+
+// Shortcuts made before their artwork shipped get it once. Steam's library
+// fills in after Steam starts: one it doesn't know yet waits for Steam's
+// next library change (a removed shortcut just stays waiting).
+let artWaiting = [];
+let artTimer = null;
+async function artPass(st) {
+    const waiting = [];
+    for (const [id, appid] of Object.entries(st.shortcuts || {})) {
+        if ((st.art || {})[id] === appid) continue;
+        if (!inSteam(appid)) { waiting.push([id, appid]); continue; }
+        try { await applyArt(id, appid); } catch (e) { P.fail("artwork", e); }
+    }
+    artWaiting = waiting;
+}
+function onLibraryChange() {
+    if (!artWaiting.length || artTimer) return;
+    // Changes come in bursts: one look after the burst.
+    artTimer = setTimeout(async () => {
+        artTimer = null;
+        const ready = artWaiting.filter(([, appid]) => inSteam(appid));
+        artWaiting = artWaiting.filter(([, appid]) => !inSteam(appid));
+        for (const [id, appid] of ready) {
+            try { await applyArt(id, appid); } catch (e) { P.fail("artwork", e); }
+        }
+    }, 1000);
 }
 
 // --------------------------------------------------------------- state ---
@@ -264,4 +312,5 @@ const StoreIcon = () => jsx("svg", {
 P.plugin({ id: "store", title: "App Store", icon: StoreIcon, content: StorePage, group: "App Store", order: 10 });
 // Installs that ended while Steam was closed get their shortcuts now.
 addPending();
+try { steamApps().RegisterForAppOverviewChanges(onLibraryChange); } catch (e) { P.fail("artwork", e); }
 });

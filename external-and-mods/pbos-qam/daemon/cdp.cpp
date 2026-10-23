@@ -25,21 +25,6 @@ double now_s() {
     return ts.tv_sec + ts.tv_nsec / 1e9;
 }
 
-std::string base64(const unsigned char* data, size_t n) {
-    static const char* t = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    std::string out;
-    for (size_t i = 0; i < n; i += 3) {
-        unsigned v = data[i] << 16;
-        if (i + 1 < n) v |= data[i + 1] << 8;
-        if (i + 2 < n) v |= data[i + 2];
-        out += t[(v >> 18) & 63];
-        out += t[(v >> 12) & 63];
-        out += i + 1 < n ? t[(v >> 6) & 63] : '=';
-        out += i + 2 < n ? t[v & 63] : '=';
-    }
-    return out;
-}
-
 // The titles Steam's shared page has had (Decky Loader's SHARED_CTX_NAMES).
 const char* const kSharedTitles[] = {"SharedJSContext", "Steam Shared Context presented by Valve™", "Steam", "SP"};
 
@@ -75,7 +60,7 @@ bool WebSocket::connect(int port, const std::string& path, double timeout) {
     }
     std::string req = "GET " + path + " HTTP/1.1\r\nHost: 127.0.0.1:" + std::to_string(port) +
                       "\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: " +
-                      base64(key, sizeof key) + "\r\nSec-WebSocket-Version: 13\r\n\r\n";
+                      base64(std::string_view(reinterpret_cast<const char*>(key), sizeof key)) + "\r\nSec-WebSocket-Version: 13\r\n\r\n";
     size_t done = 0;
     while (done < req.size()) {
         ssize_t n = send(fd, req.data() + done, req.size() - done, MSG_NOSIGNAL);

@@ -6,6 +6,7 @@
 #   /usr/share/pbos-qam/pbos-qam.js     the frontend loader (prebuilt, frontend/build.sh)
 #   /usr/share/pbos-qam/sections/*.js   each section's frontend
 #   /usr/share/pbos-qam/store/catalog.json  the App Store's apps
+#   /usr/share/pbos-qam/store/art/ID/       their Steam artwork
 # Usage: install-pbos-qam.sh <rootfs>
 set -euo pipefail
 
@@ -29,6 +30,11 @@ for f in "$SRC"/sections/*.js; do
 done
 # The App Store's catalog (sections/store.js, daemon/store.cpp).
 install -D -m 0644 "$SRC/store/catalog.json" "$R/usr/share/pbos-qam/store/catalog.json"
+for d in "$SRC"/store/art/*/; do
+  for f in "$d"*; do
+    install -D -m 0644 "$f" "$R/usr/share/pbos-qam/store/art/$(basename "$d")/$(basename "$f")"
+  done
+done
 install -m 0644 "$OVL/usr/lib/systemd/system/pbos-qamd.service" \
   "$R/usr/lib/systemd/system/pbos-qamd.service"
 mkdir -p "$R/usr/lib/systemd/system/multi-user.target.wants"
