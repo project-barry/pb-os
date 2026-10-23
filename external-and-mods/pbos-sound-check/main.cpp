@@ -59,10 +59,12 @@ std::string sh(const std::string& cmd) {
     return out;
 }
 
+// Spaces, tabs and line ends at both ends (pactl indents with tabs).
 std::string trim(std::string s) {
-    while (!s.empty() && (s.back() == '\n' || s.back() == ' ')) s.pop_back();
+    auto blank = [](char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r'; };
+    while (!s.empty() && blank(s.back())) s.pop_back();
     size_t i = 0;
-    while (i < s.size() && s[i] == ' ') i++;
+    while (i < s.size() && blank(s[i])) i++;
     return s.substr(i);
 }
 
@@ -284,7 +286,7 @@ private:
 
     void welcome() {
         show({"PB-OS Sound Check",
-              "This saves a sound report for the PB-OS team and plays two short test tones.\n\n"
+              "This saves a sound report for the PB-OS team and plays short test tones.\n\n"
               "Is the sound gone right now?",
               {{"Yes, the sound is gone", [this] { start(true); }},
                {"No, the sound works (after a restart)", [this] { start(false); }},
@@ -297,6 +299,12 @@ private:
         show({"Saving the report…", "This takes a few seconds.", {}, true});
         std::thread([this] {
             std::string r = sh("pbos-report audio 2>&1");
+            // The audio path below PipeWire needs root: pbos-report-audio-root.service,
+            // which the user may start (50-pbos-report.rules), writes it to /run.
+            if (sh("timeout 60 systemctl start pbos-report-audio-root.service >/dev/null 2>&1 && echo ok").find("ok") == 0)
+                r += sh("cat /run/pbos-report/audio-root.txt 2>&1");
+            else
+                r += "\n=== audio path (root only): could not be read\n";
             later([this, r] {
                 report_ = r;
                 outputs();
@@ -559,6 +567,11 @@ int main(int argc, char** argv) {
         std::stringstream b;
         b << f.rdbuf();
         fputs(for_sending(b.str()).c_str(), stdout);
+        return 0;
+    }
+    // Test: the output the second tone plays on.
+    if (argc == 2 && std::string(argv[1]) == "--real-output") {
+        printf("%s\n", real_output().c_str());
         return 0;
     }
     // Steam starts games with its (x86) overlay preloaded: every command run

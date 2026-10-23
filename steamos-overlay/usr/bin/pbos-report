@@ -8,10 +8,12 @@
 # nothing and sends nothing anywhere.
 #
 # Usage: pbos-report AREA   (audio, sleep, controller, display, wifi, other)
+#        pbos-report audio-root   (root only: just the audio path below PipeWire;
+#        pbos-report-audio-root.service runs it for PB-OS Sound Check)
 set -u
 
 area="${1:-other}"
-case "$area" in audio|sleep|controller|display|wifi|other) ;; *) echo "unknown area: $area" >&2; exit 2 ;; esac
+case "$area" in audio|audio-root|sleep|controller|display|wifi|other) ;; *) echo "unknown area: $area" >&2; exit 2 ;; esac
 export LC_ALL=C
 
 # The desktop user's sound server and settings: as that user.
@@ -85,6 +87,84 @@ audio() {
   log -g 'memguard' | tail -n 40
   section "kernel sound lines (this boot)"
   log -k | grep -iE 'snd|audio|q6|adsp|remoteproc|PDR|gpr|apm|soundwire|wsa|wcd|lpass' | tail -n 200
+  [[ $EUID -eq 0 ]] && audio_root
+}
+
+# Below PipeWire, root only (debugfs): which DAPM widgets are powered (where
+# the path from the DSP to the speakers stops), the speaker amps' (aw88166 or
+# WSA884x) and the LPASS WSA macro's registers, SoundWire, and the playback
+# pointer twice a second apart (does the DSP take the audio at playback speed?).
+# A little-endian number, n bytes, for a WAV header.
+le() { local v=$1 n=$2 i; for ((i = 0; i < n; i++)); do printf "\\x$(printf %02x $(((v >> (8 * i)) & 255)))"; done; }
+
+# Silence (48 kHz stereo, 16 bit): the audio path is read while it plays, so
+# it is powered as it is for sound, and nobody hears anything.
+silence() {
+  local n=$((48000 * 4 * $2))
+  { printf 'RIFF'; le $((36 + n)) 4; printf 'WAVEfmt '; le 16 4; le 1 2; le 2 2; le 48000 4; le 192000 4
+    le 4 2; le 16 2; printf 'data'; le "$n" 4; head -c "$n" /dev/zero; } > "$1"
+}
+
+audio_root() {
+  if [[ $EUID -ne 0 ]]; then section "audio path (root only): skipped, not root"; return; fi
+  local quiet player=""
+  quiet="$(mktemp /tmp/pbos-report-silence.XXXXXX.wav)"
+  silence "$quiet" 6
+  chmod 0644 "$quiet"
+  as_user timeout 8 pw-play "$quiet" >/dev/null 2>&1 &
+  player=$!
+  sleep 1
+  section "playback stream while silence plays (hw_params, then status twice, 1 s apart)"
+  local p
+  for p in /proc/asound/card*/pcm*p/sub0; do
+    [[ -r $p/status ]] || continue
+    printf '%s hw_params: %s\n' "$p" "$(tr '\n' ' ' < "$p/hw_params")"
+    printf '%s status: %s\n' "$p" "$(tr '\n' ' ' < "$p/status")"
+  done
+  sleep 1
+  for p in /proc/asound/card*/pcm*p/sub0; do
+    [[ -r $p/status ]] && printf '%s status: %s\n' "$p" "$(tr '\n' ' ' < "$p/status")"
+  done
+  section "DAPM widgets while silence plays (powered On/Off)"
+  local w
+  for w in /sys/kernel/debug/asoc/*/dapm/* /sys/kernel/debug/asoc/*/*/dapm/*; do
+    [[ -f $w && ${w##*/} != bias_level ]] || continue
+    printf '%s: %s\n' "${w#/sys/kernel/debug/asoc/}" "$(head -n 1 "$w" 2>&1)"
+  done | sort
+  for w in /sys/kernel/debug/asoc/*/dapm/bias_level /sys/kernel/debug/asoc/*/*/dapm/bias_level; do
+    [[ -f $w ]] && printf '%s: %s\n' "${w#/sys/kernel/debug/asoc/}" "$(cat "$w")"
+  done
+  section "SoundWire devices"
+  local d a
+  for d in /sys/bus/soundwire/devices/*; do
+    [[ -d $d ]] || continue
+    printf '%s: driver %s' "${d##*/}" "$(basename "$(readlink "$d/driver" 2>/dev/null)" 2>/dev/null)"
+    for a in status power/runtime_status; do
+      [[ -r $d/$a ]] && printf ', %s %s' "$a" "$(cat "$d/$a" 2>/dev/null)"
+    done
+    echo
+  done
+  local f
+  for f in /sys/kernel/debug/soundwire/master-*/registers; do
+    [[ -r $f ]] && { echo "-- $f"; head -n 200 "$f"; }
+  done
+  section "register maps"
+  local r n
+  for r in /sys/kernel/debug/regmap/*; do
+    printf '%s (%s)\n' "${r##*/}" "$(cat "$r/name" 2>/dev/null)"
+  done
+  # The speaker amps: aw88166 on I2S (AYN Odin 2 family, Thor, Retroid) or
+  # WSA884x on SoundWire, and the LPASS WSA macro.
+  section "speaker amp and WSA macro registers"
+  for r in /sys/kernel/debug/regmap/*; do
+    n="$(cat "$r/name" 2>/dev/null)"
+    case "${r##*/} $n" in *wsa*|*aw88*|*aw87*|*0217:0204*|*0217:0202*) ;; *) continue ;; esac
+    echo "-- ${r##*/} ($n)"
+    head -n 1500 "$r/registers" 2>&1
+  done
+  kill "$player" 2>/dev/null
+  wait "$player" 2>/dev/null
+  rm -f "$quiet"
 }
 
 sleep_area() {
@@ -136,6 +216,10 @@ wifi() {
   log -k | grep -iE 'wlan|ath1|ath12|wcn|cfg80211|mac80211' | tail -n 150
 }
 
+if [[ $area == audio-root ]]; then
+  audio_root
+  exit 0
+fi
 common
 case "$area" in
   audio) audio ;;

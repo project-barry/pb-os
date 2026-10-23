@@ -4,6 +4,8 @@
 // ABL) instead of the OpenABL release PB-OS ships, which fixes the freeze on
 // the logo after a restart. The fix runs here, in Game Mode. It shows at every
 // boot and Steam restart until the boot menu is updated.
+// The other: on every device, only when there is no boot menu notice, a short
+// ask to run PB-OS Sound Check if the sound goes. Shown once.
 window.__pbosQam.section("notices", (P) => {
 const { DFL, SP_JSX, callable } = P;
 const jsx = SP_JSX.jsx;
@@ -11,6 +13,7 @@ const jsxs = SP_JSX.jsxs;
 
 const get = callable("get");
 const update = callable("update");
+const seen = callable("seen");
 
 const line = (text, key) => jsx("div", { style: { marginTop: "8px" }, children: text }, key);
 const lines = (items) => jsxs("div", { children: items.map((t, i) => (i === 0 ? jsx("div", { children: t }, "0") : line(t, String(i)))) });
@@ -46,7 +49,23 @@ const confirmUpdate = (n) => DFL.showModal(jsx(DFL.ConfirmModal, {
     onOK: () => runUpdate(n),
 }));
 
+function soundCheckHelp(n) {
+    seen(n.id).catch((e) => P.fail("notices", e));
+    DFL.showModal(jsx(DFL.ConfirmModal, {
+        strTitle: "Help! There is an intermittent Audio Bug in PB-OS",
+        strDescription: lines([
+            "Your mission, if you choose to accept it, is to help us track it down.",
+            "If your sound ever cuts unexpectedly, please do us a favor and run the PB-OS Sound Check in Non-Steam Games "
+                + "before rebooting or switching to Desktop mode. This will send us logging data that will help us resolve the problem.",
+            "xoxo - lavachemist and doctor73n",
+        ]),
+        strOKButtonText: "Got it",
+        bAlertDialog: true,
+    }));
+}
+
 get().then((n) => {
+    if (n && n.id === "sound-check-help") return soundCheckHelp(n);
     if (!n || !n.id || !n.canUpdate) return;
     DFL.showModal(jsx(DFL.ConfirmModal, {
         strTitle: "Alert: You should update your boot loader!",

@@ -181,6 +181,11 @@ install_file "$OVL/usr/bin/pbos-report" "$R/usr/bin/pbos-report" 0755
 for f in "$MOD"/pbos-sound-check/art/*.png; do
   install_file "$f" "$R/usr/share/pb-os/sound-check/$(basename "$f")" 0644
 done
+# Its root-only part (the audio path below PipeWire), which the user may start.
+install_file "$OVL/usr/lib/systemd/system/pbos-report-audio-root.service" \
+  "$R/usr/lib/systemd/system/pbos-report-audio-root.service" 0644
+install_file "$OVL/usr/share/polkit-1/rules.d/50-pbos-report.rules" \
+  "$R/usr/share/polkit-1/rules.d/50-pbos-report.rules" 0644
 # Where a report goes when the user taps Send: the project's report relay
 # (a Cloudflare Worker; the Discord webhook is only in its secrets). The
 # address is kept out of the repo: the build host's PBOS_REPORT_URL_FILE.

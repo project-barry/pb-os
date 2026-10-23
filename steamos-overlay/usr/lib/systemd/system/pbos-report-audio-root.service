@@ -1,0 +1,17 @@
+# PB-OS Sound Check's root-only part: the audio path below PipeWire (DAPM
+# widgets, speaker amp registers, SoundWire, the playback pointer), read from
+# debugfs into /run/pbos-report/audio-root.txt for the app to add to its
+# report. The desktop user may start it (50-pbos-report.rules). Temporary,
+# with PB-OS Sound Check.
+[Unit]
+Description=PB-OS Sound Check: the audio path below PipeWire, for its report
+
+[Service]
+Type=oneshot
+RuntimeDirectory=pbos-report
+RuntimeDirectoryMode=0755
+RuntimeDirectoryPreserve=yes
+ExecStart=/bin/sh -c '/usr/bin/pbos-report audio-root > /run/pbos-report/audio-root.txt.new && chmod 0644 /run/pbos-report/audio-root.txt.new && mv -f /run/pbos-report/audio-root.txt.new /run/pbos-report/audio-root.txt'
+TimeoutStartSec=60
+ProtectHome=yes
+PrivateNetwork=yes

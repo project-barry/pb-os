@@ -1,0 +1,10 @@
+// The session (user steamos) may start pbos-report-audio-root.service, which
+// only reads the audio path's state into /run/pbos-report (PB-OS Sound Check).
+polkit.addRule(function (action, subject) {
+    if (action.id == "org.freedesktop.systemd1.manage-units" &&
+        action.lookup("unit") == "pbos-report-audio-root.service" &&
+        action.lookup("verb") == "start" &&
+        subject.user == "steamos") {
+        return polkit.Result.YES;
+    }
+});

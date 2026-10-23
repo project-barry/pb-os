@@ -20,6 +20,11 @@
 // slots are backed up to /home/.pbos-abl-backup first; then slot b, then
 // slot a, each written, flushed and read back; a slot that doesn't read back
 // right gets its backup again.
+//
+// The second notice, only when there is no boot menu one to show: while PB-OS
+// Sound Check ships, a short ask to run it if the sound goes, on every device
+// (most reports come from the AYN Thor, which most users have). Once per
+// device ("seen", in /var/lib/pbos-qam/notices.json).
 
 #include <fcntl.h>
 #include <linux/fs.h>
@@ -42,6 +47,9 @@ using pj::Value;
 const std::string OPENABL = "/usr/share/pb-os/openabl";
 const std::string BACKUPS = "/home/.pbos-abl-backup";
 const std::string ABL_NOTICE = "abl-openabl-1.2";
+const std::string SOUND_NOTICE = "sound-check-help";
+const std::string SOUND_CHECK = "/usr/lib/pbos-sound-check/pbos-sound-check";
+const std::string SEEN = "/var/lib/pbos-qam/notices.json";
 
 struct Menu {
     const char* name;
@@ -174,9 +182,10 @@ public:
     std::string name() const override { return "notices"; }
     bool here() const override { return exists(slot_path('a')); }
 
-    Value call(const std::string& m, const Value&) override {
+    Value call(const std::string& m, const Value& a) override {
         if (m == "get") return get();
         if (m == "update") return update();
+        if (m == "seen") return seen(arg(a, 0, "").str());
         throw CallError("notices has no method " + m);
     }
 
@@ -214,7 +223,7 @@ private:
     Value get() {
         std::lock_guard<std::mutex> g(mu_);
         check();
-        if (!outdated() || !can_update()) return Value::object();
+        if (!outdated() || !can_update()) return sound_notice();
         Value v = Value::object();
         v["id"] = ABL_NOTICE;
         for (const auto& s : slots_)
@@ -226,6 +235,24 @@ private:
         v["version"] = target_ ? target_->version : "";
         v["device"] = dt_model();
         return v;
+    }
+
+    // The Sound Check ask: the app in the image, not seen yet.
+    Value sound_notice() {
+        Value v = Value::object();
+        if (!can_exec(SOUND_CHECK)) return v;
+        if (read_json(SEEN)[SOUND_NOTICE].truthy()) return v;
+        v["id"] = SOUND_NOTICE;
+        return v;
+    }
+
+    // A notice shown once: not again on this device.
+    Value seen(const std::string& id) {
+        std::lock_guard<std::mutex> g(mu_);
+        if (id != SOUND_NOTICE) throw CallError("notices: unknown notice " + id);
+        Value state = read_json(SEEN);
+        state[id] = true;
+        return Value(write_json(SEEN, state));
     }
 
     Value update() {
