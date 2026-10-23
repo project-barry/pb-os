@@ -171,6 +171,28 @@ install_file "$OVL/usr/lib/steamos/pbos-proton-launcher" "$R/usr/lib/steamos/pbo
 # in a game's launch options, its FEX and environment-variable presets, and
 # the ProtonDB Community Fix data (tools/protondb-hints.py, ODbL, see CREDITS.md).
 install_file "$OVL/usr/bin/pbos-game-launch" "$R/usr/bin/pbos-game-launch" 0755
+# Problem reports (PB-OS Quick Access: System > Report a Problem).
+install_file "$OVL/usr/bin/pbos-report" "$R/usr/bin/pbos-report" 0755
+# PB-OS Sound Check (temporary, until the Thor sound dropout is found): the
+# app, built here against the rootfs, and its Steam art (pbos-default-shortcuts
+# adds it to Steam).
+"${ROOT}/external-and-mods/pbos-sound-check/build.sh" "$R" "$R/usr/lib/pbos-sound-check/pbos-sound-check" \
+  || die "cannot build pbos-sound-check (the rootfs needs g++ and the SDL2 and SDL2_ttf headers)"
+for f in "$MOD"/pbos-sound-check/art/*.png; do
+  install_file "$f" "$R/usr/share/pb-os/sound-check/$(basename "$f")" 0644
+done
+# Where a report goes when the user taps Send: the project's report relay
+# (a Cloudflare Worker; the Discord webhook is only in its secrets). The
+# address is kept out of the repo: the build host's PBOS_REPORT_URL_FILE.
+# Without it, PB-OS Sound Check only saves.
+rm -f "$R/usr/share/pb-os/report-url"
+url_file="${PBOS_REPORT_URL_FILE:-/work/pbos-report-url}"
+if [[ -r "$url_file" ]]; then
+  url="$(tr -d ' \n' < "$url_file")"
+  [[ "$url" =~ ^https://[A-Za-z0-9.-]+$ ]] || die "$url_file: not a plain https://host address"
+  printf '%s\n' "$url" > "$R/usr/share/pb-os/report-url"
+  chmod 0644 "$R/usr/share/pb-os/report-url"
+fi
 for f in fex-presets.json env-presets.json protondb-hints.json; do
   install_file "$OVL/usr/share/pb-os/game-launch/$f" "$R/usr/share/pb-os/game-launch/$f" 0644
 done

@@ -1,0 +1,49 @@
+# PB-OS Sound Check (temporary)
+
+A Steam app (a non-Steam shortcut with Barry's head on it) for finding the
+AYN Thor's sound dropout (reports from October 2026). It ships only until
+that bug is found; then remove it from the image and Steam drops the
+shortcut on its own (`TEMPORARY` in `pbos-default-shortcuts`).
+
+What it does, with the controller (A, B, D-pad) or touch:
+
+1. Asks whether the sound is gone right now, or works (after a restart).
+2. Saves `pbos-report audio` (see `steamos-overlay/usr/bin/pbos-report`).
+3. Offers two test tones and asks after each whether it was heard: one
+   through the default output ("Top screen" on the Thor), one straight on the
+   real output under it. Heard on the second but not the first means
+   PipeWire's routing; neither means the driver, DSP or amplifier.
+4. Saves the report with the answers in `~/Desktop/PB-OS Reports`.
+5. Where the image has a report address (`/usr/share/pb-os/report-url`),
+   offers to send it to the PB-OS team (see below). Then, after a "sound is
+   gone" report, asks for a restart and a second, "sound works" run.
+
+## The tones
+
+Ear safety: each tone is one steady 440 Hz beep, 1 s, at -26 dBFS, faded in
+and out over 0.15 s. Never a sweep or a click. The first plays at the user's
+volume. The real output under "Top screen" is held at 100 %, so the second
+plays with the Top screen's volume as its own and is never louder than the
+first, on speakers or headphones. Nothing plays until the user picks "Play".
+
+## Sending
+
+Only when the user taps Send. The device sends a copy (saved beside the
+report as `-sent.txt`) without Wi-Fi and network lines, with MAC addresses,
+IP addresses and the host name hidden, at most 400 KB. It goes to the
+project's report relay (`pb-os-installer-apk/relay`, a Cloudflare Worker:
+`/sound-report`), which masks addresses again and posts the file to a
+private Discord channel. The Discord webhook is only in the Worker's
+secrets. The relay's address is kept out of this repo: `apply-overlays.sh`
+writes it into the image from the build host's `/work/pbos-report-url`
+(`PBOS_REPORT_URL_FILE`). Without that file the app only saves.
+
+## Parts
+
+| Path | Installed as |
+|---|---|
+| `main.cpp`, `build.sh` | `/usr/lib/pbos-sound-check/pbos-sound-check` (SDL2, SDL2_ttf, Noto Sans; built in the rootfs by `apply-overlays.sh`) |
+| `art/*.png`, `make-art.py` | `/usr/share/pb-os/sound-check/`: Steam's library art and icon, copied into each account's grid folder |
+
+`pbos-sound-check --scrub FILE` prints the copy that would be sent for a
+saved report.

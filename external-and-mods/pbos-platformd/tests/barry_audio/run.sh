@@ -40,8 +40,10 @@ for scen in ${SCENARIOS:-startup switch apps usr1 linkgroup saved notop restart}
   for impl in python cpp; do
     for f in snap log msgs run cpu; do rm -f "${OUT:?}/${scen:?}.${impl:?}.$f"; done
     bw /bin/bash /tmp/t/inner.sh "$scen" "$impl" >"$OUT/$scen.$impl.run" 2>&1 || echo "$scen $impl: runner failed"
-    # Its log lines, without pbos-platformd's own.
-    grep -v '^pbos-platformd' "$OUT/$scen.$impl.log" >"$OUT/$scen.$impl.msgs" 2>/dev/null || true
+    # Its log lines, without pbos-platformd's own nor the C++'s event lines
+    # for problem reports (the loopback's output, a real output gone, unmuted).
+    grep -v -E '^pbos-platformd|pbos_top_screen_out (plays on|stream gone)|gone, none in its place|was muted: unmuted' \
+      "$OUT/$scen.$impl.log" >"$OUT/$scen.$impl.msgs" 2>/dev/null || true
   done
   if [[ $scen == idle ]]; then
     cat "$OUT/idle.python.cpu" "$OUT/idle.cpp.cpu"

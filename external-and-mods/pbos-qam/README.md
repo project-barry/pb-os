@@ -13,7 +13,7 @@ has something for:
 - Apps (Thor): Apps, Companion Apps.
 - Performance: a default mode and per-game settings.
 - Hardware, Power: where the device has them.
-- System: Software Update, Keyboard Languages (Thor), Move SteamOS.
+- System: Software Update, Keyboard Languages (Thor), Move SteamOS, Report a Problem.
 - App Store, an entry of its own after the pages: emulators and apps to
   install (see below).
 
@@ -39,6 +39,7 @@ the user's own plugins, but PB-OS's settings no longer depend on it.
 | `daemon/lights.cpp` | | The stick light engine (RP6, Nova, Odin 2s; was `pbos_lights.py`): `pbos-qamd --lights`, its own unit `pbos-utils-lights`, which the tools section starts. Effect frames are its only timer; LED devices coming back after sleep are heard as uevents, the charging indicator with inotify. |
 | `daemon/store.cpp`, `sections/store.js` | `/var/lib/pbos-qam/store.json` | The App Store: installs and uninstalls what `store/catalog.json` lists (`/usr/share/pbos-qam/store/catalog.json`) and adds it to Steam. |
 | `daemon/notices.cpp`, `sections/notices.js` | `/home/.pbos-abl-backup/` (boot menu backups) | A message once Steam starts, no page in the tab: on a device with an older boot menu PB-OS knows (OpenABL 1.0/1.1, ROCKNIX ABL; both `abl` slots hashed as PB-OS Installer does) it offers to install the shipped OpenABL (`/usr/share/pb-os/openabl`) from Game Mode: both slots backed up to `/home/.pbos-abl-backup`, then written one at a time with read-back. At every boot and Steam restart until done; never on the current release or an unidentified boot loader. |
+| `daemon/report.cpp`, `sections/report.js` | `~/Desktop/PB-OS Reports/` | System > Report a Problem: the user picks what went wrong (sound, sleep, controls, screen, Wi-Fi, something else) and saves a report there and then, from Game Mode. `/usr/bin/pbos-report AREA` (run as root, read-only) writes the version, this boot's sleep and wake times, warnings, and that part's state and logs; the file is written as the user. A line in the journal marks the moment. Nothing is sent anywhere. |
 | `daemon/files.cpp` | | Folder listings for the tab's file picker (home and removable drives only). |
 | `daemon/heroart.cpp` | `/run/pbos-qam/steam-game.json` | AYN Thor: the game selected in Steam and its hero and logo images (the user's own art, Steam's, or SteamGridDB's with the user's own API key), for the bottom screen while Barry Launcher is closed. |
 | `daemon/barrylink.cpp` | `/run/pbos-qam/barry.sock` | AYN Thor: Barry Launcher's quick settings page calls a few methods here (brightness, charging, game profiles). Only the desktop user and root are answered. |
@@ -135,6 +136,7 @@ Barry's keyboard availability every 2 s and the running games every 1 s.
 sudo pbos-qamd --call tools get_state
 sudo pbos-qamd --call barry get_languages
 sudo pbos-qamd --call files list '["/home/steamos/Downloads"]'
+sudo pbos-qamd --call report make '["audio"]'
 ```
 
 `--call SECTION METHOD [ARGS]` runs one backend method and prints its

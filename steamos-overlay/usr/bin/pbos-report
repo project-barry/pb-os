@@ -1,0 +1,149 @@
+#!/bin/bash
+# pbos-report: a problem report, for the user to send to the PB-OS team.
+# PB-OS Quick Access (System > Report a Problem) runs it as root and saves
+# its output in ~/Desktop/PB-OS Reports; in Desktop Mode, `pbos-report
+# audio > report.txt` does the same (some logs need sudo).
+#
+# It only reads: logs, settings and the state of the part named. It changes
+# nothing and sends nothing anywhere.
+#
+# Usage: pbos-report AREA   (audio, sleep, controller, display, wifi, other)
+set -u
+
+area="${1:-other}"
+case "$area" in audio|sleep|controller|display|wifi|other) ;; *) echo "unknown area: $area" >&2; exit 2 ;; esac
+export LC_ALL=C
+
+# The desktop user's sound server and settings: as that user.
+user=steamos
+uid="$(id -u "$user" 2>/dev/null || echo 1000)"
+as_user() {
+  if [[ $EUID -eq 0 ]]; then
+    setpriv --reuid="$uid" --regid="$(id -g "$user")" --init-groups -- \
+      env HOME="/home/$user" XDG_RUNTIME_DIR="/run/user/$uid" "$@"
+  else
+    "$@"
+  fi
+}
+section() { printf '\n=== %s\n' "$1"; }
+# A command, at most 10 s; its errors in the report.
+cmd() { timeout 10 "$@" 2>&1; }
+# This boot's journal, wall-clock times.
+log() { cmd journalctl -b --no-pager -o short-iso "$@"; }
+
+common() {
+  section "PB-OS problem report: $area, $(date '+%F %T %Z')"
+  cat /usr/share/pb-os/version 2>/dev/null
+  uname -r
+  { tr -d '\0' < /proc/device-tree/model; } 2>/dev/null; echo
+  uptime
+  section "boots"
+  cmd journalctl --list-boots --no-pager | tail -n 4
+  section "sleep and wake (this boot)"
+  log -g 'PM: suspend (entry|exit)|System returned from sleep|Entering sleep state' | tail -n 60
+  section "memory and space"
+  cmd free -m
+  cmd df -h / /home
+}
+
+audio() {
+  section "default output"
+  as_user pactl get-default-sink 2>&1
+  section "outputs"
+  as_user pactl list sinks 2>&1 | grep -E '^Sink|Name:|State:|Mute:|^\s+Volume:|Driver:'
+  section "streams (which output each plays on)"
+  as_user pactl list short sink-inputs 2>&1
+  as_user pactl list sink-inputs 2>&1 | grep -E '^Sink Input|Sink:|Mute:|^\s+Volume:|node.name|application.name|media.name'
+  section "inputs"
+  as_user pactl list short sources 2>&1
+  section "wpctl status"
+  as_user wpctl status 2>&1
+  section "links"
+  links="$(as_user timeout 10 pw-link -l 2>&1)"
+  [[ -n $links ]] && printf '%s\n' "$links" || echo "(none: nothing is playing)"
+  section "sound card"
+  cat /proc/asound/cards 2>&1
+  for s in /proc/asound/card*/pcm*/sub0/status; do
+    [[ -r $s ]] && printf '%s: %s\n' "$s" "$(tr '\n' ' ' < "$s")"
+  done
+  section "mixers (card 0)"
+  # name = values, one line each
+  cmd amixer -c 0 contents | awk -F"'" '/^numid=/{n=$2} /: values=/{sub(/^ *: values=/,""); print n " = " $0}'
+  section "sound services"
+  as_user systemctl --user --no-pager status pipewire wireplumber pipewire-pulse 2>&1 | grep -E '●|Active:|Main PID'
+  section "sound log (this boot)"
+  # By field, not --user-unit: as root that matches only root's own units.
+  local m=() u
+  for u in pbos-thor-audio sm8550-audio-setup; do m+=(_SYSTEMD_UNIT=$u.service + UNIT=$u.service +); done
+  for u in pipewire wireplumber pipewire-pulse barry_launcher_audio sm8550-audio-pipewire \
+           sm8550-volume-keeper sm8550-volume-keys; do
+    m+=(_SYSTEMD_USER_UNIT=$u.service + USER_UNIT=$u.service +)
+  done
+  unset 'm[${#m[@]}-1]'
+  log "${m[@]}" | tail -n 300
+  section "memory guard (this boot)"
+  log -g 'memguard' | tail -n 40
+  section "kernel sound lines (this boot)"
+  log -k | grep -iE 'snd|audio|q6|adsp|remoteproc|PDR|gpr|apm|soundwire|wsa|wcd|lpass' | tail -n 200
+}
+
+sleep_area() {
+  section "suspend stats"
+  for f in /sys/power/suspend_stats/*; do [[ -r $f ]] && printf '%s: %s\n' "${f##*/}" "$(cat "$f")"; done
+  cat /sys/power/mem_sleep 2>&1
+  section "wake sources (most events)"
+  sort -t$'\t' -k3 -n -r /sys/kernel/debug/wakeup_sources 2>/dev/null | head -n 25
+  section "sleep log (this boot)"
+  log -g 'suspend|resume|sleep|wake|lid|PM:' | tail -n 300
+  section "previous boot, last lines"
+  cmd journalctl -b -1 --no-pager -o short-iso | tail -n 120
+}
+
+controller() {
+  section "input devices"
+  grep -E '^N: |^H: ' /proc/bus/input/devices 2>&1
+  section "USB"
+  cmd lsusb
+  section "InputPlumber"
+  cmd systemctl --no-pager status inputplumber | head -n 5
+  log -u inputplumber | tail -n 200
+  section "input kernel lines (this boot)"
+  log -k | grep -iE 'input|hid|usb|xpad|rsinput|gamepad' | tail -n 150
+}
+
+display() {
+  section "screens"
+  for c in /sys/class/drm/card*-*; do
+    [[ -r $c/status ]] && printf '%s: %s, enabled %s, %s\n' "${c##*/}" "$(cat "$c/status")" \
+      "$(cat "$c/enabled" 2>/dev/null)" "$(head -n 1 "$c/modes" 2>/dev/null)"
+  done
+  for b in /sys/class/backlight/*; do
+    [[ -r $b/brightness ]] && printf '%s: %s / %s\n' "${b##*/}" "$(cat "$b/brightness")" "$(cat "$b/max_brightness")"
+  done
+  section "gamescope (this boot)"
+  log -g 'gamescope' | grep -viE 'binding:' | tail -n 200
+  section "display kernel lines (this boot)"
+  log -k | grep -iE 'drm|dsi|dpu|panel|msm|edp|displayport' | tail -n 150
+}
+
+wifi() {
+  section "network"
+  cmd nmcli -f DEVICE,TYPE,STATE,CONNECTION device
+  cmd iw dev wlan0 link | grep -vE '^Connected to|SSID'
+  section "Wi-Fi log (this boot)"
+  log -u NetworkManager -u wpa_supplicant -u iwd | tail -n 200
+  section "Wi-Fi kernel lines (this boot)"
+  log -k | grep -iE 'wlan|ath1|ath12|wcn|cfg80211|mac80211' | tail -n 150
+}
+
+common
+case "$area" in
+  audio) audio ;;
+  sleep) sleep_area ;;
+  controller) controller ;;
+  display) display ;;
+  wifi) wifi ;;
+esac
+section "warnings and errors (this boot)"
+log -p warning | tail -n 300
+section "end"

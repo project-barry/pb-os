@@ -578,6 +578,17 @@ private:
             }
         std::optional<int> top_pct = top->pct;
         uint8_t top_channels = top->channels;
+        // One line when the loopback's output changes or its stream goes: a
+        // "Top screen" with nowhere to play is silent (problem reports).
+        std::string out_on = out ? sink_at(out->sink) : "";
+        std::string out_state = out ? "on " + out_on : "gone";
+        if (out_state != loop_on_) {
+            if (out)
+                pq::log("%s plays on %s", TOP_OUT, out_on.empty() ? "nothing" : out_on.c_str());
+            else
+                pq::log("%s stream gone", TOP_OUT);
+            loop_on_ = out_state;
+        }
 
         // A real output became the default: it is the real output now.
         if (default_ != TOP && is_real(default_)) {
@@ -609,14 +620,22 @@ private:
                 real_ = here;
             }
         }
-        if (!is_real(real_)) return;
+        if (!is_real(real_)) {
+            if (!real_.empty() && real_ != gone_) pq::log("real output %s gone, none in its place", real_.c_str());
+            gone_ = real_;
+            return;
+        }
+        gone_.clear();
         const Sink& real = *sink_named(real_);
         remember(real_, top_pct);
 
         // The real output: at 100 %, not muted, under the loopback.
         if (real.pct != 100) set_volume(true, 0, real_, real.channels, 100);
-        if (real.mute) act(pa_context_set_sink_mute_by_name(ctx_, real_.c_str(), 0, on_done, this));
-        if (out && sink_at(out->sink) != real_) move(out->index, real_);
+        if (real.mute) {
+            pq::log("real output %s was muted: unmuted", real_.c_str());
+            act(pa_context_set_sink_mute_by_name(ctx_, real_.c_str(), 0, on_done, this));
+        }
+        if (out && out_on != real_) move(out->index, real_);
 
         // The streams: the bottom apps' on the real output at their volume;
         // others moved onto it go back to "Top screen". Filters' and
@@ -664,6 +683,7 @@ private:
     std::string path_, apps_path_;
     Value state_;
     std::string real_;
+    std::string loop_on_, gone_;  // last logged: the loopback ("on <output>", "gone"), a real output gone
     bool missing_logged_ = false;
     Phase phase_ = Phase::Idle;
     bool again_ = false;

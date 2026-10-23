@@ -6,9 +6,14 @@ closed: Steam reads shortcuts.vdf once at start and writes it back whole, so
 an entry added while it runs would be lost. An account gets each title once;
 one the user removes stays removed. A fresh install signs in after this has
 run, so its titles appear from the next Steam start on.
+
+A title with art gets it in Steam's grid folder (library capsules, hero,
+logo) and its icon. A TEMPORARY title is taken out of Steam again, art and
+all, once its program is no longer in the image.
 """
 
 import os
+import shutil
 import struct
 import subprocess
 import sys
@@ -18,10 +23,18 @@ HOME = os.path.expanduser("~")
 USERDATA = os.path.join(HOME, ".local/share/Steam/userdata")
 STATE = os.path.join(HOME, ".local/state/pb-os/default-shortcuts")
 
-# AppName, executable. vkcube: Vulkan check that runs on every device.
+# AppName, executable, art folder (or None). vkcube: Vulkan check that runs
+# on every device.
+SOUND_CHECK = "/usr/lib/pbos-sound-check/pbos-sound-check"
 TITLES = [
-    ("vkcube", "/usr/bin/vkcube"),
+    ("vkcube", "/usr/bin/vkcube", None),
+    # Until the AYN Thor sound dropout is found (2026-10).
+    ("PB-OS Sound Check", SOUND_CHECK, "/usr/share/pb-os/sound-check"),
 ]
+# Titles removed from Steam once their program is gone from the image.
+TEMPORARY = [("PB-OS Sound Check", SOUND_CHECK)]
+# Art file -> Steam's grid name after the app id.
+GRID = {"portrait.png": "p.png", "wide.png": ".png", "hero.png": "_hero.png", "logo.png": "_logo.png"}
 
 
 def read_cstr(data, i):
@@ -70,14 +83,19 @@ def i32(n):
     return struct.pack("<I", n & 0xFFFFFFFF)
 
 
-def entry(index, name, exe):
+def appid(name, exe):
+    return zlib.crc32(f'"{exe}"{name}'.encode()) | 0x80000000
+
+
+def entry(index, name, exe, art):
     start = os.path.dirname(exe) + "/"
     s = lambda k, v: (k, 0x01, v)
     n = lambda k, v: (k, 0x02, i32(v))
+    icon = os.path.join(art, "icon.png") if art and os.path.isfile(os.path.join(art, "icon.png")) else ""
     return (str(index), 0x00, [
-        n("appid", zlib.crc32(f'"{exe}"{name}'.encode()) | 0x80000000),
+        n("appid", appid(name, exe)),
         s("AppName", name), s("Exe", f'"{exe}"'), s("StartDir", start),
-        s("icon", ""), s("ShortcutPath", ""), s("LaunchOptions", ""),
+        s("icon", icon), s("ShortcutPath", ""), s("LaunchOptions", ""),
         n("IsHidden", 0), n("AllowDesktopConfig", 1), n("AllowOverlay", 1),
         n("OpenVR", 0), n("Devkit", 0), s("DevkitGameID", ""),
         n("DevkitOverrideAppID", 0), n("LastPlayTime", 0), s("FlatpakAppID", ""),
@@ -86,7 +104,8 @@ def entry(index, name, exe):
 
 
 def field(item, key):
-    return next((v for k, _, v in item[2] if k == key), "")
+    # Steam writes the list back with some keys in lower case (appname, exe).
+    return next((v for k, _, v in item[2] if k.lower() == key.lower()), "")
 
 
 def sync_account(account):
@@ -101,7 +120,8 @@ def sync_account(account):
     except FileNotFoundError:
         done = set()
     todo = [t for t in TITLES if t[0] not in done and os.path.exists(t[1])]
-    if not todo:
+    gone = {exe: name for name, exe in TEMPORARY if not os.path.exists(exe)}
+    if not todo and not gone:
         return
 
     path = os.path.join(config, "shortcuts.vdf")
@@ -116,13 +136,36 @@ def sync_account(account):
         raise ValueError(f"{path}: no shortcuts list")
     shortcuts = root[0][2]
 
+    grid = os.path.join(config, "grid")
+    removed = []
+    for e in list(shortcuts):
+        exe = field(e, "Exe").strip('"') if e[1] == 0x00 else ""
+        if exe in gone:
+            shortcuts.remove(e)
+            removed.append(gone[exe])
+            for suffix in GRID.values():
+                try:
+                    os.remove(os.path.join(grid, f"{appid(gone[exe], exe)}{suffix}"))
+                except FileNotFoundError:
+                    pass
+    if not todo and not removed:
+        return
+    if removed:
+        # Steam reads the list by position: number the entries again.
+        shortcuts[:] = [(str(i), k, v) for i, (_, k, v) in enumerate(shortcuts)]
+
     have = {field(e, "Exe").strip('"') for e in shortcuts if e[1] == 0x00}
     index = max((int(e[0]) for e in shortcuts if e[0].isdigit()), default=-1) + 1
     added = []
-    for name, exe in todo:
+    for name, exe, art in todo:
         if exe not in have:
-            shortcuts.append(entry(index, name, exe))
+            shortcuts.append(entry(index, name, exe, art))
             index += 1
+            if art:
+                os.makedirs(grid, exist_ok=True)
+                for src, suffix in GRID.items():
+                    if os.path.isfile(os.path.join(art, src)):
+                        shutil.copyfile(os.path.join(art, src), os.path.join(grid, f"{appid(name, exe)}{suffix}"))
         added.append(name)
 
     tmp = path + ".pbos-tmp"
@@ -132,7 +175,10 @@ def sync_account(account):
     os.makedirs(STATE, exist_ok=True)
     with open(state, "a") as f:
         f.write("".join(n + "\n" for n in added))
-    print(f"account {account}: {', '.join(added)}")
+    if added:
+        print(f"account {account}: added {', '.join(added)}")
+    if removed:
+        print(f"account {account}: removed {', '.join(removed)}")
 
 
 def main():
