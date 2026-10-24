@@ -20,6 +20,14 @@ What it does, with the controller (A, B, D-pad) or touch:
    PB-OS's sound helpers; Steam then needs a restart for its own sound, which
    the app offers). Lux's Thor reports (10-23) showed the ADSP's playback
    stream stopping ~15 s after it starts, with everything after it powered.
+   Lux's .28 report (10-24): the speaker stream restarted by fix 1 froze
+   again within 0.1 s; only fix 2 (the stream closed and opened again)
+   brought the sound back. So each read of the audio path also carries what
+   the audio event recorder (`pbos-report-audio-trace.service`, from boot)
+   saw since the last read: LPASS clocks and DSP votes, runtime PM of the
+   codec macros and SoundWire, DAPM, each DSP graph and DAI step with its
+   result, and the data flow to and from the DSP, so the moment the stream
+   froze shows what changed with it.
 5. Saves the report with the answers in `~/Desktop/PB-OS Reports`.
 6. Where the image has a report address (`/usr/share/pb-os/report-url`),
    offers to send it to the PB-OS team (see below). Then, after a "sound is

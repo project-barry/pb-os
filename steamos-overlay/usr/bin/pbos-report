@@ -10,10 +10,12 @@
 # Usage: pbos-report AREA   (audio, sleep, controller, display, wifi, other)
 #        pbos-report audio-root   (root only: just the audio path below PipeWire;
 #        pbos-report-audio-root.service runs it for PB-OS Sound Check)
+#        pbos-report audio-trace  (root only: starts the audio event recorder;
+#        pbos-report-audio-trace.service runs it at boot)
 set -u
 
 area="${1:-other}"
-case "$area" in audio|audio-root|sleep|controller|display|wifi|other) ;; *) echo "unknown area: $area" >&2; exit 2 ;; esac
+case "$area" in audio|audio-root|audio-trace|sleep|controller|display|wifi|other) ;; *) echo "unknown area: $area" >&2; exit 2 ;; esac
 export LC_ALL=C
 
 # The desktop user's sound server and settings: as that user.
@@ -105,25 +107,165 @@ silence() {
     le 4 2; le 16 2; printf 'data'; le "$n" 4; head -c "$n" /dev/zero; } > "$1"
 }
 
+# The audio event recorder (pbos-report-audio-trace.service, from boot): two
+# tracefs ring buffers that audio_root reads, so a report shows what changed
+# at the moment the playback stream froze, not only the state after.
+# "pbos-audio" keeps the rare events: LPASS clocks and DSP votes (clk), runtime
+# PM of the LPASS codec macros and SoundWire (rpm), DAPM and bias levels,
+# suspend and wake, and each DSP graph and DAI step with its result.
+# "pbos-audio-io" keeps the data flow: each buffer written to the DSP, each
+# packet back from it, each period done. The monotonic clock, as ALSA's
+# playback status uses, so the frozen pointer's time lines up with the events.
+T=/sys/kernel/tracing
+AT=$T/instances/pbos-audio
+AIO=$T/instances/pbos-audio-io
+
+audio_trace() {
+  [[ $EUID -eq 0 ]] || { echo "audio-trace: root only" >&2; return 1; }
+  [[ -d $T/instances ]] || { echo "audio-trace: no tracefs at $T" >&2; return 1; }
+  mkdir -p "$AT" "$AIO" || return 1
+  local i e
+  for i in "$AT" "$AIO"; do
+    echo mono > "$i/trace_clock"
+    echo 256 > "$i/buffer_size_kb"
+  done
+  # Tracepoints, filtered to the audio parts (6*.pinctrl: the LPASS pin
+  # controller, not the SoC's main one).
+  local devs='name ~ "*.codec" || name ~ "*soundwire*" || name ~ "sdw-*" || name ~ "6*.pinctrl" || name ~ "*remoteproc*" || name == "sound"'
+  local clks='name ~ "LPASS*" || name ~ "*mclk*" || name ~ "fsgen*" || name ~ "*npl*"'
+  event() {
+    local d=$AT/events/$1
+    [[ -d $d ]] || { echo "audio-trace: no event $1"; return; }
+    if [[ -n ${2:-} ]]; then echo "$2" > "$d/filter" || echo "audio-trace: filter refused on $1"; fi
+    echo 1 > "$d/enable" || echo "audio-trace: cannot enable $1"
+  }
+  for e in rpm_suspend rpm_resume rpm_return_int; do event "rpm/$e" "$devs"; done
+  for e in clk_prepare clk_unprepare clk_enable clk_disable clk_set_rate; do event "clk/$e" "$clks"; done
+  for e in asoc/snd_soc_bias_level_start asoc/snd_soc_dapm_widget_power; do event "$e"; done
+  # Sleep and wake: one line each (not every CPU and phase).
+  event power/suspend_resume 'action == "machine_suspend"'
+  # Probes on the DSP driver (MOD:SYM waits for a module not loaded yet).
+  # Each on its own: one the compiler renamed or inlined only loses itself.
+  if [[ ! -w $T/kprobe_events ]]; then echo "audio-trace: no kprobes in this kernel"; return 0; fi
+  probe() {
+    local inst=$1 def=$2 n
+    n=${def%% *}; n=${n#*/}
+    [[ -d $inst/events/pbosaudio/$n ]] || echo "$def" >> "$T/kprobe_events" 2>/dev/null \
+      || { echo "audio-trace: no probe $def"; return; }
+    echo 1 > "$inst/events/pbosaudio/$n/enable" || echo "audio-trace: cannot enable $n"
+  }
+  probe "$AT" 'p:pbosaudio/apm_open snd_q6apm:q6apm_graph_open graph_id=%x3:s32'
+  probe "$AT" 'r:pbosaudio/apm_open_ret snd_q6apm:q6apm_graph_open graph=$retval:x64'
+  probe "$AT" 'p:pbosaudio/apm_close snd_q6apm:q6apm_graph_close graph=%x0:x64'
+  for e in prepare start stop flush; do
+    probe "$AT" "p:pbosaudio/apm_$e snd_q6apm:q6apm_graph_$e graph=%x0:x64"
+    probe "$AT" "r:pbosaudio/apm_${e}_ret snd_q6apm:q6apm_graph_$e ret=\$retval:s32"
+  done
+  probe "$AT" 'p:pbosaudio/prm_clock q6prm:q6prm_set_lpass_clock id=%x1:u32 attr=%x2:u32 root=%x3:u32 freq=%x4:u32'
+  probe "$AT" 'r:pbosaudio/prm_clock_ret q6prm:q6prm_set_lpass_clock ret=$retval:s32'
+  probe "$AT" 'p:pbosaudio/prm_vote q6prm:q6prm_vote_lpass_core_hw block=%x1:u32 client=+0(%x2):string'
+  probe "$AT" 'r:pbosaudio/prm_vote_ret q6prm:q6prm_vote_lpass_core_hw ret=$retval:s32'
+  probe "$AT" 'p:pbosaudio/prm_unvote q6prm:q6prm_unvote_lpass_core_hw block=%x1:u32 handle=%x2:u32'
+  probe "$AT" 'r:pbosaudio/prm_unvote_ret q6prm:q6prm_unvote_lpass_core_hw ret=$retval:s32'
+  for e in open close prepare; do
+    probe "$AT" "p:pbosaudio/fe_$e q6apm_dai:q6apm_dai_$e"
+    probe "$AT" "r:pbosaudio/fe_${e}_ret q6apm_dai:q6apm_dai_$e ret=\$retval:s32"
+  done
+  probe "$AT" 'p:pbosaudio/fe_trigger q6apm_dai:q6apm_dai_trigger cmd=%x2:s32'
+  for e in startup prepare; do
+    probe "$AT" "p:pbosaudio/be_$e q6apm_lpass_dais:q6apm_lpass_dai_$e"
+    probe "$AT" "r:pbosaudio/be_${e}_ret q6apm_lpass_dais:q6apm_lpass_dai_$e ret=\$retval:s32"
+  done
+  probe "$AT" 'p:pbosaudio/be_shutdown q6apm_lpass_dais:q6apm_lpass_dai_shutdown'
+  probe "$AT" 'p:pbosaudio/be_trigger q6apm_lpass_dais:q6apm_lpass_dai_trigger cmd=%x1:s32'
+  probe "$AIO" 'p:pbosaudio/dsp_write snd_q6apm:q6apm_write_async graph=%x0:x64 len=%x1:u32'
+  # Every packet from the DSP (GPR header: token at 16, opcode at 20).
+  probe "$AIO" 'p:pbosaudio/dsp_rx apr_callback len=%x2:s32 token=+16(%x1):x32 opcode=+20(%x1):x32'
+  probe "$AIO" 'p:pbosaudio/period q6apm_dai:event_handler opcode=%x0:x32 token=%x1:x32'
+  echo "audio-trace: recording"
+}
+
+# What the recorder holds that no report read showed yet (a marker is written
+# after each read), at most $2 lines, newest last, short (a sent report is cut
+# at 400 KB): "time task event: fields", without CPU, flags and offsets.
+trace_new() {
+  local d=$1
+  [[ -r $d/trace ]] || { echo "(not recording: see pbos-report-audio-trace.service)"; return; }
+  awk '/pbos-report read/{n=NR} {l[NR]=$0} END{for (i = n + 1; i <= NR; i++) if (l[i] !~ /^#/) print l[i]}' "$d/trace" \
+    | tail -n "$2" \
+    | awk '{ for (i = 2; i <= NF; i++) if ($i ~ /^[0-9]+\.[0-9]+:$/) break
+             if (i > NF) { print; next }
+             s = $i; for (j = i + 1; j <= NF; j++) s = s " " $j
+             gsub(/\+0x[0-9a-f]+\/0x[0-9a-f]+/, "", s)
+             print s, "[" $1 "]" }'
+  echo "pbos-report read" > "$d/trace_marker"
+}
+
+# ADSP interrupts and packet counts (does the DSP still answer?).
+dsp_irqs() { grep -iE 'glink|ipcc|smp2p|adsp|lpass|swr|soundwire|6800000' /proc/interrupts | tr -s ' '; }
+
 audio_root() {
   if [[ $EUID -ne 0 ]]; then section "audio path (root only): skipped, not root"; return; fi
   local quiet player=""
   quiet="$(mktemp /tmp/pbos-report-silence.XXXXXX.wav)"
-  silence "$quiet" 6
+  silence "$quiet" 10
   chmod 0644 "$quiet"
-  as_user timeout 8 pw-play "$quiet" >/dev/null 2>&1 &
+  as_user timeout 12 pw-play "$quiet" >/dev/null 2>&1 &
   player=$!
+  # Until a playback stream runs (after a PipeWire restart the outputs take a
+  # few seconds to come back), at most 6 s.
+  local p i
+  for ((i = 0; i < 24; i++)); do
+    grep -qs 'state: RUNNING' /proc/asound/card*/pcm*p/sub0/status && break
+    sleep 0.25
+  done
   sleep 1
   section "playback stream while silence plays (hw_params, then status twice, 1 s apart)"
-  local p
+  awk '/^now at/{printf "monotonic now: %.6f\n", $3 / 1e9; exit}' /proc/timer_list
   for p in /proc/asound/card*/pcm*p/sub0; do
     [[ -r $p/status ]] || continue
     printf '%s hw_params: %s\n' "$p" "$(tr '\n' ' ' < "$p/hw_params")"
     printf '%s status: %s\n' "$p" "$(tr '\n' ' ' < "$p/status")"
   done
+  local irq1
+  irq1="$(dsp_irqs)"
   sleep 1
   for p in /proc/asound/card*/pcm*p/sub0; do
     [[ -r $p/status ]] && printf '%s status: %s\n' "$p" "$(tr '\n' ' ' < "$p/status")"
+  done
+  section "DSP interrupts, 1 s apart"
+  printf '%s\n-- 1 s later\n' "$irq1"
+  dsp_irqs
+  section "ASoC links (front end and back end state)"
+  for p in /sys/kernel/debug/asoc/*/*/state; do
+    [[ -r $p ]] && { echo "-- ${p#/sys/kernel/debug/asoc/}"; cat "$p"; }
+  done
+  section "LPASS devices (runtime PM)"
+  local d a
+  for d in /sys/bus/platform/devices/*; do
+    case "${d##*/}" in *.codec|*soundwire*|*pinctrl*|*remoteproc*|sound|*dais*|*prm*|*apm*) ;; *) continue ;; esac
+    [[ -r $d/power/runtime_status ]] || continue
+    printf '%s:' "${d##*/}"
+    for a in runtime_status control runtime_usage runtime_active_kids autosuspend_delay_ms runtime_active_time runtime_suspended_time; do
+      [[ -r $d/power/$a ]] && printf ' %s=%s' "$a" "$(cat "$d/power/$a" 2>/dev/null)"
+    done
+    echo
+  done
+  # Each clock's own counts: clk_summary would wake the codec macros (runtime
+  # PM) and so vote the very LPASS blocks this looks at.
+  section "LPASS clocks in use (enable / prepare counts)"
+  for d in /sys/kernel/debug/clk/*; do
+    case "${d##*/}" in LPASS*|*mclk*|fsgen*|*npl*) ;; *) continue ;; esac
+    [[ -r $d/clk_enable_count ]] || continue
+    a="$(cat "$d/clk_enable_count" 2>/dev/null) / $(cat "$d/clk_prepare_count" 2>/dev/null)"
+    [[ $a == "0 / 0" ]] || printf '%s: %s\n' "${d##*/}" "$a"
+  done
+  section "power domains (audio)"
+  [[ -r /sys/kernel/debug/pm_genpd/pm_genpd_summary ]] \
+    && grep -iE '^domain|lcx|lmx|lpass|audio|codec|soundwire|6800000' /sys/kernel/debug/pm_genpd/pm_genpd_summary
+  section "remote processors"
+  for d in /sys/class/remoteproc/*; do
+    [[ -r $d/state ]] && printf '%s: %s %s\n' "${d##*/}" "$(cat "$d/name" 2>/dev/null)" "$(cat "$d/state")"
   done
   section "DAPM widgets while silence plays (powered On/Off)"
   local w
@@ -165,6 +307,18 @@ audio_root() {
   kill "$player" 2>/dev/null
   wait "$player" 2>/dev/null
   rm -f "$quiet"
+  sleep 0.5
+  section "audio recorder"
+  journalctl -b --no-pager -o cat -u pbos-report-audio-trace.service 2>&1 | tail -n 40
+  grep -s pbosaudio "$T/kprobe_profile" | tr -s ' '
+  for i in "$AT" "$AIO"; do
+    [[ -d $i ]] && printf '%s: lost %s events\n' "${i##*/}" \
+      "$(awk '/^overrun:/{s += $2} END{print s + 0}' "$i"/per_cpu/cpu*/stats 2>/dev/null)"
+  done
+  section "audio events since the last read (LPASS clocks and votes, runtime PM, DAPM, DSP graph and DAI steps; monotonic s)"
+  trace_new "$AT" 1500
+  section "audio data flow since the last read (writes to the DSP, packets back, periods; last 300)"
+  trace_new "$AIO" 300
 }
 
 sleep_area() {
@@ -219,6 +373,10 @@ wifi() {
 if [[ $area == audio-root ]]; then
   audio_root
   exit 0
+fi
+if [[ $area == audio-trace ]]; then
+  audio_trace
+  exit
 fi
 common
 case "$area" in

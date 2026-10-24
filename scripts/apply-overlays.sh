@@ -186,6 +186,12 @@ install_file "$OVL/usr/lib/systemd/system/pbos-report-audio-root.service" \
   "$R/usr/lib/systemd/system/pbos-report-audio-root.service" 0644
 install_file "$OVL/usr/share/polkit-1/rules.d/50-pbos-report.rules" \
   "$R/usr/share/polkit-1/rules.d/50-pbos-report.rules" 0644
+# Its audio event recorder, from boot (what changed when the stream froze).
+install_file "$OVL/usr/lib/systemd/system/pbos-report-audio-trace.service" \
+  "$R/usr/lib/systemd/system/pbos-report-audio-trace.service" 0644
+mkdir -p "$R/usr/lib/systemd/system/sysinit.target.wants"
+ln -sfn ../pbos-report-audio-trace.service \
+  "$R/usr/lib/systemd/system/sysinit.target.wants/pbos-report-audio-trace.service"
 # Where a report goes when the user taps Send: the project's report relay
 # (a Cloudflare Worker; the Discord webhook is only in its secrets). The
 # address is kept out of the repo: the build host's PBOS_REPORT_URL_FILE.

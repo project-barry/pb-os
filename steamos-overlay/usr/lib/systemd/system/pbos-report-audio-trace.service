@@ -1,0 +1,20 @@
+# The audio event recorder for the Thor sound dropout hunt: two small tracefs
+# ring buffers (256 KB per CPU each) of LPASS clock, vote and runtime PM
+# events and the audio DSP's data flow, from before the sound card comes up.
+# pbos-report audio-root (PB-OS Sound Check, Report a Problem) reads them.
+# Only records; changes nothing in the audio path. Temporary, with PB-OS
+# Sound Check.
+[Unit]
+Description=PB-OS Sound Check: record audio DSP events for the sound report
+DefaultDependencies=no
+After=sys-kernel-tracing.mount
+Before=sound.target sm8550-audio-setup.service
+ConditionPathIsDirectory=/sys/kernel/tracing/instances
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/pbos-report audio-trace
+
+[Install]
+WantedBy=sysinit.target
