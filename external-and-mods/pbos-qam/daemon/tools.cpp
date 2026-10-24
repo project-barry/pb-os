@@ -15,7 +15,9 @@
 //          local-update.
 // Install  moves SteamOS between the microSD card and internal storage with
 //          the Easy UFS Installer's scripts, as the transient unit
-//          pbos-utils-move; its end is heard from systemd (D-Bus).
+//          pbos-utils-move; its end is heard from systemd (D-Bus). From the
+//          card it also goes over a PB-OS or ArmadaOS install on internal
+//          storage, in its space, as PB-OS Installer does.
 // Lights   stick lighting: pbosd's state on the KONKR Pocket FIT / AYANEO
 //          Pocket S2; the light engine (lights.cpp, pbos-qamd --lights as
 //          its own unit) on the Retroid Pocket 6 / Nova and AYN Odin 2s.
@@ -1335,7 +1337,8 @@ public:
         if (m == "restart") return restart();
         if (m == "get_install") return get_install(arg(a, 0, false).truthy());
         if (m == "start_move")
-            return start_move(arg(a, 0, "").str(), arg(a, 1, "all").str(), arg(a, 2, 0).as_int(0), arg(a, 3, "").str());
+            return start_move(arg(a, 0, "").str(), arg(a, 1, "all").str(), arg(a, 2, 0).as_int(0), arg(a, 3, "").str(),
+                              arg(a, 4, "").str());
         if (m == "power_off") return power_off();
         if (m == "get_lights") return get_lights();
         if (m == "set_lights")
@@ -1770,8 +1773,10 @@ private:
         return out;
     }
 
+    // over: "" for a fresh install, "pbos" or "armada" to go over the
+    // install the check found (the script reads the table again).
     Value start_move(const std::string& direction, const std::string& home, long long android_gb,
-                     const std::string& expect) {
+                     const std::string& expect, const std::string& over) {
         auto fail = [](const std::string& e) {
             Value v = Value::object();
             v["ok"] = false;
@@ -1780,10 +1785,15 @@ private:
         };
         if (unit_active(MOVE_UNIT)) return fail("a copy is already running");
         if (unit_active(UNIT)) return fail("an update is being prepared; wait until it is ready");
-        if (home != "all" && home != "essentials" && home != "none") return fail("unknown home choice");
+        if (home != "all" && home != "essentials" && home != "none" && !(home == "keep" && over == "pbos"))
+            return fail("unknown home choice");
+        if (!over.empty() && ((over != "pbos" && over != "armada") || direction != "internal"))
+            return fail("unknown install choice");
         std::string where = running_from();
         std::vector<std::string> argv;
-        if (direction == "internal" && where == "sd") {
+        if (direction == "internal" && where == "sd" && !over.empty()) {
+            argv = {"/usr/bin/bash", TO_INTERNAL, "--force", "--replace", "--expect", expect, "--home", home};
+        } else if (direction == "internal" && where == "sd") {
             argv = {"/usr/bin/bash", TO_INTERNAL, "--force", "--android-gb", std::to_string(android_gb),
                     "--expect", expect, "--home", home};
         } else if (direction == "sd" && where == "internal") {
@@ -1801,6 +1811,7 @@ private:
         margs["direction"] = direction;
         margs["home"] = home;
         margs["android_gb"] = android_gb;
+        margs["over"] = over;
         margs["started"] = epoch();
         margs["saved_log"] = saved;
         write_json(MOVE_ARGS, margs);

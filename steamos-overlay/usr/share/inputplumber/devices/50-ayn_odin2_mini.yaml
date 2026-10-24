@@ -35,6 +35,8 @@ source_devices:
 options:
   auto_manage: true
 
+# deck-uhid first, as steamos-manager sets it at boot anyway;
+# sm8550-inputplumber-ext-hid then switches to the real Steam Deck (deck).
 target_devices:
-  - deck
+  - deck-uhid
   - keyboard

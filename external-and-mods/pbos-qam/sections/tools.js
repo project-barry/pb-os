@@ -347,6 +347,8 @@ const HOME_CHOICES = [
     { data: "essentials", label: "No games", desc: "Saves, Steam login and settings; games download again" },
     { data: "none", label: "Fresh start", desc: "No Steam login, saves or games" },
 ];
+// PB-OS over PB-OS: the internal home can stay as it is.
+const KEEP_CHOICE = { data: "keep", label: "Keep internal", desc: "The games, saves and Steam login already on internal storage stay" };
 
 // The result of the last move, dismissed per run (its start time).
 let dismissed = 0;
@@ -355,6 +357,7 @@ function MoveProgress({ st, onBack }) {
     const job = st.job || {};
     const args = st.args || {};
     const toSd = args.direction === "sd";
+    const over = args.over || "";
     const title = toSd ? "Copy to microSD" : "Install to internal storage";
     const [, tick] = useState(0);
     useEffect(() => {
@@ -384,7 +387,8 @@ function MoveProgress({ st, onBack }) {
             ? note("Power off and keep the card in. Hold Volume Down at power-on for the OpenABL menu, set Boot source to SD card, "
                 + "then Start. Boot source Auto or Internal still starts the internal install, which is unchanged.")
             : note("Power off and take out the microSD card. Hold Volume Down at power-on for the OpenABL menu, set Boot source "
-                + "to Internal (or Auto), Boot mode to Linux, then Start. Android: hold Volume Up at power-on; it sets itself up again. "
+                + "to Internal (or Auto), Boot mode to Linux, then Start. "
+                + (args.over ? "Android: hold Volume Up at power-on; it is as it was. " : "Android: hold Volume Up at power-on; it sets itself up again. ")
                 + "Never pick Uninstall CFW there: it erases this install and Android's user data."));
         items.push(row(jsx(DFL.ButtonItem, {
             layout: "below",
@@ -404,10 +408,13 @@ function MoveProgress({ st, onBack }) {
                 ? "The card was already erased and is not usable as it is. Internal storage was not changed."
                 : "Nothing was written: the card and internal storage are as they were."));
         } else {
-            items.push(note(job.step >= 2
-                ? "Internal storage was already being changed, so Android may not boot until this is fixed. The OpenABL "
-                    + "menu's Uninstall CFW removes the Linux partitions (and Android's user data); the old partition table is on the card in /boot/ufs-backup."
-                : "The installer stopped before changing internal storage."));
+            items.push(note(job.step < 2
+                ? "The installer stopped before changing internal storage."
+                : over
+                    ? "Internal storage was already being changed, so the internal SteamOS may not start until this is done again. "
+                        + "Android and its data were not changed. Check again here to install once more."
+                    : "Internal storage was already being changed, so Android may not boot until this is fixed. The OpenABL "
+                        + "menu's Uninstall CFW removes the Linux partitions (and Android's user data); the old partition table is on the card in /boot/ufs-backup."));
         }
     }
     if (args.saved_log) items.push(note(`The log is saved as ${args.saved_log}.`));
@@ -415,31 +422,32 @@ function MoveProgress({ st, onBack }) {
     return jsx(DFL.PanelSection, { title, children: items });
 }
 
-function HomeChoice({ value, onChange, sizes, room }) {
-    const need = (id) => (sizes ? sizes[id] : null);
+function HomeChoice({ value, onChange, sizes, room, choices = HOME_CHOICES }) {
+    const need = (id) => (id === "keep" ? 0 : sizes ? sizes[id] : null);
     const fits = (id) => need(id) == null || room == null || need(id) < room * 0.95;
-    const choice = HOME_CHOICES.find((c) => c.data === value) || HOME_CHOICES[0];
+    const choice = choices.find((c) => c.data === value) || choices[0];
     return [
         row(jsx(DFL.DropdownItem, {
             label: "Bring along",
-            description: choice.desc + (need(value) != null && value !== "none" ? ` (${gb(need(value))})` : ""),
-            rgOptions: HOME_CHOICES.map((c) => ({ data: c.data, label: c.label })),
+            description: choice.desc + (need(value) != null && value !== "none" && value !== "keep" ? ` (${gb(need(value))})` : ""),
+            rgOptions: choices.map((c) => ({ data: c.data, label: c.label })),
             selectedOption: value,
             onChange: (o) => onChange(o.data),
         })),
-        !sizes ? note("Measuring the home folder…") : null,
+        !sizes && value !== "keep" ? note("Measuring the home folder…") : null,
         !fits(value) ? warn(`That doesn't fit: ${gb(need(value))} to copy, ${gb(room)} of room. Pick "No games".`) : null,
     ];
 }
 
 // The Install tab's picks. A dropdown's list remounts the panel, which put
 // "Bring along" back on Everything right after picking No games (and the
-// Android size back on the recommended one).
-const installPicks = { home: "all", android: null };
+// Android size back on the recommended one). home null: the default, Keep
+// internal over PB-OS, Everything otherwise.
+const installPicks = { home: null, android: null };
 
 function InstallTab() {
     const [st, setSt] = useState(null);
-    const [home, setHomeState] = useState(installPicks.home);
+    const [picked, setHomeState] = useState(installPicks.home);
     const [android, setAndroidState] = useState(installPicks.android);
     const setHome = (v) => { installPicks.home = v; setHomeState(v); };
     const setAndroid = (v) => { installPicks.android = v; setAndroidState(v); };
@@ -464,14 +472,16 @@ function InstallTab() {
         return jsx(MoveProgress, { st, onBack: () => { dismissed = args.started; redraw((n) => n + 1); refresh(true); } });
     }
     const again = row(jsx(DFL.ButtonItem, { layout: "below", onClick: () => { setError(""); refresh(true); }, children: "Check again" }));
-    const go = (direction, androidGb, expect, text, okText) => DFL.showModal(jsx(DFL.ConfirmModal, {
+    const overPbos = st.from === "sd" && (st.internal || {}).MODE === "installed";
+    const home = picked === "keep" && !overPbos ? "all" : picked || (overPbos ? "keep" : "all");
+    const go = (direction, androidGb, expect, text, okText, over = "") => DFL.showModal(jsx(DFL.ConfirmModal, {
         strTitle: "Are you sure?",
         strDescription: text,
         strOKButtonText: okText,
         onOK: () => {
             setStarting(true);
             setError("");
-            startMove(direction, home, androidGb, expect)
+            startMove(direction, home, androidGb, expect, over)
                 .then((r) => { if (!r.ok) setError(r.error); setAck(false); })
                 .catch((e) => setError(String(e)))
                 .finally(() => { setStarting(false); refresh(false); });
@@ -489,9 +499,41 @@ function InstallTab() {
         items.push(note("SteamOS is running from the microSD card."));
         if (p.ERROR) {
             items.push(failure(p.ERROR), again);
-        } else if (p.MODE === "installed") {
-            items.push(note("SteamOS is already on internal storage. Updates there keep games and saves; reinstalling "
-                + "would erase them, so it isn't offered here."));
+        } else if ((p.MODE === "installed" || p.MODE === "armada") && p.REPLACE_ERROR) {
+            items.push(failure(`${p.MODE === "armada" ? "ArmadaOS" : "PB-OS"} is on internal storage, but this can't go over it: ${p.REPLACE_ERROR}.`), again);
+        } else if (p.MODE === "installed" || p.MODE === "armada") {
+            const armada = p.MODE === "armada";
+            const room = Number(p.HOME_ROOM_BYTES || 0);
+            const needed = home === "keep" ? 0 : st.sizes ? st.sizes[home] : null;
+            const fits = needed == null || needed < room * 0.95;
+            const keep = home === "keep";
+            const erased = armada ? "Everything on ArmadaOS is erased" : keep ? "The internal system is replaced; its home stays"
+                : "The internal SteamOS is erased, games, saves and Steam login included";
+            items.push(
+                row(jsx(DFL.Field, { label: armada ? "ArmadaOS on internal storage" : "PB-OS on internal storage", children: null,
+                    description: `${p.LINUX_GIB} GB · ${gb(room)} for games and saves after the install` })),
+                note(armada
+                    ? "PB-OS from this card goes into ArmadaOS's space. Android keeps its size, apps and data."
+                    : "PB-OS from this card replaces the internal one, in the same space. Android keeps its size, apps and data. "
+                        + "To only update the internal PB-OS, use Software Update there instead."),
+                ...HomeChoice({ value: home, onChange: setHome, sizes: st.sizes, room,
+                    choices: armada ? HOME_CHOICES : [KEEP_CHOICE, ...HOME_CHOICES] }),
+                row(jsx(DFL.ToggleField, {
+                    label: armada ? "Erase ArmadaOS" : keep ? "Replace the internal system" : "Erase the internal SteamOS",
+                    description: `${erased}. Android is not changed.`,
+                    checked: ack,
+                    onChange: setAck,
+                })),
+                row(jsx(DFL.ButtonItem, {
+                    layout: "below",
+                    disabled: !ack || !fits || starting,
+                    onClick: () => go("internal", 0, p.TABLE_FINGERPRINT || "",
+                        `${erased} and SteamOS is copied from this card to internal storage. Android is not changed. `
+                        + "It takes a while; keep the device charging.",
+                        armada ? "Erase and install" : keep ? "Install" : "Erase and install", armada ? "armada" : "pbos"),
+                    children: armada ? "Install over ArmadaOS" : "Reinstall on internal storage",
+                })),
+            );
         } else if (p.MODE === "occupied") {
             items.push(warn(`Other partitions follow Android's (${p.OCCUPIED}). Remove them first with Uninstall CFW in the OpenABL menu (it also erases Android's user data).`), again);
         } else if (p.MODE === "toosmall") {

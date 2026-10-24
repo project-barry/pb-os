@@ -18,12 +18,23 @@ gi.require_version("Gdk", "3.0")
 from gi.repository import Gdk, GLib, Gtk, Pango
 
 APP_NAME = "Easy UFS Installer"
-APP_VERSION = "2.1.0"
+APP_VERSION = "2.2.0"
 
 SHARE = Path(os.environ.get("EASY_UFS_INSTALL_ROOT", "/usr/share/easy-ufs-install"))
 INSTALL_SH = SHARE / "install-masios-to-internal.sh"
 PROBE_SH = SHARE / "ufs-probe-sizes.sh"
 DIAGNOSE_SH = SHARE / "ufs-diagnose.sh"
+
+HOME_CHOICES = [
+    ("all", "Everything, installed games included"),
+    ("essentials", "Settings, saves and Steam login (no games)"),
+    ("none", "Fresh start (no Steam login, saves or games)"),
+]
+# PB-OS over PB-OS: the internal home can stay as it is.
+KEEP_CHOICE = ("keep", "Keep the internal home (its games, saves and Steam login)")
+# What the probe found on internal storage -> the installer's --replace target.
+OVER = {"installed": "pbos", "armada": "armada"}
+OVER_NAME = {"pbos": "PB-OS", "armada": "ArmadaOS"}
 
 # Installer log lines -> what the user sees, in order. The installer prints
 # each as "[ufs] ..."; step 2 is the first one that changes internal storage.
@@ -138,6 +149,9 @@ class MainWindow(Gtk.Window):
                 "This tool repartitions internal UFS and installs SteamOS alongside Android "
                 "(ROCKNIX boot + STORAGE root + HOME, started by OpenABL).\n\n"
                 "• Android userdata will be ERASED (factory-reset style).\n"
+                "• Already have PB-OS or ArmadaOS on internal storage? It goes over that "
+                "instead, in the same space: Android keeps its size, apps and data, and "
+                "only the old Linux install is replaced.\n"
                 "• The old partition table is saved to the SD card first (/boot/ufs-backup), "
                 "so the space can be given back to Android later.\n"
                 "• Incorrect use MAY cause data loss or make Android/Linux unbootable.\n"
@@ -174,10 +188,8 @@ class MainWindow(Gtk.Window):
         grid.attach(self.linux_label, 0, 1, 2, 1)
         grid.attach(Gtk.Label(label="Bring from the SD card's /home:", xalign=0), 0, 2, 1, 1)
         self.home_combo = Gtk.ComboBoxText()
-        self.home_combo.append("all", "Everything, installed games included")
-        self.home_combo.append("essentials", "Settings, saves and Steam login (no games)")
-        self.home_combo.append("none", "Fresh start (no Steam login, saves or games)")
-        self.home_combo.set_active_id("all")
+        self._over = ""
+        self._set_home_choices(keep=False)
         grid.attach(self.home_combo, 1, 2, 1, 1)
         root.pack_start(grid, False, False, 0)
         self.size_spin.connect("value-changed", lambda *_: self._update_linux_label())
@@ -221,6 +233,17 @@ class MainWindow(Gtk.Window):
         self.connect("destroy", Gtk.main_quit)
         self.refresh_async()
 
+    def _set_home_choices(self, keep: bool) -> None:
+        """The /home picks; Keep (the default then) only over PB-OS."""
+        current = self.home_combo.get_active_id()
+        self.home_combo.remove_all()
+        for cid, label in ([KEEP_CHOICE] if keep else []) + HOME_CHOICES:
+            self.home_combo.append(cid, label)
+        if keep:
+            self.home_combo.set_active_id("keep")
+        elif not current or current == "keep" or not self.home_combo.set_active_id(current):
+            self.home_combo.set_active_id("all")
+
     def _fit_to_screen(self) -> None:
         width, height = 640, 720
         display = Gdk.Display.get_default()
@@ -262,6 +285,12 @@ class MainWindow(Gtk.Window):
     def _update_linux_label(self) -> None:
         if not self._info:
             return
+        if self._over:
+            home = int(self._info.get("HOME_ROOM_BYTES", "0") or 0) / (1 << 30)
+            self.linux_label.set_text(
+                f"{OVER_NAME[self._over]} on internal storage: {self._info.get('LINUX_GIB')} GB  |  "
+                f"after the install: ROCKNIX boot · STORAGE root · HOME ~{home:.0f} GB")
+            return
         try:
             android = int(self.size_spin.get_value())
             boot = int(self._info.get("BOOT_PART_GIB", "2"))
@@ -299,9 +328,17 @@ class MainWindow(Gtk.Window):
                 self._info = info
                 fresh = info.get("MODE") == "fresh"
                 from_sd = info.get("RUNNING_FROM_SD") == "1"
-                self.install_btn.set_sensitive(fresh and from_sd)
+                self._over = OVER.get(info.get("MODE", ""), "")
+                why = info.get("REPLACE_ERROR", "") if self._over else ""
+                self.install_btn.set_sensitive(from_sd and (fresh or bool(self._over and not why)))
+                self.install_btn.set_label(
+                    f"Install over {OVER_NAME[self._over]}" if self._over else "Install to internal UFS")
+                self.size_spin.set_sensitive(not self._over)
+                self._set_home_choices(keep=self._over == "pbos")
                 if not from_sd:
                     self._append("Running from internal storage: boot the SD card to install.")
+                elif why:
+                    self._append(f"{OVER_NAME[self._over]} is on internal storage, but this can't go over it: {why}.")
                 elif info.get("MODE") == "occupied":
                     self._append(f"Other partitions follow userdata ({info.get('OCCUPIED')}). "
                                  "Remove them in the OpenABL menu (Uninstall CFW, which also erases Android's user data) first.")
@@ -310,17 +347,20 @@ class MainWindow(Gtk.Window):
                 rec = int(info["RECOMMENDED_ANDROID_GIB"])
                 self.size_spin.set_range(mn, mx)
                 self.size_spin.set_value(rec)
-                existing = info.get("EXISTING_INSTALL", "0") == "1"
                 old_two = info.get("OLD_TWOPART_INSTALL", "0") == "1"
                 extra = ""
-                if existing:
-                    extra = " (SteamOS already installed — use SteamOS Update; reinstall erases internal games and saves)"
+                if self._over == "pbos":
+                    extra = (" (PB-OS already installed: this replaces it and Android stays; "
+                             "to only update it, use Software Update there)")
+                elif self._over == "armada":
+                    extra = " (ArmadaOS installed: this replaces it and Android stays)"
                 elif old_two:
                     extra = " (old 2-partition ROCKNIX+STORAGE — OpenABL Uninstall CFW before a fresh SteamOS install)"
                 self.status.set_text(
                     f"UFS {info.get('DEVICE')} · total ~{info.get('DISK_TOTAL_GIB')} GB · "
-                    f"userdata now ~{info.get('ORIG_ANDROID_GIB')} GB · "
-                    f"Android size {mn}–{mx} GB (recommended {rec}){extra}"
+                    + (f"Android keeps its {info.get('USERDATA_GIB')} GB{extra}" if self._over else
+                       f"userdata now ~{info.get('ORIG_ANDROID_GIB')} GB · "
+                       f"Android size {mn}–{mx} GB (recommended {rec}){extra}")
                 )
                 self._update_linux_label()
                 self._append(f"Probe OK: {info}")
@@ -342,6 +382,22 @@ class MainWindow(Gtk.Window):
         android_gb = int(self.size_spin.get_value())
         root_gb = int(self._info.get("ROOT_PART_GIB", "16")) if self._info else 16
         boot_gb = int(self._info.get("BOOT_PART_GIB", "2")) if self._info else 2
+        over = self._over
+        home_mode = self.home_combo.get_active_id() or "all"
+        if over == "armada":
+            confirm = ("Everything on ArmadaOS (ARMADA, ARMADA_BOOT, ARMADA_ROOT) is ERASED.\n"
+                       f"Its space becomes ROCKNIX ({boot_gb} GB boot) + STORAGE ({root_gb} GB root) + HOME (remaining).\n"
+                       "Android and its data are not changed. Continue?")
+        elif over == "pbos" and home_mode == "keep":
+            confirm = ("The internal PB-OS system is replaced; its home (games, saves, Steam login) stays.\n"
+                       "Android and its data are not changed. Continue?")
+        elif over == "pbos":
+            confirm = ("The internal PB-OS is ERASED, games, saves and Steam login included, "
+                       "and replaced by this SD install.\nAndroid and its data are not changed. Continue?")
+        else:
+            confirm = (f"Android userdata will be set to {android_gb} GB and ERASED.\n"
+                       f"Creates ROCKNIX ({boot_gb} GB boot) + STORAGE ({root_gb} GB root) + HOME (remaining).\n"
+                       "Internal partitions will be rewritten. Continue?")
         dialog = Gtk.MessageDialog(
             transient_for=self,
             modal=True,
@@ -349,11 +405,7 @@ class MainWindow(Gtk.Window):
             buttons=Gtk.ButtonsType.OK_CANCEL,
             text="Confirm internal UFS install",
         )
-        dialog.format_secondary_text(
-            f"Android userdata will be set to {android_gb} GB and ERASED.\n"
-            f"Creates ROCKNIX ({boot_gb} GB boot) + STORAGE ({root_gb} GB root) + HOME (remaining).\n"
-            "Internal partitions will be rewritten. Continue?"
-        )
+        dialog.format_secondary_text(confirm)
         response = dialog.run()
         dialog.destroy()
         if response != Gtk.ResponseType.OK:
@@ -366,11 +418,12 @@ class MainWindow(Gtk.Window):
         self.size_spin.set_sensitive(False)
         self.home_combo.set_sensitive(False)
         self.ack.set_sensitive(False)
-        self.status.set_text(f"Installing SteamOS to internal storage (Android: {android_gb} GB). "
-                             "Don't power off or close this window.")
+        self.status.set_text(
+            (f"Installing SteamOS over {OVER_NAME[over]} (Android is not changed). " if over else
+             f"Installing SteamOS to internal storage (Android: {android_gb} GB). ")
+            + "Don't power off or close this window.")
 
         fingerprint = self._info.get("TABLE_FINGERPRINT", "")
-        home_mode = self.home_combo.get_active_id() or "all"
         # The table is about to change: the next install needs a fresh probe.
         self._info = {}
 
@@ -426,8 +479,12 @@ class MainWindow(Gtk.Window):
             GLib.idle_add(ui)
 
         def worker() -> None:
-            argv = ["bash", str(script), "--force", "--android-gb", str(android_gb),
-                    "--expect", fingerprint, "--home", home_mode]
+            if over:
+                argv = ["bash", str(script), "--force", "--replace",
+                        "--expect", fingerprint, "--home", home_mode]
+            else:
+                argv = ["bash", str(script), "--force", "--android-gb", str(android_gb),
+                        "--expect", fingerprint, "--home", home_mode]
             try:
                 rc = _run_streaming(argv, on_text)
             except OSError as exc:
@@ -458,9 +515,10 @@ class MainWindow(Gtk.Window):
                         "1. Power off the device and remove the microSD card.\n"
                         "2. Hold Volume Down while powering on to open the OpenABL menu.\n"
                         "3. Set Boot source to Internal (or Auto), Boot mode to Linux, then Start.\n\n"
-                        "Android: hold Volume Up while powering on. It sets itself up again "
-                        "because its user data was erased.\n\n"
-                        "Never pick Uninstall CFW in the OpenABL menu: it erases this install "
+                        + ("Android: hold Volume Up while powering on. It is as it was.\n\n" if over else
+                           "Android: hold Volume Up while powering on. It sets itself up again "
+                           "because its user data was erased.\n\n")
+                        + "Never pick Uninstall CFW in the OpenABL menu: it erases this install "
                         "and Android's user data.\n\n"
                         f"The full log is saved as {log_path}.")
                     return
@@ -482,6 +540,10 @@ class MainWindow(Gtk.Window):
                     (f"{state['error']}\n\n" if state["error"] else "")
                     + ("The installer stopped before changing internal storage."
                        if state["step"] < 2 else
+                       "Internal storage was already being changed, so the internal SteamOS "
+                       "may not start until this is done again. Android and its data were "
+                       "not changed. Refresh and install once more."
+                       if over else
                        "Internal storage was already being changed, so it may be "
                        "partly installed. Android may not boot until this is fixed; "
                        "the OpenABL menu's Uninstall CFW removes the Linux partitions "

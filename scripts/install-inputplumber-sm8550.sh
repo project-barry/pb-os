@@ -180,11 +180,12 @@ install_odin_composite() {
     [[ "$(grep -c 'capability_map_id: rsinput1$' "${dev}/${f}")" == 2 ]] \
       || die "${f}: expected two rsinput1 sources; check the Nintendo layout override"
     sed -i 's/capability_map_id: rsinput1$/capability_map_id: rsinput_nintendo/' "${dev}/${f}"
-    # The real Steam Deck controller as their one pad, as on every device
-    # (InputPlumber's own files say xbox-elite; sm8550-inputplumber-ext-hid).
+    # One pad, started as deck-uhid like every device's (InputPlumber's own
+    # files say xbox-elite); sm8550-inputplumber-ext-hid switches it to the
+    # real Steam Deck controller after steamos-manager's boot reset.
     [[ "$(grep -cE '^ *- (xbox-elite|deck-uhid)$' "${dev}/${f}")" == 1 ]] \
       || die "${f}: expected one gamepad target; check the Deck target override"
-    sed -i -E 's/^( *)- (xbox-elite|deck-uhid)$/\1- deck/' "${dev}/${f}"
+    sed -i -E 's/^( *)- (xbox-elite|deck-uhid)$/\1- deck-uhid/' "${dev}/${f}"
     # The built-in accelerometer and gyroscope (pbos-motiond, through the
     # ADSP's sensor hub) as the Deck's motion sensors (InputPlumber patch 0006).
     [[ "$(grep -c '^target_devices:$' "${dev}/${f}")" == 1 ]] \

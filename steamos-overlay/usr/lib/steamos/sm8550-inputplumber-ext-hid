@@ -124,6 +124,41 @@ if modinfo vhci-hcd >/dev/null 2>&1; then
   want_pad=deck
 fi
 
+# steamos-manager resets every composite to deck-uhid once it is up (its
+# inputplumber module, a moment after it is ready; D-Bus starts it, so unit
+# ordering can't put this run after it). A Deck switched to before that
+# reset is torn down while the kernel is still probing it, and InputPlumber
+# then never feeds the new one: no controller until it restarts (a fast
+# internal boot, 2026-10-24 Nova). So the switch to deck waits for the reset
+# to be in InputPlumber's log, then for udev to settle. InputPlumber starts
+# on deck-uhid too (its device configs), so the reset changes nothing.
+SM_BUS=com.steampowered.SteamOSManager1
+sm_reset_done() {
+  systemctl cat steamos-manager.service >/dev/null 2>&1 || return 0
+  gdbus wait --system --timeout 30 "$SM_BUS" >/dev/null 2>&1 || return 0
+  local ready
+  ready="$(systemctl show -p ActiveEnterTimestampMonotonic --value steamos-manager.service)"
+  [[ "$ready" =~ ^[1-9][0-9]*$ ]] || return 0
+  # Read through process substitution: bash doesn't wait for journalctl -f.
+  python3 -c '
+import json, sys
+ready = int(sys.argv[1])
+for line in sys.stdin:
+    try:
+        e = json.loads(line)
+    except ValueError:
+        continue
+    m = e.get("MESSAGE")
+    if isinstance(m, str) and int(e.get("__MONOTONIC_TIMESTAMP", 0)) > ready \
+            and "Setting target devices" in m and "\"deck-uhid\"" in m:
+        sys.exit(0)
+sys.exit(1)' "$ready" < <(timeout 10 journalctl -b -f -n all -u inputplumber.service -o json \
+      --output-fields=MESSAGE,__MONOTONIC_TIMESTAMP 2>/dev/null) && return 0
+  logger -t sm8550-inputplumber-ext-hid "no steamos-manager reset seen in 10 s; switching anyway"
+  return 0
+}
+sm_waited=0
+
 # One controller per device: InputPlumber's first composite (the built-in pad,
 # made at boot) is it. A second one (another config matching some of the same
 # hardware, a device made later) would be a second controller to Steam and
@@ -158,6 +193,15 @@ apply() {
     return 0
   fi
   [[ "$want_kb" -eq "$have_kb" && "$new_pad" == "$pad" ]] && return 0
+  if [[ "$new_pad" == deck && "$pad" != deck && "$sm_waited" -eq 0 ]]; then
+    sm_reset_done
+    sm_waited=1
+    udevadm settle -t 10 >/dev/null 2>&1 || true
+    # The reset may have changed the targets meanwhile.
+    pad="$(gamepad_target "$id")"
+    targets_have_keyboard "$id" && have_kb=1 || have_kb=0
+    [[ "$want_kb" -eq "$have_kb" && "$new_pad" == "$pad" ]] && return 0
+  fi
   if [[ "$want_kb" -eq 1 ]]; then
     logger -t sm8550-inputplumber-ext-hid "composite $id: $new_pad + keyboard"
     set_targets "$id" "$new_pad" keyboard || true

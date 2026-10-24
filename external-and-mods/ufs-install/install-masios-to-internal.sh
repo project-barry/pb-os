@@ -10,18 +10,28 @@
 # erased. The old partition table is saved to the SD card's /boot/ufs-backup
 # first, and `ufs-partition.py restore` puts it back.
 #
+# With --replace it goes over what is already there instead, in the same
+# space, and Android (size and data) is not touched:
+#   PB-OS    ROCKNIX / STORAGE / HOME are reused, the table isn't written;
+#            --home keep leaves HOME (games, saves, Steam login) as it is
+#   ArmadaOS ARMADA / ARMADA_BOOT / ARMADA_ROOT become ROCKNIX 2G, STORAGE
+#            20G, HOME the rest, in the same table slots (table saved first)
+#
 # Usage (from SteamOS on the SD card, as root):
 #   install-masios-to-internal.sh                  interactive
 #   install-masios-to-internal.sh --android-gb 32
 #   install-masios-to-internal.sh --dry-run        show the plan, write nothing
-#   install-masios-to-internal.sh --resume         partitions exist: copy again
+#   install-masios-to-internal.sh --replace        over PB-OS or ArmadaOS
 #
 # Options:
 #   --android-gb N     Android userdata size (GiB)
 #   --storage-gb N     SteamOS system partition (GiB, default 20)
-#   --home all|essentials|none
+#   --home all|essentials|none|keep
 #                      what to bring from the SD's /home (default all);
-#                      essentials leaves installed games behind
+#                      essentials leaves installed games behind; keep (PB-OS
+#                      over PB-OS) leaves the internal HOME as it is
+#   --replace          go over the PB-OS or ArmadaOS install on internal
+#                      storage (--resume: the same, PB-OS only)
 #   --expect FP        only write if the table fingerprint is still FP (GUI)
 #   --force            no confirmation prompt
 set -euo pipefail
@@ -38,13 +48,15 @@ EXPECT=""
 DRY_RUN=0
 FORCE=0
 RESUME=0
+REPLACE=0
+OVER=""
 DISK=""
 WORK=/run/ufs-install
 BACKUP_DIR=/boot/ufs-backup
 
 log()  { printf '\033[1;32m[ufs]\033[0m %s\n' "$*"; }
 die()  { printf '\033[1;31m[ufs] ERROR:\033[0m %s\n' "$*" >&2; exit 1; }
-usage() { sed -n '3,25p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '3,35p' "$0" | sed 's/^# \{0,1\}//'; }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -54,13 +66,14 @@ while [[ $# -gt 0 ]]; do
     --expect) EXPECT="${2:?}"; shift 2 ;;
     --dry-run) DRY_RUN=1; shift ;;
     --force) FORCE=1; shift ;;
-    --resume|--deploy-only) RESUME=1; shift ;;
+    --replace) REPLACE=1; shift ;;
+    --resume|--deploy-only) RESUME=1; REPLACE=1; shift ;;
     --disk) DISK="${2:?}"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) die "unknown option $1 (see --help)" ;;
   esac
 done
-case "$HOME_MODE" in all|essentials|none) ;; *) die "--home all|essentials|none" ;; esac
+case "$HOME_MODE" in all|essentials|none|keep) ;; *) die "--home all|essentials|none|keep" ;; esac
 
 # ------------------------------------------------------------ preflight ----
 [[ $EUID -eq 0 ]] || die "run as root (sudo)"
@@ -102,9 +115,13 @@ log "$MODEL: internal disk $DISK (${P_DISK_GIB} GiB, ${P_SECTOR_SIZE}-byte secto
 
 case "$P_MODE" in
   fresh)
-    (( RESUME )) && die "--resume needs an existing install; this disk has none" ;;
+    (( REPLACE )) && die "--replace needs an existing install; this disk has none" ;;
   installed)
-    (( RESUME )) || die "SteamOS partitions already exist. Use SteamOS Update to preserve games and saves. --resume reformats system and HOME, erasing internal user data. For a fresh install, remove them first in the ABL menu (UNINSTALL CFW)." ;;
+    (( REPLACE )) || die "PB-OS is already on internal storage. Use PB-OS Update to keep games and saves, or --replace to install over it; nothing was changed."
+    OVER=pbos ;;
+  armada)
+    (( REPLACE && ! RESUME )) || die "ArmadaOS is on internal storage. --replace installs over it (ArmadaOS is erased, Android stays); nothing was changed."
+    OVER=armada ;;
   occupied)
     die "unknown partitions after userdata (${P_OCCUPIED}). Remove them with the OpenABL menu (Uninstall CFW, which also erases Android user data) first; nothing was changed." ;;
   toosmall)
@@ -113,6 +130,8 @@ case "$P_MODE" in
 esac
 [[ -z "$EXPECT" || "$EXPECT" == "$P_TABLE_FINGERPRINT" ]] \
   || die "the partition table changed since it was checked; check again"
+[[ -z "$OVER" || -z "$P_REPLACE_ERROR" ]] || die "$P_REPLACE_ERROR; nothing was changed"
+[[ "$HOME_MODE" != keep || "$OVER" == pbos ]] || die "--home keep is only for PB-OS over PB-OS"
 
 part_of() {   # GPT name -> /dev node on $DISK, read from the table (not udev)
   "${PART[@]}" detect --disk "$DISK" --storage-gib "$STORAGE_GB" | sed -n "s/^NODE_$1=//p"
@@ -122,7 +141,15 @@ part_of() {   # GPT name -> /dev node on $DISK, read from the table (not udev)
 source "$HERE/home-copy.sh"
 
 # ------------------------------------------------------------------ plan ---
-if (( ! RESUME )); then
+if [[ -n "$OVER" ]]; then
+  home_size=$P_HOME_ROOM_BYTES
+  # PB-OS's STORAGE stays the size it is.
+  [[ "$OVER" == pbos ]] && STORAGE_GB=$(( P_STORAGE_BYTES >> 30 ))
+  if [[ "$OVER" == armada ]]; then
+    PLAN="$("${PART[@]}" relayout --disk "$DISK" --storage-gib "$STORAGE_GB" \
+            --expect "$P_TABLE_FINGERPRINT" --backup-dir "$BACKUP_DIR" --dry-run | sed -n '1,3p')"
+  fi
+else
   if [[ -z "$ANDROID_GB" ]]; then
     (( FORCE )) && die "--android-gb is required with --force"
     echo
@@ -138,11 +165,23 @@ if (( ! RESUME )); then
           --backup-dir "$BACKUP_DIR" --dry-run | sed -n '1,4p')"
   home_size=$(awk '/^HOME/ {print $5}' <<<"$PLAN")
   home_size=$(( home_size * P_SECTOR_SIZE ))
-else
-  home_size=$(blockdev --getsize64 "$(part_of HOME)")
 fi
 
-need=$(home_bytes "$HOME_MODE")
+if [[ "$HOME_MODE" == keep ]]; then
+  # A kept HOME must be PB-OS's: ext4 that mounts, with steamos in it.
+  # Checked read-only, before anything is written.
+  keep_check="$WORK/home-check"
+  mkdir -p "$keep_check"
+  mount -o ro,noload -t ext4 "$(part_of HOME)" "$keep_check" 2>/dev/null \
+    || die "the internal HOME doesn't mount, so it can't be kept; nothing was changed"
+  kept_ok=1
+  [[ -d "$keep_check/steamos" ]] || kept_ok=0
+  umount "$keep_check"
+  (( kept_ok )) || die "the internal HOME isn't a PB-OS home, so it can't be kept; nothing was changed"
+  need=0
+else
+  need=$(home_bytes "$HOME_MODE")
+fi
 root_used=$(df -B1 --output=used / | tail -1)
 (( root_used < STORAGE_GB * (1 << 30) * 9 / 10 )) \
   || die "the SD system ($(( root_used >> 30 )) GiB) doesn't fit a ${STORAGE_GB} GiB STORAGE"
@@ -151,8 +190,16 @@ root_used=$(df -B1 --output=used / | tail -1)
 
 echo
 echo "Plan for $DISK:"
-if (( RESUME )); then
+if [[ "$OVER" == pbos && "$HOME_MODE" == keep ]]; then
+  echo "  REINSTALL: reformat ROCKNIX / STORAGE; HOME (games, saves, Steam login) is kept"
+  echo "  Android and its data are not changed"
+elif [[ "$OVER" == pbos ]]; then
   echo "  REINSTALL: reformat ROCKNIX / STORAGE / HOME; all internal Linux games, saves and login data are ERASED"
+  echo "  Android and its data are not changed"
+elif [[ "$OVER" == armada ]]; then
+  echo "  REPLACE ArmadaOS (${P_LINUX_GIB} GiB): ARMADA / ARMADA_BOOT / ARMADA_ROOT are ERASED and become"
+  sed 's/^/    /' <<<"$PLAN"
+  echo "  Android and its data are not changed; the old partition table is saved to the SD card first: $BACKUP_DIR"
 else
   sed 's/^/  /' <<<"$PLAN"
   echo "  Android userdata is ERASED (Android sets itself up again on its next boot)"
@@ -163,6 +210,7 @@ case "$HOME_MODE" in
   all) echo "  /home: copied from the SD card, games included ($(( need >> 30 )) GiB)" ;;
   essentials) echo "  /home: copied without installed games ($(( need >> 30 )) GiB)" ;;
   none) echo "  /home: fresh, no account or personal data (Steam starts from its first-run setup)" ;;
+  keep) echo "  /home: the internal one stays; only the Android apps files come from the SD card" ;;
 esac
 echo
 if (( DRY_RUN )); then
@@ -184,7 +232,11 @@ cleanup() {
 trap cleanup EXIT
 mnt() { mkdir -p "$2"; mount "${@:3}" "$1" "$2"; mounted+=("$2"); }
 
-if (( ! RESUME )); then
+if [[ "$OVER" == armada ]]; then
+  log "repartitioning ArmadaOS's space (one write; the old table goes to $BACKUP_DIR first)"
+  "${PART[@]}" relayout --disk "$DISK" --storage-gib "$STORAGE_GB" \
+    --expect "$P_TABLE_FINGERPRINT" --backup-dir "$BACKUP_DIR"
+elif [[ -z "$OVER" ]]; then
   log "repartitioning (one write; the old table goes to $BACKUP_DIR first)"
   "${PART[@]}" apply --disk "$DISK" --storage-gib "$STORAGE_GB" \
     --android-gib "$ANDROID_GB" --expect "$P_TABLE_FINGERPRINT" --backup-dir "$BACKUP_DIR"
@@ -199,7 +251,7 @@ done
 log "formatting"
 mkfs.vfat -F 32 -S "$P_SECTOR_SIZE" -n ROCKNIX "$RK" >/dev/null
 mkfs.ext4 -F -q -L STORAGE -m 1 "$ST"
-mkfs.ext4 -F -q -L home -m 0 "$HM"
+[[ "$HOME_MODE" == keep ]] || mkfs.ext4 -F -q -L home -m 0 "$HM"
 
 mnt "$RK" "$WORK/boot"
 mnt "$ST" "$WORK/root"
@@ -230,8 +282,22 @@ case "$HOME_MODE" in
   all) log "copying /home (games included)" ;;
   essentials) log "copying /home without installed games" ;;
   none) log "copying a fresh /home (Steam client and Decky, no account or personal data)" ;;
+  keep) log "copying the Android apps files into the kept /home" ;;
 esac
-copy_home "$HOME_MODE" "$WORK/home"
+if [[ "$HOME_MODE" == keep ]]; then
+  # The Android apps payload lives in home, not the system: the kept HOME
+  # takes this SD install's, as PB-OS Installer does.
+  KA=steamos/.local/share/konkr-android
+  if [[ -d "/home/$KA" ]]; then
+    for d in steamos/.local steamos/.local/share; do
+      [[ -d "$WORK/home/$d" ]] || install -d -o 1000 -g 1000 "$WORK/home/$d"
+    done
+    rm -rf "${WORK:?}/home/$KA"
+    rsync -aAXH --numeric-ids "/home/$KA/" "$WORK/home/$KA/"
+  fi
+else
+  copy_home "$HOME_MODE" "$WORK/home"
+fi
 
 log "installing KERNEL (root=PARTLABEL=STORAGE)"
 "${BOOTIMG[@]}" retarget /boot/KERNEL "$WORK/boot/KERNEL" --root PARTLABEL=STORAGE >/dev/null
@@ -258,9 +324,13 @@ echo
 log "done. SteamOS is on internal storage."
 echo "  - Power off and take out the SD card. In the OpenABL menu (hold Volume Down at power-on),"
 echo "    set Boot source to Internal (or Auto), Boot mode to Linux, then Start."
-echo "  - Android: hold Volume Up at power-on; it sets itself up again (userdata was erased)."
+if [[ -z "$OVER" ]]; then
+  echo "  - Android: hold Volume Up at power-on; it sets itself up again (userdata was erased)."
+else
+  echo "  - Android: hold Volume Up at power-on; it is as it was."
+fi
 echo "  - Never pick Uninstall CFW in the OpenABL menu: it erases this install AND Android's data."
-if (( ! RESUME )); then
+if [[ -z "$OVER" ]]; then
   echo "  - Old partition table: $BACKUP_DIR on the SD card (a copy is in /home/.ufs-backup)."
   echo "    To give the space back to Android, boot the SD card and run:"
   echo "      sudo ufs-partition.py restore --backup <that .sfdisk file>"

@@ -72,9 +72,28 @@ auto-mounter's locks so nothing remounts mid-copy, and stops if a game still
 uses the card. Then set **Boot source** to **SD card** in the OpenABL menu
 (with **Auto**, internal storage starts first).
 
-## Reinstall versus update
+## Installing over PB-OS or ArmadaOS
 
-Use **SteamOS Update** for an existing installation. The installer’s `--resume` option resumes a failed initial deployment by formatting boot, system and HOME again. It erases internal Linux games, saves and account data before copying the selected SD data. It is not an in-place update or a data-preserving repair.
+From the SD card it also goes over a Linux install already on internal
+storage, in that install's space. Android's size, apps and data are not
+changed, and nothing before `userdata` is written. PB-OS's Install tab and
+the Easy UFS Installer offer it when their check finds one; from a terminal it
+is `--replace`:
+
+- **PB-OS** (`ROCKNIX` / `STORAGE` / `HOME`): the partitions are reused and
+  the table isn't written. `--home keep` (the default in both apps, **Keep
+  internal**) formats only `ROCKNIX` and `STORAGE` and leaves `HOME` (games,
+  saves, Steam login) as it is; only the Android apps files come from the
+  card. Any other `--home` erases `HOME` too. The partitions must be at least
+  256 MiB, 18 GiB and 16 GiB.
+- **ArmadaOS** (`ARMADA` / `ARMADA_BOOT` / `ARMADA_ROOT`): its space becomes
+  `ROCKNIX` 2G, `STORAGE` 20G and `HOME` the rest, in the same table slots
+  (`ufs-partition.py relayout`, the old table saved to `/boot/ufs-backup/`
+  first). Everything on ArmadaOS is erased. It needs at least 38 GiB.
+
+This is the same as PB-OS Installer's "Install Over Internal Linux". To keep
+an internal PB-OS and only update it, use **Software Update** there instead.
+`--resume` is `--replace` for PB-OS only, kept for older notes.
 
 ## Layout
 
@@ -94,9 +113,9 @@ after:   ... | userdata (you pick) | ROCKNIX 2G | STORAGE 20G | HOME |
 - Nothing is written until you type `ERASE` (or press Install in the app),
   and only if the partition table still matches what was shown to you.
 - It refuses to run from internal storage, if anything on `userdata` is in
-  use, or if anything other than its own partitions follows `userdata`
-  (remove those with **Uninstall CFW** in the OpenABL menu first; it also
-  erases Android's user data).
+  use, or if anything other than PB-OS's or ArmadaOS's partitions follows
+  `userdata` (remove those with **Uninstall CFW** in the OpenABL menu first;
+  it also erases Android's user data).
 - The whole new table is written in one go and checked against the plan,
   both on disk and in the kernel's view, before anything is formatted.
 - The KERNEL is the SD card's own, with only `root=` changed and its header
@@ -120,8 +139,8 @@ partitions, and erases Android's user data as well.
 
 Boot the SD card and run `sudo ufs-diagnose.sh`, then
 `sudo ufs-fix-internal-boot.sh` (rewrites the KERNEL and fstab), or
-`sudo install-masios-to-internal.sh --resume` to copy the system again onto the
-existing partitions.
+`sudo install-masios-to-internal.sh --replace --home keep` to copy the system
+again onto the existing partitions, keeping HOME.
 
 ## Files
 

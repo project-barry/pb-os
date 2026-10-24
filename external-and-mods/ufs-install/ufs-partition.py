@@ -4,6 +4,8 @@
   ufs-partition.py detect  [--disk /dev/sda] [--storage-gib 20]
   ufs-partition.py apply   --android-gib N --expect FINGERPRINT --backup-dir DIR
                            [--disk /dev/sda] [--storage-gib 20] [--dry-run]
+  ufs-partition.py relayout --expect FINGERPRINT --backup-dir DIR
+                           [--disk /dev/sda] [--storage-gib 20] [--dry-run]
   ufs-partition.py restore --backup FILE [--disk /dev/sda] [--dry-run]
 
 Layout after apply (everything before userdata is never touched):
@@ -27,7 +29,17 @@ Rules:
     is removed, so the old encrypted blocks can never be read again.
     Android makes a new key and formats userdata on its next boot.
 
-detect prints KEY=VALUE lines for the shell installer and the GUI.
+relayout replaces an ArmadaOS install (ARMADA, ARMADA_BOOT, ARMADA_ROOT
+after userdata) with the same three partitions in the same table slots and
+the same space: ROCKNIX 2 GiB, STORAGE 20 GiB, HOME the rest, as PB-OS
+Installer does. userdata and everything before it stay exactly as they are,
+so Android keeps its size and its data. The old table is saved first and
+the result checked the same way as apply.
+
+detect prints KEY=VALUE lines for the shell installer and the GUI. Over an
+existing install (MODE installed or armada) REPLACE_ERROR says why PB-OS
+can't go there (empty when it can) and HOME_ROOM_BYTES how big HOME is
+afterwards.
 """
 from __future__ import annotations
 
@@ -51,7 +63,12 @@ DEFAULT_STORAGE_GIB = 20
 # smallest size Android has booted with (Nova).
 MIN_ANDROID_GIB = 16
 MIN_HOME_GIB = 16
+# An existing PB-OS install is reused as it is, if it's big enough for this
+# one (PB-OS Installer's limits).
+MIN_BOOT_BYTES = 256 * MIB
+MIN_STORAGE_GIB = 18
 OURS = ("ROCKNIX", "STORAGE", "HOME")
+ARMADA = ("ARMADA", "ARMADA_BOOT", "ARMADA_ROOT")
 # ROCKNIX: FAT32 as "basic data", the type the ABL boots from on the
 # Pocket FIT install this layout was proven on.
 TYPE_FAT = "EBD0A0A2-B9E5-4433-87C0-68B6B72699C7"
@@ -120,6 +137,8 @@ def classify(t: dict) -> tuple[str, dict, list[dict]]:
         return "fresh", ud, after
     if [p["name"] for p in after] == list(OURS):
         return "installed", ud, after
+    if [p["name"] for p in after] == list(ARMADA):
+        return "armada", ud, after
     return "occupied", ud, after
 
 
@@ -156,6 +175,52 @@ def max_android_gib(t: dict, ud: dict, storage_gib: int) -> int:
     ss = t["sectorsize"]
     room = (int(t["lastlba"]) + 1 - ud["start"]) * ss
     return int((room - (BOOT_GIB + storage_gib + MIN_HOME_GIB) * GIB - 2 * MIB) // GIB)
+
+
+def relayout_plan(t: dict, ud: dict, after: list[dict], storage_gib: int) -> dict:
+    """ArmadaOS's space, MiB-aligned, as ROCKNIX / STORAGE / HOME in its
+    three table slots."""
+    ss = t["sectorsize"]
+    mib = MIB // ss
+    start = align_up(after[0]["start"], mib)
+    end = (after[-1]["start"] + after[-1]["size"]) // mib * mib     # exclusive
+    boot_size = BOOT_GIB * GIB // ss
+    st_size = storage_gib * GIB // ss
+    home_start = start + boot_size + st_size
+    return {
+        "sector_size": ss, "userdata_start": ud["start"], "userdata_size": ud["size"],
+        "new": [
+            ("ROCKNIX", start, boot_size, TYPE_FAT),
+            ("STORAGE", start + boot_size, st_size, TYPE_LINUX),
+            ("HOME", home_start, end - home_start, TYPE_LINUX),
+        ],
+        "slots": [p["node"] for p in after],
+        "home_gib": (end - home_start) * ss / GIB,
+    }
+
+
+def replace_check(t: dict, ud: dict, mode: str, after: list[dict],
+                  storage_gib: int) -> tuple[str, int]:
+    """Over an existing install: (why PB-OS can't go there or "", HOME's size
+    in bytes afterwards)."""
+    ss = t["sectorsize"]
+    if after[0]["start"] < ud["start"] + ud["size"] or any(
+            b["start"] < a["start"] + a["size"] for a, b in zip(after, after[1:])):
+        return "the partitions after userdata overlap", 0
+    if mode == "armada":
+        p = relayout_plan(t, ud, after, storage_gib)
+        home = p["new"][2][2] * ss
+        if home < MIN_HOME_GIB * GIB:
+            space = (after[-1]["start"] + after[-1]["size"] - after[0]["start"]) * ss
+            return (f"ArmadaOS has {space / GIB:.1f} GiB; PB-OS needs "
+                    f"{BOOT_GIB + storage_gib + MIN_HOME_GIB} GiB there"), 0
+        return "", home
+    boot, st, home = (q["size"] * ss for q in after)
+    if boot < MIN_BOOT_BYTES or st < MIN_STORAGE_GIB * GIB or home < MIN_HOME_GIB * GIB:
+        return (f"the PB-OS partitions are too small (ROCKNIX {boot / GIB:.1f}, STORAGE "
+                f"{st / GIB:.1f}, HOME {home / GIB:.1f} GiB; needed {MIN_BOOT_BYTES // MIB} MiB, "
+                f"{MIN_STORAGE_GIB}, {MIN_HOME_GIB} GiB)"), 0
+    return "", home
 
 
 # ------------------------------------------------------------- safety -----
@@ -257,14 +322,22 @@ def ensure_idle(disk: str) -> None:
 # -------------------------------------------------------------- writing ---
 def new_dump(disk: str, t: dict, p: dict) -> str:
     """sfdisk's own dump of the current table, userdata's size changed and
-    our three partitions appended. Every other byte of each line is kept."""
+    our three partitions appended (or, for a relayout, written into the
+    slots of the ones they replace, userdata as it is). Every other byte of
+    each line is kept."""
     lines = sh("sfdisk", "--dump", disk).splitlines()
     stale = {q["node"] for q in leftovers(t)}
+    slots = p.get("slots", [])
     out, seen_ud = [], False
     for line in lines:
-        if line.startswith("/dev/") and line.split(":", 1)[0].strip() in stale:
+        node = line.split(":", 1)[0].strip() if line.startswith("/dev/") else ""
+        if node in stale:
             continue
-        if line.startswith("/dev/") and 'name="userdata"' in line:
+        if node in slots:
+            name, start, size, typ = p["new"][slots.index(node)]
+            out.append(f"{node} : start={start}, size={size}, type={typ}, name=\"{name}\"")
+            continue
+        if node and 'name="userdata"' in line:
             parts = [s.strip() for s in line.split(":", 1)[1].split(",")]
             fixed = []
             for f in parts:
@@ -276,8 +349,12 @@ def new_dump(disk: str, t: dict, p: dict) -> str:
         out.append(line)
     if not seen_ud:
         die("userdata line not found in sfdisk dump")
-    for name, start, size, typ in p["new"]:
-        out.append(f"start={start}, size={size}, type={typ}, name=\"{name}\"")
+    if slots:
+        if sum(l.split(":", 1)[0].strip() in slots for l in out if l.startswith("/dev/")) != len(slots):
+            die("the partitions to replace are not all in sfdisk's dump")
+    else:
+        for name, start, size, typ in p["new"]:
+            out.append(f"start={start}, size={size}, type={typ}, name=\"{name}\"")
     return "\n".join(out) + "\n"
 
 
@@ -305,7 +382,8 @@ def verify(disk: str, before: dict, p: dict) -> None:
     t = read_table(disk)
     ss = t["sectorsize"]
     stale = {q["node"] for q in leftovers(before)}
-    old = {q["node"]: q for q in before["partitions"] if q["node"] not in stale}
+    old = {q["node"]: q for q in before["partitions"]
+           if q["node"] not in stale and q["node"] not in p.get("slots", [])}
     for q in t["partitions"]:
         o = old.get(q["node"])
         if o is None:
@@ -352,6 +430,14 @@ def cmd_detect(a) -> None:
     print(f"ANDROID_MAX_GIB={mx}")
     print(f"STORAGE_GIB={a.storage_gib}")
     print(f"OCCUPIED={','.join(p['name'] or p['node'] for p in after)}")
+    if mode in ("installed", "armada"):
+        why, home = replace_check(t, ud, mode, after, a.storage_gib)
+        space = (after[-1]["start"] + after[-1]["size"] - after[0]["start"]) * ss
+        print(f"LINUX_GIB={space / GIB:.1f}")
+        print(f"REPLACE_ERROR={why}")
+        print(f"HOME_ROOM_BYTES={home}")
+        if mode == "installed":
+            print(f"STORAGE_BYTES={after[1]['size'] * ss}")
     print(f"LEFTOVERS={','.join(p['node'] for p in leftovers(t))}")
     for q in t["partitions"]:
         if q["name"] in OURS:
@@ -405,6 +491,44 @@ def cmd_apply(a) -> None:
     print("OK")
 
 
+def cmd_relayout(a) -> None:
+    t = read_table(a.disk)
+    if fingerprint(t) != a.expect:
+        die("the partition table changed since it was inspected; run detect again")
+    mode, ud, after = classify(t)
+    if mode != "armada":
+        die(f"layout is '{mode}', not ArmadaOS; nothing was written")
+    if booted_disk() == a.disk:
+        die(f"the running system is on {a.disk}; boot from the microSD card")
+    why, _ = replace_check(t, ud, mode, after, a.storage_gib)
+    if why:
+        die(f"{why}; nothing was written")
+    p = relayout_plan(t, ud, after, a.storage_gib)
+    dump = new_dump(a.disk, t, p)
+    for (name, start, size, _), node in zip(p["new"], p["slots"]):
+        print(f"{name:8s} start {start} size {size} ({size * p['sector_size'] / GIB:.2f} GiB) in {node}")
+    if a.dry_run:
+        print("--- new table (dry run, not written) ---")
+        print(dump, end="")
+        return
+    ensure_idle(a.disk)
+
+    bdir = Path(a.backup_dir)
+    bdir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    backup = bdir / f"ufs-gpt-{stamp}.sfdisk"
+    backup.write_text(sh("sfdisk", "--dump", a.disk))
+    (bdir / f"ufs-gpt-{stamp}.json").write_text(json.dumps(t, indent=1))
+    os.sync()
+    print(f"BACKUP={backup}")
+
+    sh("sfdisk", "--no-reread", "--wipe", "never", "--wipe-partitions", "never",
+       a.disk, inp=dump)
+    reread(a.disk)
+    verify(a.disk, t, p)
+    print("OK")
+
+
 def cmd_restore(a) -> None:
     text = Path(a.backup).read_text()
     t = read_table(a.disk)
@@ -437,21 +561,24 @@ def main() -> None:
     sub = ap.add_subparsers(dest="cmd", required=True)
     d = sub.add_parser("detect")
     ap_ = sub.add_parser("apply")
+    rl = sub.add_parser("relayout")
     r = sub.add_parser("restore")
-    for s in (d, ap_, r):
+    for s in (d, ap_, rl, r):
         s.add_argument("--disk", default="/dev/sda")
-    for s in (d, ap_):
+    for s in (d, ap_, rl):
         s.add_argument("--storage-gib", type=int, default=DEFAULT_STORAGE_GIB)
+    for s in (ap_, rl):
+        s.add_argument("--expect", required=True)
+        s.add_argument("--backup-dir", required=True)
+        s.add_argument("--dry-run", action="store_true")
     ap_.add_argument("--android-gib", type=int, required=True)
-    ap_.add_argument("--expect", required=True)
-    ap_.add_argument("--backup-dir", required=True)
-    ap_.add_argument("--dry-run", action="store_true")
     r.add_argument("--backup", required=True)
     r.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
     if os.geteuid() != 0 and not getattr(a, "dry_run", False) and a.cmd != "detect":
         die("run as root")
-    {"detect": cmd_detect, "apply": cmd_apply, "restore": cmd_restore}[a.cmd](a)
+    {"detect": cmd_detect, "apply": cmd_apply, "relayout": cmd_relayout,
+     "restore": cmd_restore}[a.cmd](a)
 
 
 if __name__ == "__main__":
