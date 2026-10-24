@@ -13,8 +13,15 @@ What it does, with the controller (A, B, D-pad) or touch:
    through the default output ("Top screen" on the Thor), one straight on the
    real output under it. Heard on the second but not the first means
    PipeWire's routing; neither means the driver, DSP or amplifier.
-4. Saves the report with the answers in `~/Desktop/PB-OS Reports`.
-5. Where the image has a report address (`/usr/share/pb-os/report-url`),
+4. When the sound is gone and the first beep wasn't heard, tries two fixes,
+   not optional, each followed by a fresh read of the audio path and the beep
+   again: first the speaker stream (the output suspended and resumed, so
+   PipeWire opens the DSP's playback stream again), then PipeWire itself (and
+   PB-OS's sound helpers; Steam then needs a restart for its own sound, which
+   the app offers). Lux's Thor reports (10-23) showed the ADSP's playback
+   stream stopping ~15 s after it starts, with everything after it powered.
+5. Saves the report with the answers in `~/Desktop/PB-OS Reports`.
+6. Where the image has a report address (`/usr/share/pb-os/report-url`),
    offers to send it to the PB-OS team (see below). Then, after a "sound is
    gone" report, asks for a restart and a second, "sound works" run.
 

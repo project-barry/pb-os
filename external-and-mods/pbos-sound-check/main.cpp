@@ -9,7 +9,14 @@
 // each was heard is written into the report. The two answers tell PipeWire's
 // routing from the driver, DSP and amplifier below it; the two reports, side
 // by side, show what changed. Reports go to ~/Desktop/PB-OS Reports and are
-// sent nowhere.
+// sent nowhere unless the user taps Send.
+//
+// When the sound is gone, the tones and two fixes are not optional: first the
+// speaker stream is restarted (the output suspended and resumed, so PipeWire
+// opens the DSP's playback stream again), then, if the beep is still not
+// heard, PipeWire itself. After each, the audio path is read again and the
+// beep replayed. (Lux's Thor reports, 10-23: the ADSP's playback stream
+// stops ~15 s after it starts while everything after it is powered.)
 //
 // SDL2 for the window, the controller (Steam's virtual pad), keys and touch;
 // SDL2_ttf with Noto Sans for the text. Barry's head is drawn from its
@@ -206,6 +213,7 @@ struct Screen {
     std::string title, text;
     std::vector<Button> buttons;
     bool busy = false;
+    bool locked = false;  // B doesn't quit: the sound-gone tones and fixes run to the end
 };
 
 class App {
@@ -296,6 +304,8 @@ private:
     void start(bool broken) {
         broken_ = broken;
         heard_.clear();
+        fixlog_.clear();
+        fixed_ = 0;
         show({"Saving the report…", "This takes a few seconds.", {}, true});
         std::thread([this] {
             std::string r = sh("pbos-report audio 2>&1");
@@ -316,19 +326,21 @@ private:
     // it, or just the default output where there is no "Top screen".
     void outputs() {
         tones_.clear();
-        std::string real = real_output();
+        real_ = real_output();
         if (top_) tones_.push_back({TOP, "the Top screen output (what games and Steam play on)"});
-        if (!real.empty() && real != TOP)
-            tones_.push_back({real, top_ ? "the speakers directly (" + real + ")" : "the default output (" + real + ")"});
+        if (!real_.empty() && real_ != TOP)
+            tones_.push_back({real_, top_ ? "the speakers directly (" + real_ + ")" : "the default output (" + real_ + ")"});
+        std::vector<Button> b = {{"Play the first tone", [this] { tone(0); }}};
+        // With the sound gone, the tones are how a fix is checked: not skipped.
+        if (!broken_) b.push_back({"Skip the tones", [this] { save(); }});
         show({"Test tones",
               "Next, PB-OS plays a short, soft beep on each output, one at a time, at your current volume. "
               "If you hear nothing, you can raise the volume a little and play it again.",
-              {{"Play the first tone", [this] { tone(0); }}, {"Skip the tones", [this] { save(); }}}});
+              std::move(b), false, broken_});
     }
 
-    void tone(size_t i) {
-        if (i >= tones_.size()) return save();
-        std::string target = tones_[i].first;
+    // A beep on target, from a worker thread; pw-play's complaints, if any.
+    std::string play(const std::string& target) {
         // The real output under "Top screen" is held at 100 %: played there
         // straight, the beep gets the Top screen's own volume (PipeWire's
         // cubic scale, as the loopback applies it), so it is never louder
@@ -340,11 +352,88 @@ private:
             snprintf(b, sizeof b, " --volume=%.4f", v * v * v);
             vol = b;
         }
+        return trim(sh("timeout 5 pw-play --target " + q(target) + vol + " " + q(tone_file()) + " 2>&1"));
+    }
+
+    // The audio path below PipeWire (root, pbos-report-audio-root.service),
+    // from a worker thread.
+    static std::string audio_root(const std::string& title) {
+        if (sh("timeout 60 systemctl start pbos-report-audio-root.service >/dev/null 2>&1 && echo ok").find("ok") != 0)
+            return "\n=== " + title + ": audio path (root only) could not be read\n";
+        return "\n=== " + title + "\n" + sh("cat /run/pbos-report/audio-root.txt 2>&1");
+    }
+
+    // The fixes, in turn, each checked with the beep: 1 restarts the speaker
+    // stream, 2 PipeWire.
+    void fix(int stage) {
+        const char* what = stage == 1 ? "Restarting the speaker stream…" : "Restarting PipeWire, the sound service…";
+        show({"Trying to fix it (step " + std::to_string(stage) + " of 2)", std::string(what) + " This takes a few seconds.",
+              {}, true});
+        std::string real = real_;
+        std::thread([this, stage, real] {
+            std::string out;
+            if (stage == 1) {
+                // Closing the output closes the DSP's playback stream; it is opened again on resume.
+                out = sh("pactl suspend-sink " + q(real) + " 1 2>&1; sleep 1; pactl suspend-sink " + q(real) + " 0 2>&1");
+            } else {
+                out = sh("systemctl --user restart pipewire.service pipewire-pulse.service wireplumber.service 2>&1");
+                // The outputs come back, then PB-OS's own sound helpers set them up again.
+                sh("for i in $(seq 20); do pactl list short sinks 2>/dev/null | grep -q " + q(real) + " && break; sleep 0.5; done");
+                out += sh("systemctl --user try-restart sm8550-audio-pipewire.service barry_launcher_audio.service "
+                          "sm8550-volume-keeper.service sm8550-volume-keys.service 2>&1");
+            }
+            sh("sleep 3");
+            std::string log = "\n=== fix " + std::to_string(stage) + " (" + (stage == 1 ? "speaker stream restarted" : "PipeWire restarted") +
+                              ")" + (trim(out).empty() ? "" : ": " + trim(out)) + "\n";
+            log += audio_root("audio path after fix " + std::to_string(stage));
+            later([this, stage, log] {
+                fixlog_ += log;
+                retest(stage);
+            });
+        }).detach();
+    }
+
+    void retest(int stage) {
+        show({"Listen", "The beep again, on " + tones_[0].second + ".", {}, true});
+        std::string target = tones_[0].first;
+        std::thread([this, stage, target] {
+            std::string err = play(target);
+            later([this, stage, err] { ask_fix(stage, err); });
+        }).detach();
+    }
+
+    void ask_fix(int stage, const std::string& err) {
+        auto answer = [this, stage, err](bool heard) {
+            heard_.push_back("after fix " + std::to_string(stage) + ", tone on " + tones_[0].first + ": " +
+                             (heard ? "heard" : "NOT heard") + (err.empty() ? "" : " (pw-play: " + err + ")"));
+            if (heard) {
+                fixed_ = stage;
+                save();
+            } else if (stage < 2) {
+                fix(stage + 1);
+            } else {
+                save();
+            }
+        };
+        show({"Is the sound back?", "Did you hear the beep this time?",
+              {{"Yes, I heard it", [answer] { answer(true); }},
+               {"No, nothing", [answer] { answer(false); }},
+               {"Play it again", [this, stage] { retest(stage); }}},
+              false, true});
+    }
+
+    void tone(size_t i) {
+        if (i >= tones_.size()) {
+            // Sound gone and the first beep (what games play through) not heard:
+            // the fixes, always.
+            bool first_heard = !heard_.empty() && heard_[0].find(": heard") != std::string::npos;
+            return broken_ && !first_heard && !tones_.empty() ? fix(1) : save();
+        }
+        std::string target = tones_[i].first;
         show({"Playing tone " + std::to_string(i + 1) + " of " + std::to_string(tones_.size()),
               "Listen: a beep on " + tones_[i].second + ".", {}, true});
-        std::thread([this, i, target, vol] {
-            std::string wav = tone_file();
-            std::string err = trim(sh("timeout 5 pw-play --target " + q(target) + vol + " " + q(wav) + " 2>&1"));
+        std::thread([this, i, target] {
+            std::string err = play(target);
             later([this, i, err] { ask(i, err); });
         }).detach();
     }
@@ -358,7 +447,8 @@ private:
         show({"Did you hear tone " + std::to_string(i + 1) + "?", "The beep on " + tones_[i].second + ".",
               {{"Yes, I heard it", [answer] { answer("heard"); }},
                {"No, nothing", [answer] { answer("NOT heard"); }},
-               {"Play it again", [this, i] { tone(i); }}}});
+               {"Play it again", [this, i] { tone(i); }}},
+              false, broken_});
     }
 
     void save() {
@@ -368,9 +458,10 @@ private:
         std::string head = "=== PB-OS Sound Check: " + mode + ", " + stamp("%F %T %Z") + "\n";
         for (const auto& h : heard_) head += h + "\n";
         if (heard_.empty()) head += "tones skipped\n";
+        if (broken_) head += fixed_ ? "fixed by fix " + std::to_string(fixed_) + "\n" : "";
         sh("mkdir -p " + q(dir));
         std::ofstream f(path);
-        f << head << "\n" << report_;
+        f << head << "\n" << report_ << fixlog_;
         f.close();
         bool ok = f.good();
         sh("logger -t pbos-sound-check " + q(mode + ": report saved as " + path));
@@ -385,7 +476,7 @@ private:
         if (url.empty()) return done("");
         sent_path_ = path.substr(0, path.size() - 4) + "-sent.txt";
         std::ofstream sent(sent_path_);
-        sent << for_sending(head + "\n" + report_);
+        sent << for_sending(head + "\n" + report_ + fixlog_);
         sent.close();
         if (!sent.good()) return done("");
         show({"Send it to the PB-OS team?",
@@ -419,7 +510,16 @@ private:
 
     void done(const std::string& note) {
         std::string first = note.empty() ? "" : note + "\n\n";
-        if (broken_) {
+        if (broken_ && fixed_ == 1) {
+            show({"The sound is back!", first + "Restarting the speaker stream fixed it. Saved in " + shown_ + ".",
+                  {{"Quit", [this] { quit_ = true; }}}});
+        } else if (broken_ && fixed_ == 2) {
+            show({"The sound is back!",
+                  first + "Restarting PipeWire fixed it. Steam needs a restart to get its own sound back. Saved in " +
+                      shown_ + ".",
+                  {{"Restart Steam", [] { sh("systemctl --user restart steam.service"); }},
+                   {"Quit", [this] { quit_ = true; }}}});
+        } else if (broken_) {
             show({"Saved. Now restart",
                   first + "Saved in " + shown_ + ".\n\nRestart the device, then open PB-OS Sound Check again and "
                   "pick \"No, the sound works\" once the sound is back.",
@@ -448,7 +548,7 @@ private:
         case SDL_CONTROLLERBUTTONDOWN:
             switch (e.cbutton.button) {
             case SDL_CONTROLLER_BUTTON_A: press(); break;
-            case SDL_CONTROLLER_BUTTON_B: if (!scr_.busy) quit_ = true; break;
+            case SDL_CONTROLLER_BUTTON_B: if (!scr_.busy && !scr_.locked) quit_ = true; break;
             case SDL_CONTROLLER_BUTTON_DPAD_UP: case SDL_CONTROLLER_BUTTON_DPAD_LEFT: move(-1); break;
             case SDL_CONTROLLER_BUTTON_DPAD_DOWN: case SDL_CONTROLLER_BUTTON_DPAD_RIGHT: move(1); break;
             }
@@ -463,7 +563,7 @@ private:
         case SDL_KEYDOWN:
             switch (e.key.keysym.sym) {
             case SDLK_RETURN: case SDLK_SPACE: press(); break;
-            case SDLK_ESCAPE: if (!scr_.busy) quit_ = true; break;
+            case SDLK_ESCAPE: if (!scr_.busy && !scr_.locked) quit_ = true; break;
             case SDLK_UP: case SDLK_LEFT: move(-1); break;
             case SDLK_DOWN: case SDLK_RIGHT: case SDLK_TAB: move(1); break;
             }
@@ -539,7 +639,8 @@ private:
         }
         // The hint where the buttons leave room for it.
         if (y + TTF_FontHeight(text_) < h_ - h_ / 12)
-            text(text_, "A: select    B: quit    or tap", margin, h_ - h_ / 12, col, {0x80, 0x8a, 0x99, 255}, true);
+            text(text_, scr_.locked ? "A: select    or tap" : "A: select    B: quit    or tap", margin, h_ - h_ / 12, col,
+                 {0x80, 0x8a, 0x99, 255}, true);
         SDL_RenderPresent(ren_);
     }
 
@@ -553,7 +654,8 @@ private:
     std::mutex m_;
     std::function<void()> next_;
     bool top_ = false, broken_ = false;
-    std::string report_, shown_, sent_path_;
+    std::string report_, shown_, sent_path_, real_, fixlog_;
+    int fixed_ = 0;  // the fix that brought the sound back, or 0
     std::vector<std::pair<std::string, std::string>> tones_;
     std::vector<std::string> heard_;
 };
