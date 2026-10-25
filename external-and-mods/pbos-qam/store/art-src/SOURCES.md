@@ -28,6 +28,7 @@ the license given is the project's.
 | chiaki-ng | chiaki.svg | https://raw.githubusercontent.com/streetpea/chiaki-ng/c8bea2642d0e95402f373af55584a3b98cd89417/gui/res/chiaking.svg | project: AGPL-3.0 |
 | Greenlight | greenlight.png | https://raw.githubusercontent.com/unknownskl/greenlight/312f4958d78eb5914394c3536d6f2fae31e9130c/packages/desktop/flatpak/io.github.unknownskl.greenlight.png | project: MIT |
 | Heroic Games Launcher | heroic.svg | https://raw.githubusercontent.com/Heroic-Games-Launcher/HeroicGamesLauncher/509a34feea8541b73c928e289f2cf262d432db4a/src/frontend/assets/heroic-icon.svg | project: GPL-3.0 |
+| EmuDeck | emudeck.png | https://raw.githubusercontent.com/EmuDeck/emudeck-electron/b06bfcf5270f750c27b959dc3bca25425c99513c/assets/icons/1024x1024.png | project: MIT |
 | Prism Launcher | prism-launcher.svg | https://raw.githubusercontent.com/PrismLauncher/PrismLauncher/develop/program_info/org.prismlauncher.PrismLauncher.svg | CC BY-SA 4.0 (program_info/LICENSE, for the logos and branding there) |
 | ES-DE | es-de.svg | https://gitlab.com/es-de/emulationstation-de/-/raw/master/es-app/assets/org.es_de.frontend.svg | project: MIT |
 | Steam ROM Manager | steam-rom-manager.svg | https://raw.githubusercontent.com/SteamGridDB/steam-rom-manager/master/src/assets/icons/steam-rom-manager.svg | project: GPL-3.0 |
