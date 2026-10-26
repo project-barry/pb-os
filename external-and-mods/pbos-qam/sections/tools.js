@@ -1617,8 +1617,9 @@ function CommunitySection({ appid, profile, save }) {
 
 // Recommended Eden settings: for a shortcut that starts a Switch game in Eden
 // (EmuDeck's or the App Store's), by the title ID in the game's file name.
-// UltraCam's part only when the mod has made its settings file.
-function EmulatorSection({ appid }) {
+// UltraCam's part only when the mod has made its settings file. A
+// recommended performance mode goes into the game's own profile.
+function EmulatorSection({ appid, profile, save }) {
     const [title, setTitle] = useState(null);
     const [info, setInfo] = useState(null);
     const [busy, setBusy] = useState(false);
@@ -1640,11 +1641,17 @@ function EmulatorSection({ appid }) {
     if (!title || !info || !info.available) return null;
     const uc = info.ultracam;
     const parts = [...info.settings, ...(uc && uc.installed ? uc.settings.map((x) => ({ ...x, label: `UltraCam: ${x.label}` })) : [])];
-    const applied = parts.every((x) => x.applied);
+    const edenApplied = parts.every((x) => x.applied);
+    const mode = MODES.find((m) => m.data === info.mode);
+    const modeApplied = !mode || profile.mode === mode.data;
+    const applied = edenApplied && modeApplied;
+    const labels = [...(mode ? [`Performance mode ${mode.label}`] : []), ...parts.map((x) => x.label)];
     const items = [row(jsx(DFL.ButtonItem, {
-        layout: "below", disabled: busy || info.running || applied,
-        description: parts.map((x) => x.label).join(", "),
+        layout: "below", disabled: busy || applied || (info.running && !edenApplied),
+        description: labels.join(", "),
         onClick: () => {
+            if (!modeApplied) save({ mode: mode.data });
+            if (edenApplied) return;
             setBusy(true);
             setError("");
             applyEmulatorSettings(title)
@@ -1654,12 +1661,13 @@ function EmulatorSection({ appid }) {
         },
         children: applied ? "Recommended Settings Applied" : "Apply Recommended Settings",
     }))];
-    if (info.running) items.push(note("Close Eden first: it saves its own settings when it closes."));
+    if (info.running && !edenApplied) items.push(note("Close Eden first: it saves its own settings when it closes."));
     if (uc && !uc.installed) {
         items.push(note(uc.mod_folder
             ? "UltraCam has not made its settings yet: start the game once with it, then apply again for its part."
             : "UltraCam is not installed: only Eden's settings."));
     }
+    if (info.note) items.push(note(info.note));
     items.push(note(`Tested on ${info.tested}.`));
     if (error) items.push(failure(error));
     return jsx(DFL.PanelSection, { title: "Eden Settings", children: items });
@@ -1873,7 +1881,7 @@ function GamesTab() {
     return jsxs(SP_JSX.Fragment, { children: [
         picker,
         jsx(CommunitySection, { appid: pick, profile: p, save }),
-        jsx(EmulatorSection, { appid: pick }),
+        jsx(EmulatorSection, { appid: pick, profile: p, save }),
         jsx(DFL.PanelSection, { title: "Mode", children: modeItems }),
         jsx(DFL.PanelSection, { title: "FEX Preset", children: fexItems }),
         jsx(DFL.PanelSection, { title: "CPU Cores", children: cpuItems }),

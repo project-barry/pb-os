@@ -263,6 +263,50 @@
           }
         ]
       }
+    },
+    "010067300059A000": {
+      "name": "Mario + Rabbids Kingdom Battle",
+      "tested": "Retroid Pocket Nova, Eden nightly de7e6e01d4, game 1.9.589692",
+      "note": "Fixes the white flashes, the pink and green color bleed and the dark shadows. Some brown pillars still flicker olive: no Eden setting fixes that.",
+      "settings": [
+        {
+          "section": "Cpu",
+          "key": "cpu_backend",
+          "value": "0",
+          "label": "CPU backend Dynarmic (normal shadows; NCE draws them too dark)"
+        },
+        {
+          "section": "Renderer",
+          "key": "gpu_accuracy",
+          "value": "1",
+          "label": "GPU accuracy High (no white flashes)"
+        },
+        {
+          "section": "Renderer",
+          "key": "dma_accuracy",
+          "value": "2",
+          "label": "DMA accuracy Safe (less color bleed)"
+        },
+        {
+          "section": "Renderer",
+          "key": "enable_buffer_history",
+          "value": "true",
+          "label": "Buffer history on (no color bleed)"
+        },
+        {
+          "section": "Renderer",
+          "key": "use_asynchronous_shaders",
+          "value": "false",
+          "label": "Asynchronous shaders off"
+        }
+      ]
+    },
+    "0100000000010000": {
+      "name": "Super Mario Odyssey",
+      "tested": "Retroid Pocket Nova, Eden nightly de7e6e01d4, game 1.4.1",
+      "mode": "balanced",
+      "note": "Sound can still cut out for a moment when the game stutters, mostly the first time a new effect or cutscene shows (Eden builds its shaders then): Eden plays no sound while it catches up.",
+      "settings": []
     }
   }
 }

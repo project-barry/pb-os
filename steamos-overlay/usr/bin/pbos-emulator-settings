@@ -14,6 +14,8 @@ PB-OS device:
 
   Eden      the game's own settings (~/.config/eden/custom/<title id>.ini),
             the way Eden's Properties window writes them.
+  Mode      a PB-OS performance mode, which PB-OS Tools puts in the game's
+            own profile (this only passes it on).
   UltraCam  the mod's Main.ini in Eden's SD folder, only when the mod has
             made one (it does on the game's first start with the mod); the
             mod's other settings stay as they are.
@@ -168,6 +170,8 @@ def state(rec, title):
         "available": True,
         "name": rec.get("name", ""),
         "tested": rec.get("tested", ""),
+        "note": rec.get("note", ""),
+        "mode": rec.get("mode", ""),
         "running": eden_running(),
         "settings": [{"label": s["label"], "applied": eden_value(game, s["key"]) == s["value"]}
                      for s in rec["settings"]],
