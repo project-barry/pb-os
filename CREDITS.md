@@ -135,7 +135,6 @@ Inherited from **SteamOS-Ubuntu**. See
 |--------|-----|-------------|
 | **MESA Easy Manager** | https://github.com/MaSieS4Fun/MESA-Easy-Manager | Turnip / Mesa helper |
 | **Proton ARM Easy Manager** | In-tree / inspired by ProtonPlus | ARM Proton helper |
-| **Steam ROM Manager** | https://github.com/SteamGridDB/steam-rom-manager | Desktop launcher |
 | **Easy UFS Install** | `external-and-mods/ufs-install/` (MaSi-OS UFS lineage) | Internal UFS install: ROCKNIX + STORAGE + HOME |
 
 ---

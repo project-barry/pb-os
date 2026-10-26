@@ -202,32 +202,15 @@ Keywords=Steam;Non-Steam;GOG;Proton;ARM;Shortcut;
 StartupNotify=true
 EOF
 
-# ── Steam ROM Manager icon + menu only (no desktop shortcut) ────────────────
-log "Steam ROM Manager icon"
-if [[ -d /opt/SteamROMManager ]]; then
-  rm -rf "$R/opt/SteamROMManager"
-  mkdir -p "$R/opt"
-  cp -a /opt/SteamROMManager "$R/opt/SteamROMManager"
-  cat >"$bin/steam-rom-manager" <<'EOF'
-#!/bin/sh
-exec /opt/SteamROMManager/steam-rom-manager --no-sandbox "$@"
-EOF
-  chmod 0755 "$bin/steam-rom-manager"
-  if [[ -f "${MOD}/SteamROMManager/steam-rom-manager.png" ]]; then
-    for size in 16 24 32 48 64 128 256; do
-      mkdir -p "$icons/${size}x${size}/apps"
-      install -m 0644 "${MOD}/SteamROMManager/steam-rom-manager.png" \
-        "$icons/${size}x${size}/apps/steam-rom-manager.png"
-    done
-  fi
-  install -m 0644 "$OVL/usr/share/applications/steam-rom-manager.desktop" \
-    "$apps/steam-rom-manager.desktop"
-else
-  # No SRM in this image (EmuDeck or the App Store bring their own): a menu
-  # entry would start nothing.
-  rm -f "$apps/steam-rom-manager.desktop" "$bin/steam-rom-manager"
-fi
-rm -f "$HOME_DST/Desktop/Steam ROM Manager.desktop"
+# ── Steam ROM Manager: not in the image ─────────────────────────────────────
+# EmuDeck or the App Store bring their own; an image copy only clashed with
+# theirs. Removes what older builds put in.
+rm -rf "$R/opt/SteamROMManager"
+rm -f "$bin/steam-rom-manager" "$apps/steam-rom-manager.desktop" \
+  "$HOME_DST/Desktop/Steam ROM Manager.desktop"
+for size in 16 24 32 48 64 128 256; do
+  rm -f "$icons/${size}x${size}/apps/steam-rom-manager.png"
+done
 
 # ── Decky in ARM-Manager (keep installer, drop forced desktop copy later) ───
 if [[ -f "${MOD}/Decky/decky_installer.desktop" ]]; then

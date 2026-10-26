@@ -215,8 +215,8 @@ for u in pbos-proton.service pbos-proton.path; do
   install_file "$OVL/usr/lib/systemd/user/$u" "$R/usr/lib/systemd/user/$u" 0644
   ln -sfn "../$u" "$R/usr/lib/systemd/user/default.target.wants/$u"
 done
-# Home defaults at login, never replacing what exists: Steam ROM Manager's
-# parsers for the App Store's emulators and the ~/Emulation/roms folders.
+# Home defaults, never replacing what exists: Eden's controls at login;
+# Steam ROM Manager's parsers when the App Store installs SRM.
 rm -rf "$R/usr/share/pb-os/home-defaults"
 mkdir -p "$R/usr/share/pb-os/home-defaults"
 cp -r "$OVL/usr/share/pb-os/home-defaults/." "$R/usr/share/pb-os/home-defaults/"
