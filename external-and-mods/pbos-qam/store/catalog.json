@@ -313,7 +313,6 @@
         "asset": "^Steam-ROM-Manager-[0-9][0-9.]*-arm64\\.AppImage$",
         "filename": "Steam-ROM-Manager.AppImage"
       },
-      "postInstall": "srm-defaults",
       "desktopOnly": true,
       "note": "It needs Steam closed: use it in Desktop Mode."
     },

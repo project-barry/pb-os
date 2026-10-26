@@ -73,9 +73,6 @@ each project's logo in `store/art-src/`, sources and licenses in
 the user already set a cover of their own.
 `postInstall: "retroarch-cores-url"` gives Flathub's RetroArch the aarch64
 core download address its build lacks, while the user's own setting is empty.
-`postInstall: "srm-defaults"` gives Steam ROM Manager PB-OS's parsers
-(`pbos-home-defaults srm`) while it has no config of its own, unless EmuDeck
-is set up: EmuDeck only writes its SRM config when SRM has none.
 
 Every file in the user's home (downloads, desktop entries, RetroArch's
 config) is written by a program run as the user (`setpriv`), never by the
