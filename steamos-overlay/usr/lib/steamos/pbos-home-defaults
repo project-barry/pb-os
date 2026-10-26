@@ -7,6 +7,12 @@
 # - Eden: player 1 on Steam's virtual gamepad (28de:11ff, what Steam Input
 #   gives every game in Game Mode), Switch buttons by position (A east).
 #   Only the controls: Eden fills in the rest of qt-config.ini itself.
+# - "SD Card & USB" (/run/media/<user>, where SD cards and USB drives
+#   mount) in the sidebar of Qt's own file dialog (AppImages like Eden) and
+#   of GTK's (Electron apps like EmuDeck; without gvfs it lists no drives).
+#   KDE's dialogs list the drives themselves. Qt names an entry after its
+#   folder ("<user>", like the home folder), so it gets a link with that
+#   name. Put back at every login if it is gone.
 set -u
 
 DEFAULTS=/usr/share/pb-os/home-defaults
@@ -22,4 +28,24 @@ seed() {
 
 seed "$DEFAULTS/eden/qt-config.ini" "$HOME/.config/eden/qt-config.ini"
 
+link="$HOME/.local/share/pb-os/SD Card & USB"
+mkdir -p "$(dirname "$link")" && ln -sfnT "/run/media/$USER" "$link"
+media="file://$HOME/.local/share/pb-os/SD%20Card%20%26%20USB"
+
+gtk="$HOME/.config/gtk-3.0/bookmarks"
+mkdir -p "$(dirname "$gtk")"
+grep -qs "^file:///run/media/$USER\b" "$gtk" || echo "file:///run/media/$USER SD Card & USB" >>"$gtk"
+
+qt="$HOME/.config/QtProject.conf"
+if [[ ! -e "$qt" ]]; then
+  printf '[FileDialog]\nshortcuts=file:, file://%s, %s\n' "$HOME" "$media" >"$qt"
+elif ! grep -qs "^shortcuts=.*$media" "$qt"; then
+  if grep -qs '^shortcuts=' "$qt"; then
+    sed -i "s|^shortcuts=.*|&, $media|" "$qt"
+  elif grep -qs '^\[FileDialog\]' "$qt"; then
+    sed -i "/^\[FileDialog\]/a shortcuts=file:, file://$HOME, $media" "$qt"
+  else
+    printf '\n[FileDialog]\nshortcuts=file:, file://%s, %s\n' "$HOME" "$media" >>"$qt"
+  fi
+fi
 exit 0

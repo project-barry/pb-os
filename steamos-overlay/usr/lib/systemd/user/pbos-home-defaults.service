@@ -1,5 +1,5 @@
 [Unit]
-Description=PB-OS defaults for the home folder (Eden's controls)
+Description=PB-OS defaults for the home folder (Eden's controls, SD Card & USB in file dialogs)
 ConditionUser=!root
 Before=gamescope-session.service steam.service plasma-workspace.target
 
