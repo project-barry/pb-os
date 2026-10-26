@@ -1,0 +1,268 @@
+{
+  "eden": {
+    "01007EF00011E000": {
+      "name": "The Legend of Zelda: Breath of the Wild",
+      "tested": "Retroid Pocket Nova, Eden nightly de7e6e01d4, game 1.6.0, UltraCam beta 20.0",
+      "settings": [
+        {
+          "section": "Cpu",
+          "key": "cpu_backend",
+          "value": "1",
+          "label": "CPU backend NCE"
+        },
+        {
+          "section": "System",
+          "key": "use_docked_mode",
+          "value": "0",
+          "label": "Handheld (Docked draws lines in the grass)"
+        },
+        {
+          "section": "Renderer",
+          "key": "resolution_setup",
+          "value": "3",
+          "label": "Resolution 1x"
+        },
+        {
+          "section": "Renderer",
+          "key": "aspect_ratio",
+          "value": "0",
+          "label": "Aspect ratio 16:9",
+          "devices": {
+            "retroidpocket,rpnova": {
+              "value": "1",
+              "label": "Aspect ratio 4:3"
+            },
+            "ayaneo,pocket-s-mini": {
+              "value": "1",
+              "label": "Aspect ratio 4:3"
+            }
+          }
+        },
+        {
+          "section": "Renderer",
+          "key": "anti_aliasing",
+          "value": "2",
+          "label": "Anti-aliasing SMAA"
+        },
+        {
+          "section": "Renderer",
+          "key": "use_reactive_flushing",
+          "value": "false",
+          "label": "Reactive flushing off (Link sinks into the ground with it on)"
+        }
+      ],
+      "ultracam": {
+        "dir": "BOTW",
+        "settings": [
+          {
+            "section": "FPS",
+            "key": "MaxFPS",
+            "value": "30.00",
+            "label": "FPS cap 30"
+          },
+          {
+            "section": "Resolution",
+            "key": "AspectRatio",
+            "value": "{16.00, 9.00}",
+            "label": "Aspect ratio 16:9",
+            "devices": {
+              "retroidpocket,rpnova": {
+                "value": "{4.00, 3.00}",
+                "label": "Aspect ratio 4:3"
+              },
+              "ayaneo,pocket-s-mini": {
+                "value": "{4.00, 3.00}",
+                "label": "Aspect ratio 4:3"
+              }
+            }
+          },
+          {
+            "section": "Resolution",
+            "key": "Docked",
+            "value": "{1280.00, 720.00}",
+            "label": "Docked 1280x720",
+            "devices": {
+              "retroidpocket,rpnova": {
+                "value": "{1280.00, 960.00}",
+                "label": "Docked 1280x960"
+              },
+              "ayaneo,pocket-s-mini": {
+                "value": "{1280.00, 960.00}",
+                "label": "Docked 1280x960"
+              }
+            }
+          },
+          {
+            "section": "Resolution",
+            "key": "Handheld",
+            "value": "{1280.00, 720.00}",
+            "label": "Handheld 1280x720",
+            "devices": {
+              "retroidpocket,rpnova": {
+                "value": "{1280.00, 960.00}",
+                "label": "Handheld 1280x960"
+              },
+              "ayaneo,pocket-s-mini": {
+                "value": "{1280.00, 960.00}",
+                "label": "Handheld 1280x960"
+              }
+            }
+          },
+          {
+            "section": "Resolution",
+            "key": "Shadows",
+            "value": "512",
+            "label": "Shadows 512"
+          },
+          {
+            "section": "Graphics",
+            "key": "RenderDistance",
+            "value": "10000",
+            "label": "Render distance 10000"
+          }
+        ]
+      }
+    },
+    "0100F2C0115B6000": {
+      "name": "The Legend of Zelda: Tears of the Kingdom",
+      "tested": "Retroid Pocket Nova, Eden nightly de7e6e01d4, game 1.4.3, UltraCam beta 20.0",
+      "settings": [
+        {
+          "section": "Cpu",
+          "key": "cpu_backend",
+          "value": "1",
+          "label": "CPU backend NCE"
+        },
+        {
+          "section": "Cpu",
+          "key": "cpu_accuracy",
+          "value": "2",
+          "label": "CPU accuracy Unsafe"
+        },
+        {
+          "section": "System",
+          "key": "use_docked_mode",
+          "value": "0",
+          "label": "Handheld"
+        },
+        {
+          "section": "Renderer",
+          "key": "gpu_accuracy",
+          "value": "0",
+          "label": "GPU accuracy Low"
+        },
+        {
+          "section": "Renderer",
+          "key": "use_asynchronous_gpu_emulation",
+          "value": "true",
+          "label": "Asynchronous GPU on"
+        },
+        {
+          "section": "Renderer",
+          "key": "resolution_setup",
+          "value": "2",
+          "label": "Resolution 0.75x (about 30 fps, 7.5 W instead of 9.3 W at 1x)"
+        },
+        {
+          "section": "Renderer",
+          "key": "aspect_ratio",
+          "value": "0",
+          "label": "Aspect ratio 16:9",
+          "devices": {
+            "retroidpocket,rpnova": {
+              "value": "1",
+              "label": "Aspect ratio 4:3"
+            },
+            "ayaneo,pocket-s-mini": {
+              "value": "1",
+              "label": "Aspect ratio 4:3"
+            }
+          }
+        },
+        {
+          "section": "Renderer",
+          "key": "use_reactive_flushing",
+          "value": "false",
+          "label": "Reactive flushing off"
+        }
+      ],
+      "ultracam": {
+        "dir": "TOTK",
+        "settings": [
+          {
+            "section": "FPS",
+            "key": "MaxFPS",
+            "value": "30.00",
+            "label": "FPS cap 30"
+          },
+          {
+            "section": "Shaders",
+            "key": "PrecompileShaders",
+            "value": "True",
+            "label": "Precompile shaders"
+          },
+          {
+            "section": "Resolution",
+            "key": "AspectRatio",
+            "value": "{16.00, 9.00}",
+            "label": "Aspect ratio 16:9",
+            "devices": {
+              "retroidpocket,rpnova": {
+                "value": "{4.00, 3.00}",
+                "label": "Aspect ratio 4:3"
+              },
+              "ayaneo,pocket-s-mini": {
+                "value": "{4.00, 3.00}",
+                "label": "Aspect ratio 4:3"
+              }
+            }
+          },
+          {
+            "section": "Resolution",
+            "key": "Docked",
+            "value": "{1280.00, 720.00}",
+            "label": "Docked 1280x720",
+            "devices": {
+              "retroidpocket,rpnova": {
+                "value": "{1280.00, 960.00}",
+                "label": "Docked 1280x960"
+              },
+              "ayaneo,pocket-s-mini": {
+                "value": "{1280.00, 960.00}",
+                "label": "Docked 1280x960"
+              }
+            }
+          },
+          {
+            "section": "Resolution",
+            "key": "Handheld",
+            "value": "{1280.00, 720.00}",
+            "label": "Handheld 1280x720",
+            "devices": {
+              "retroidpocket,rpnova": {
+                "value": "{1280.00, 960.00}",
+                "label": "Handheld 1280x960"
+              },
+              "ayaneo,pocket-s-mini": {
+                "value": "{1280.00, 960.00}",
+                "label": "Handheld 1280x960"
+              }
+            }
+          },
+          {
+            "section": "Resolution",
+            "key": "Shadows",
+            "value": "512",
+            "label": "Shadows 512"
+          },
+          {
+            "section": "Graphics",
+            "key": "RenderDistance",
+            "value": "10000",
+            "label": "Render distance 10000"
+          }
+        ]
+      }
+    }
+  }
+}

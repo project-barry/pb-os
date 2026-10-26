@@ -92,6 +92,7 @@ const std::string MTP_UNIT = "pbos-mtp";
 const std::string PBOS_PROTON = "/usr/lib/steamos/pbos-proton";
 const std::string GAME_LAUNCH = "/usr/bin/pbos-game-launch";
 const std::string COMMUNITY_HINTS = "/usr/share/pb-os/game-launch/protondb-hints.json";
+const std::string EMULATOR_SETTINGS = "/usr/bin/pbos-emulator-settings";
 
 const char* const STICK_AXES[] = {"left_x", "left_y", "right_x", "right_y"};
 constexpr double STICK_REST_S = 1.5;
@@ -1128,6 +1129,24 @@ Value community_hint(const std::string& appid) {
     return out;
 }
 
+Value emulator_settings(const std::string& action, const std::string& title) {
+    // A Switch game's tested Eden (and UltraCam) settings, read or applied
+    // by pbos-emulator-settings as the user: they are the user's files.
+    static const std::regex title_id("^[0-9A-Fa-f]{16}$");
+    Value out = Value::object();
+    out["available"] = false;
+    if (!std::regex_match(title, title_id)) return out;
+    const User& u = desktop_user();
+    RunOpts o;
+    o.env = clean_env({"HOME=" + u.home, "USER=" + u.name, "LOGNAME=" + u.name});
+    o.timeout = 15;
+    auto r = run({"runuser", "-u", u.name, "--", EMULATOR_SETTINGS, action, "eden", title}, o);
+    auto v = Value::parse(trim(r.out));
+    if (!v || !v->is_object()) throw CallError("pbos-emulator-settings failed");
+    if ((*v)["error"].truthy()) throw CallError((*v)["error"].str());
+    return *v;
+}
+
 Value clean_game_profile(const Value& p, const Value& info) {
     // Known settings only, and none at their defaults (an empty profile
     // means no profile).
@@ -1461,6 +1480,12 @@ public:
         }
         if (m == "get_game_profiles") return game_profiles();
         if (m == "get_community_hint") return community_hint(arg(a, 0, "").str());
+        if (m == "get_emulator_settings") return emulator_settings("info", arg(a, 0, "").str());
+        if (m == "apply_emulator_settings") {
+            const Value res = emulator_settings("apply", arg(a, 0, "").str());
+            log("tools: emulator settings applied for %s", arg(a, 0, "").str().c_str());
+            return res;
+        }
         if (m == "set_game_profile") {
             const Value res = game_profile_save(arg(a, 0, "").str(), a.at(1));
             log("tools: game profile %s: %s", arg(a, 0, "").str().c_str(), res["profile"].dump().c_str());

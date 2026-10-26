@@ -169,8 +169,10 @@ install_file "$OVL/usr/lib/steamos/pbos-proton" "$R/usr/lib/steamos/pbos-proton"
 install_file "$OVL/usr/lib/steamos/pbos-proton-launcher" "$R/usr/lib/steamos/pbos-proton-launcher" 0644
 # Per-game profiles (PB-OS Tools' Games tab): the launch wrapper the tab puts
 # in a game's launch options, its FEX and environment-variable presets, and
-# the ProtonDB Community Fix data (tools/protondb-hints.py, ODbL, see CREDITS.md).
+# the ProtonDB Community Fix data (tools/protondb-hints.py, ODbL, see CREDITS.md),
+# and the tested Eden/UltraCam settings for Switch games (pbos-emulator-settings).
 install_file "$OVL/usr/bin/pbos-game-launch" "$R/usr/bin/pbos-game-launch" 0755
+install_file "$OVL/usr/bin/pbos-emulator-settings" "$R/usr/bin/pbos-emulator-settings" 0755
 # Problem reports (PB-OS Quick Access: System > Report a Problem).
 install_file "$OVL/usr/bin/pbos-report" "$R/usr/bin/pbos-report" 0755
 # PB-OS Sound Check (temporary, until the Thor sound dropout is found): the
@@ -204,7 +206,7 @@ if [[ -r "$url_file" ]]; then
   printf '%s\n' "$url" > "$R/usr/share/pb-os/report-url"
   chmod 0644 "$R/usr/share/pb-os/report-url"
 fi
-for f in fex-presets.json env-presets.json protondb-hints.json; do
+for f in fex-presets.json env-presets.json protondb-hints.json emulator-settings.json; do
   install_file "$OVL/usr/share/pb-os/game-launch/$f" "$R/usr/share/pb-os/game-launch/$f" 0644
 done
 mkdir -p "$R/usr/lib/systemd/user/default.target.wants"

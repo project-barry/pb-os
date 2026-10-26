@@ -1,0 +1,220 @@
+#!/usr/bin/python3
+# SPDX-License-Identifier: GPL-2.0-or-later
+"""pbos-emulator-settings — recommended emulator settings for one game.
+
+PB-OS Tools' Games tab runs this as the user for a Steam shortcut that starts
+a Switch game in Eden:
+
+    pbos-emulator-settings info eden <title id>
+    pbos-emulator-settings apply eden <title id>
+
+Both print JSON. The recommendations come from
+/usr/share/pb-os/game-launch/emulator-settings.json, each one tested on a
+PB-OS device:
+
+  Eden      the game's own settings (~/.config/eden/custom/<title id>.ini),
+            the way Eden's Properties window writes them.
+  UltraCam  the mod's Main.ini in Eden's SD folder, only when the mod has
+            made one (it does on the game's first start with the mod); the
+            mod's other settings stay as they are.
+
+A setting can have its own value on some devices ("devices", by the
+device tree's compatible string, like retroidpocket,rpnova).
+
+Eden writes its settings back when it closes, so nothing is applied while it
+runs.
+"""
+
+import json
+import os
+import re
+import subprocess
+import sys
+
+DATA = "/usr/share/pb-os/game-launch/emulator-settings.json"
+HOME = os.path.expanduser("~")
+EDEN_CONFIG = os.path.join(HOME, ".config/eden")
+EDEN_DATA = os.path.join(HOME, ".local/share/eden")
+
+
+def read(path):
+    try:
+        with open(path, encoding="utf-8", errors="surrogateescape") as f:
+            return f.read()
+    except OSError:
+        return None
+
+
+def write(path, text):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".pbos-tmp"
+    with open(tmp, "w", encoding="utf-8", errors="surrogateescape") as f:
+        f.write(text)
+    os.replace(tmp, path)
+
+
+def eden_dir(key, default):
+    # A folder from Eden's own settings (EmuDeck moves them to the SD card).
+    text = read(os.path.join(EDEN_CONFIG, "qt-config.ini")) or ""
+    value = re.search(r"^%s=(.*)$" % key, text, re.M)
+    is_default = re.search(r"^%s\\default=true$" % key, text, re.M)
+    if value and value.group(1).strip() and not is_default:
+        return value.group(1).strip()
+    return default
+
+
+def for_device(settings):
+    # Each setting with this device's own value and label, if it has one.
+    try:
+        with open("/sys/firmware/devicetree/base/compatible", "rb") as f:
+            compatible = f.read().decode(errors="replace").split("\0")
+    except OSError:
+        compatible = []
+    out = []
+    for s in settings:
+        mine = next((v for c, v in s.get("devices", {}).items() if c in compatible), None)
+        out.append({**s, **mine} if mine else s)
+    return out
+
+
+def eden_running():
+    r = subprocess.run(["pgrep", "-x", "-u", str(os.getuid()), "eden"], capture_output=True)
+    return r.returncode == 0
+
+
+# ---------------------------------------------------- Eden's game file ---
+# Qt's ini: [Section], then per setting key\use_global=false, key\default=false
+# and key=value.
+def eden_key_lines(key):
+    return re.compile(r"^%s(\\use_global|\\default)?=" % re.escape(key))
+
+
+def eden_value(text, key):
+    if re.search(r"^%s\\use_global=false$" % re.escape(key), text, re.M) is None:
+        return None
+    m = re.search(r"^%s=(.*)$" % re.escape(key), text, re.M)
+    return m.group(1) if m else None
+
+
+def eden_apply(text, settings):
+    lines = text.split("\n") if text else []
+    for s in settings:
+        match = eden_key_lines(s["key"])
+        lines = [line for line in lines if not match.match(line)]
+        new = [s["key"] + "\\use_global=false", s["key"] + "\\default=false", s["key"] + "=" + s["value"]]
+        header = "[%s]" % s["section"]
+        if header in lines:
+            at = lines.index(header) + 1
+            lines[at:at] = new
+        else:
+            if lines and lines[-1] != "":
+                lines.append("")
+            lines += [header] + new + [""]
+    return "\n".join(lines).rstrip("\n") + "\n"
+
+
+# ------------------------------------------------------ UltraCam's file ---
+# [Section], then "Key = value    ## TYPE : default".
+def ini_line(text, section, key):
+    current = None
+    for i, line in enumerate(text.split("\n")):
+        head = re.match(r"^\[(.+)\]\s*$", line)
+        if head:
+            current = head.group(1)
+        elif current == section:
+            m = re.match(r"^(\s*%s\s*=\s*)(.*?)(\s+##.*)?$" % re.escape(key), line)
+            if m:
+                return i, m
+    return None, None
+
+
+def ultracam_value(text, s):
+    _, m = ini_line(text, s["section"], s["key"])
+    return m.group(2) if m else None
+
+
+def ultracam_apply(text, settings):
+    lines = text.split("\n")
+    for s in settings:
+        i, m = ini_line("\n".join(lines), s["section"], s["key"])
+        if m is None:
+            continue
+        comment = (m.group(3) or "").lstrip()
+        line = m.group(1) + s["value"]
+        if comment:
+            # Keep the comments in their column.
+            width = len(m.group(0)) - len(comment)
+            line = line.ljust(max(width, len(line) + 1)) + comment
+        lines[i] = line
+    return "\n".join(lines)
+
+
+def ultracam_file(rec, title):
+    if not rec.get("ultracam"):
+        return None, False
+    sdmc = eden_dir("sdmc_directory", os.path.join(EDEN_DATA, "sdmc"))
+    path = os.path.join(sdmc, "UltraCam", rec["ultracam"]["dir"], "Config", "Main.ini")
+    load = os.path.join(eden_dir("load_directory", os.path.join(EDEN_DATA, "load")), title)
+    try:
+        mod = any("ultracam" in d.lower() for d in os.listdir(load))
+    except OSError:
+        mod = False
+    return path, mod
+
+
+def state(rec, title):
+    game = read(os.path.join(EDEN_CONFIG, "custom", title + ".ini")) or ""
+    out = {
+        "available": True,
+        "name": rec.get("name", ""),
+        "tested": rec.get("tested", ""),
+        "running": eden_running(),
+        "settings": [{"label": s["label"], "applied": eden_value(game, s["key"]) == s["value"]}
+                     for s in rec["settings"]],
+        "ultracam": None,
+    }
+    path, mod = ultracam_file(rec, title)
+    if path:
+        text = read(path)
+        out["ultracam"] = {
+            "installed": text is not None,
+            "mod_folder": mod,
+            "settings": [{"label": s["label"], "applied": text is not None and ultracam_value(text, s) == s["value"]}
+                         for s in rec["ultracam"]["settings"]],
+        }
+    return out
+
+
+def main():
+    if len(sys.argv) != 4 or sys.argv[1] not in ("info", "apply") or sys.argv[2] != "eden" \
+            or not re.fullmatch(r"[0-9A-Fa-f]{16}", sys.argv[3]):
+        print("usage: pbos-emulator-settings info|apply eden <title id>", file=sys.stderr)
+        return 2
+    title = sys.argv[3].upper()
+    try:
+        with open(DATA, encoding="utf-8") as f:
+            rec = json.load(f).get("eden", {}).get(title)
+    except (OSError, ValueError):
+        rec = None
+    if not rec:
+        print(json.dumps({"available": False}))
+        return 0
+    rec["settings"] = for_device(rec["settings"])
+    if rec.get("ultracam"):
+        rec["ultracam"]["settings"] = for_device(rec["ultracam"]["settings"])
+    if sys.argv[1] == "apply":
+        if eden_running():
+            print(json.dumps({"error": "Close Eden first: it saves its own settings when it closes."}))
+            return 0
+        game = os.path.join(EDEN_CONFIG, "custom", title + ".ini")
+        write(game, eden_apply(read(game) or "", rec["settings"]))
+        path, _ = ultracam_file(rec, title)
+        text = read(path) if path else None
+        if text is not None:
+            write(path, ultracam_apply(text, rec["ultracam"]["settings"]))
+    print(json.dumps(state(rec, title)))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
