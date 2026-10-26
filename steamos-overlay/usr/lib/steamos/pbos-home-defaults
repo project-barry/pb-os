@@ -1,16 +1,21 @@
 #!/bin/bash
-# PB-OS defaults for the user's home, put in place at login. Nothing that
-# exists is ever replaced: a file the user (or an app) already has stays as
-# it is, so changing a setting in the app itself always wins.
+# PB-OS defaults for the user's home. Nothing that exists is ever replaced:
+# a file the user (or an app) already has stays as it is, so changing a
+# setting in the app itself always wins.
 #
+# At login:
+# - Eden: player 1 on Steam's virtual gamepad (28de:11ff, what Steam Input
+#   gives every game in Game Mode), Switch buttons by position (A east).
+#   Only the controls: Eden fills in the rest of qt-config.ini itself.
+#
+# With "srm", run by the App Store after it installs Steam ROM Manager:
 # - Steam ROM Manager: parsers for the App Store's emulators, one for
 #   ~/Emulation/roms/<system> and one for Emulation/roms/<system> on any
 #   microSD card (EmuDeck's folder layout), plus its Steam and RetroArch core
 #   folders. From SRM's own community presets (GPL-3.0, see CREDITS.md).
 # - ~/Emulation/roms/<system>: the empty folders those parsers read.
-# - Eden: player 1 on Steam's virtual gamepad (28de:11ff, what Steam Input
-#   gives every game in Game Mode), Switch buttons by position (A east).
-#   Only the controls: Eden fills in the rest of qt-config.ini itself.
+#   Skipped when EmuDeck is set up: EmuDeck writes its own SRM config only
+#   while SRM has none, and adds its parsers to whatever is there.
 set -u
 
 DEFAULTS=/usr/share/pb-os/home-defaults
@@ -24,12 +29,16 @@ seed() {
   rm -f "$dest.pbos-tmp"
 }
 
-srm="$HOME/.config/steam-rom-manager/userData"
-seed "$DEFAULTS/steam-rom-manager/userConfigurations.json" "$srm/userConfigurations.json"
-seed "$DEFAULTS/steam-rom-manager/userSettings.json" "$srm/userSettings.json"
-seed "$DEFAULTS/eden/qt-config.ini" "$HOME/.config/eden/qt-config.ini"
+if [[ "${1:-}" == srm ]]; then
+  [[ -e "$HOME/.config/EmuDeck/settings.sh" || -e "$HOME/emudeck/settings.sh" ]] && exit 0
+  srm="$HOME/.config/steam-rom-manager/userData"
+  seed "$DEFAULTS/steam-rom-manager/userConfigurations.json" "$srm/userConfigurations.json"
+  seed "$DEFAULTS/steam-rom-manager/userSettings.json" "$srm/userSettings.json"
+  while read -r folder; do
+    [[ -n "$folder" ]] && mkdir -p "$HOME/Emulation/roms/$folder"
+  done <"$DEFAULTS/steam-rom-manager/rom-folders"
+  exit 0
+fi
 
-while read -r folder; do
-  [[ -n "$folder" ]] && mkdir -p "$HOME/Emulation/roms/$folder"
-done <"$DEFAULTS/steam-rom-manager/rom-folders"
+seed "$DEFAULTS/eden/qt-config.ini" "$HOME/.config/eden/qt-config.ini"
 exit 0

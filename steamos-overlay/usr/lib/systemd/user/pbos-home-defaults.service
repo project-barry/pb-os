@@ -1,5 +1,5 @@
 [Unit]
-Description=PB-OS defaults for the home folder (Steam ROM Manager, ROM folders, Eden's controls)
+Description=PB-OS defaults for the home folder (Eden's controls)
 ConditionUser=!root
 Before=gamescope-session.service steam.service plasma-workspace.target
 

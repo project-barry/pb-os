@@ -856,6 +856,7 @@ private:
         std::string handler = app["postInstall"].str();
         if (handler.empty()) return;
         if (handler == "retroarch-cores-url") return retroarch_cores_url();
+        if (handler == "srm-defaults") return srm_defaults();
         throw std::runtime_error("Unknown postInstall handler: " + handler);
     }
 
@@ -899,6 +900,12 @@ private:
         o.input = out;
         need(run(as_user({"tee", tmp}), o), "Cannot write RetroArch's config");
         need(run_user({"mv", "-f", "-T", tmp, cfg}), "Cannot write RetroArch's config");
+    }
+
+    // PB-OS's Steam ROM Manager parsers, only while SRM has no config of its
+    // own and EmuDeck is not set up (pbos-home-defaults decides both).
+    void srm_defaults() {
+        need(run_user({"/usr/lib/steamos/pbos-home-defaults", "srm"}), "Cannot set up Steam ROM Manager");
     }
 
     // ---------------------------------------------------- uninstall ---

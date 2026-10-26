@@ -213,16 +213,20 @@ if [[ -d /opt/SteamROMManager ]]; then
 exec /opt/SteamROMManager/steam-rom-manager --no-sandbox "$@"
 EOF
   chmod 0755 "$bin/steam-rom-manager"
+  if [[ -f "${MOD}/SteamROMManager/steam-rom-manager.png" ]]; then
+    for size in 16 24 32 48 64 128 256; do
+      mkdir -p "$icons/${size}x${size}/apps"
+      install -m 0644 "${MOD}/SteamROMManager/steam-rom-manager.png" \
+        "$icons/${size}x${size}/apps/steam-rom-manager.png"
+    done
+  fi
+  install -m 0644 "$OVL/usr/share/applications/steam-rom-manager.desktop" \
+    "$apps/steam-rom-manager.desktop"
+else
+  # No SRM in this image (EmuDeck or the App Store bring their own): a menu
+  # entry would start nothing.
+  rm -f "$apps/steam-rom-manager.desktop" "$bin/steam-rom-manager"
 fi
-if [[ -f "${MOD}/SteamROMManager/steam-rom-manager.png" ]]; then
-  for size in 16 24 32 48 64 128 256; do
-    mkdir -p "$icons/${size}x${size}/apps"
-    install -m 0644 "${MOD}/SteamROMManager/steam-rom-manager.png" \
-      "$icons/${size}x${size}/apps/steam-rom-manager.png"
-  done
-fi
-install -m 0644 "$OVL/usr/share/applications/steam-rom-manager.desktop" \
-  "$apps/steam-rom-manager.desktop"
 rm -f "$HOME_DST/Desktop/Steam ROM Manager.desktop"
 
 # ── Decky in ARM-Manager (keep installer, drop forced desktop copy later) ───
