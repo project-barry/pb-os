@@ -26,17 +26,7 @@
           "section": "Renderer",
           "key": "aspect_ratio",
           "value": "0",
-          "label": "Aspect ratio 16:9",
-          "devices": {
-            "retroidpocket,rpnova": {
-              "value": "1",
-              "label": "Aspect ratio 4:3"
-            },
-            "ayaneo,pocket-s-mini": {
-              "value": "1",
-              "label": "Aspect ratio 4:3"
-            }
-          }
+          "label": "Aspect ratio 16:9"
         },
         {
           "section": "Renderer",
@@ -50,78 +40,7 @@
           "value": "false",
           "label": "Reactive flushing off (Link sinks into the ground with it on)"
         }
-      ],
-      "ultracam": {
-        "dir": "BOTW",
-        "settings": [
-          {
-            "section": "FPS",
-            "key": "MaxFPS",
-            "value": "30.00",
-            "label": "FPS cap 30"
-          },
-          {
-            "section": "Resolution",
-            "key": "AspectRatio",
-            "value": "{16.00, 9.00}",
-            "label": "Aspect ratio 16:9",
-            "devices": {
-              "retroidpocket,rpnova": {
-                "value": "{4.00, 3.00}",
-                "label": "Aspect ratio 4:3"
-              },
-              "ayaneo,pocket-s-mini": {
-                "value": "{4.00, 3.00}",
-                "label": "Aspect ratio 4:3"
-              }
-            }
-          },
-          {
-            "section": "Resolution",
-            "key": "Docked",
-            "value": "{1280.00, 720.00}",
-            "label": "Docked 1280x720",
-            "devices": {
-              "retroidpocket,rpnova": {
-                "value": "{1280.00, 960.00}",
-                "label": "Docked 1280x960"
-              },
-              "ayaneo,pocket-s-mini": {
-                "value": "{1280.00, 960.00}",
-                "label": "Docked 1280x960"
-              }
-            }
-          },
-          {
-            "section": "Resolution",
-            "key": "Handheld",
-            "value": "{1280.00, 720.00}",
-            "label": "Handheld 1280x720",
-            "devices": {
-              "retroidpocket,rpnova": {
-                "value": "{1280.00, 960.00}",
-                "label": "Handheld 1280x960"
-              },
-              "ayaneo,pocket-s-mini": {
-                "value": "{1280.00, 960.00}",
-                "label": "Handheld 1280x960"
-              }
-            }
-          },
-          {
-            "section": "Resolution",
-            "key": "Shadows",
-            "value": "512",
-            "label": "Shadows 512"
-          },
-          {
-            "section": "Graphics",
-            "key": "RenderDistance",
-            "value": "10000",
-            "label": "Render distance 10000"
-          }
-        ]
-      }
+      ]
     },
     "0100F2C0115B6000": {
       "name": "The Legend of Zelda: Tears of the Kingdom",
@@ -167,17 +86,7 @@
           "section": "Renderer",
           "key": "aspect_ratio",
           "value": "0",
-          "label": "Aspect ratio 16:9",
-          "devices": {
-            "retroidpocket,rpnova": {
-              "value": "1",
-              "label": "Aspect ratio 4:3"
-            },
-            "ayaneo,pocket-s-mini": {
-              "value": "1",
-              "label": "Aspect ratio 4:3"
-            }
-          }
+          "label": "Aspect ratio 16:9"
         },
         {
           "section": "Renderer",
@@ -185,84 +94,7 @@
           "value": "false",
           "label": "Reactive flushing off"
         }
-      ],
-      "ultracam": {
-        "dir": "TOTK",
-        "settings": [
-          {
-            "section": "FPS",
-            "key": "MaxFPS",
-            "value": "30.00",
-            "label": "FPS cap 30"
-          },
-          {
-            "section": "Shaders",
-            "key": "PrecompileShaders",
-            "value": "True",
-            "label": "Precompile shaders"
-          },
-          {
-            "section": "Resolution",
-            "key": "AspectRatio",
-            "value": "{16.00, 9.00}",
-            "label": "Aspect ratio 16:9",
-            "devices": {
-              "retroidpocket,rpnova": {
-                "value": "{4.00, 3.00}",
-                "label": "Aspect ratio 4:3"
-              },
-              "ayaneo,pocket-s-mini": {
-                "value": "{4.00, 3.00}",
-                "label": "Aspect ratio 4:3"
-              }
-            }
-          },
-          {
-            "section": "Resolution",
-            "key": "Docked",
-            "value": "{1280.00, 720.00}",
-            "label": "Docked 1280x720",
-            "devices": {
-              "retroidpocket,rpnova": {
-                "value": "{1280.00, 960.00}",
-                "label": "Docked 1280x960"
-              },
-              "ayaneo,pocket-s-mini": {
-                "value": "{1280.00, 960.00}",
-                "label": "Docked 1280x960"
-              }
-            }
-          },
-          {
-            "section": "Resolution",
-            "key": "Handheld",
-            "value": "{1280.00, 720.00}",
-            "label": "Handheld 1280x720",
-            "devices": {
-              "retroidpocket,rpnova": {
-                "value": "{1280.00, 960.00}",
-                "label": "Handheld 1280x960"
-              },
-              "ayaneo,pocket-s-mini": {
-                "value": "{1280.00, 960.00}",
-                "label": "Handheld 1280x960"
-              }
-            }
-          },
-          {
-            "section": "Resolution",
-            "key": "Shadows",
-            "value": "512",
-            "label": "Shadows 512"
-          },
-          {
-            "section": "Graphics",
-            "key": "RenderDistance",
-            "value": "10000",
-            "label": "Render distance 10000"
-          }
-        ]
-      }
+      ]
     },
     "010067300059A000": {
       "name": "Mario + Rabbids Kingdom Battle",

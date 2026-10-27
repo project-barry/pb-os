@@ -68,7 +68,7 @@ const getGameProfiles = callable("get_game_profiles");
 const setGameProfile = callable("set_game_profile");
 // The launch fix ProtonDB's working reports for one game agree on.
 const getCommunityHint = callable("get_community_hint");
-// Tested Eden (and UltraCam) settings for a Switch game (pbos-emulator-settings).
+// Tested Eden settings for a Switch game (pbos-emulator-settings).
 const getEmulatorSettings = callable("get_emulator_settings");
 const applyEmulatorSettings = callable("apply_emulator_settings");
 // Performance modes: the default, and which game runs (its mode wins).
@@ -1617,8 +1617,7 @@ function CommunitySection({ appid, profile, save }) {
 
 // Recommended Eden settings: for a shortcut that starts a Switch game in Eden
 // (EmuDeck's or the App Store's), by the title ID in the game's file name.
-// UltraCam's part only when the mod has made its settings file. A
-// recommended performance mode goes into the game's own profile.
+// A recommended performance mode goes into the game's own profile.
 function EmulatorSection({ appid, profile, save }) {
     const [title, setTitle] = useState(null);
     const [info, setInfo] = useState(null);
@@ -1639,8 +1638,7 @@ function EmulatorSection({ appid, profile, save }) {
         return () => { live = false; };
     }, [appid]);
     if (!title || !info || !info.available) return null;
-    const uc = info.ultracam;
-    const parts = [...info.settings, ...(uc && uc.installed ? uc.settings.map((x) => ({ ...x, label: `UltraCam: ${x.label}` })) : [])];
+    const parts = info.settings;
     const edenApplied = parts.every((x) => x.applied);
     const mode = MODES.find((m) => m.data === info.mode);
     const modeApplied = !mode || profile.mode === mode.data;
@@ -1662,11 +1660,6 @@ function EmulatorSection({ appid, profile, save }) {
         children: applied ? "Recommended Settings Applied" : "Apply Recommended Settings",
     }))];
     if (info.running && !edenApplied) items.push(note("Close Eden first: it saves its own settings when it closes."));
-    if (uc && !uc.installed) {
-        items.push(note(uc.mod_folder
-            ? "UltraCam has not made its settings yet: start the game once with it, then apply again for its part."
-            : "UltraCam is not installed: only Eden's settings."));
-    }
     if (info.note) items.push(note(info.note));
     items.push(note(`Tested on ${info.tested}.`));
     if (error) items.push(failure(error));

@@ -1130,7 +1130,7 @@ Value community_hint(const std::string& appid) {
 }
 
 Value emulator_settings(const std::string& action, const std::string& title) {
-    // A Switch game's tested Eden (and UltraCam) settings, read or applied
+    // A Switch game's tested Eden settings, read or applied
     // by pbos-emulator-settings as the user: they are the user's files.
     static const std::regex title_id("^[0-9A-Fa-f]{16}$");
     Value out = Value::object();
