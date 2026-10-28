@@ -1,0 +1,49 @@
+Same as sm8550/patches/0611: the msm driver is shared, so the Pocket FIT's
+Adreno 750 gets the same fault-handler fix.
+
+From: lavachemist <48248311+lavachemist@users.noreply.github.com>
+Subject: [PATCH] drm/msm: honor the mmap offset in the GEM fault handler
+
+msm_gem_fault() takes the page index from the fault address relative to
+vma->vm_start and never looks at the mapping's page offset. That is only
+right while every mapping starts at page 0 of the object and is never
+split. It breaks:
+
+- dma-buf mmap at a nonzero offset: dma_buf_mmap_internal() allows
+  vm_pgoff + pages <= size, drm_gem_prime_mmap() adds the fake offset, so
+  vm_pgoff = fake offset + N, but the fault maps page 0 at the start of
+  the mapping instead of page N (seen with Turnip-exported OPAQUE_FD and
+  DMA_BUF memory on Adreno 740: an mmap at offset N shows offset 0);
+- the tail left by munmap of a mapping's head, and a sub-range moved by
+  mremap: the VMA's vm_pgoff moves along, the fault ignores it, and any
+  page not yet faulted in shows the wrong page.
+
+vmf->pgoff already holds the page's position in the mmap offset space
+(linear_page_index()); take the object's fake offset back off, as TTM does
+in ttm_bo_vm_fault_reserved(). A whole-object mapping at offset 0 gets the
+same index as before (vm_pgoff equals the fake offset). Fail an index past
+the end of the object with SIGBUS instead of reading past the pages array.
+
+--- a/drivers/gpu/drm/msm/msm_gem.c
++++ b/drivers/gpu/drm/msm/msm_gem.c
+@@ -451,8 +451,18 @@
+ 		goto out_unlock;
+ 	}
+ 
+-	/* We don't use vmf->pgoff since that has the fake offset: */
+-	pgoff = linear_page_delta(vma, vmf->address);
++	/*
++	 * vmf->pgoff is the page's offset in the mmap offset space: the
++	 * object's fake offset plus its page index. Taking the index from
++	 * the fault address relative to vm_start would ignore an mmap offset
++	 * into the object (dma-buf mmap at a nonzero offset) and the part of
++	 * a mapping a split or a partial mremap left behind.
++	 */
++	pgoff = vmf->pgoff - drm_vma_node_start(&obj->vma_node);
++	if (GEM_WARN_ON(pgoff >= (obj->size >> PAGE_SHIFT))) {
++		ret = VM_FAULT_SIGBUS;
++		goto out_unlock;
++	}
+ 
+ 	pfn = page_to_pfn(pages[pgoff]);
+ 
