@@ -11,12 +11,22 @@
 // by side, show what changed. Reports go to ~/Desktop/PB-OS Reports and are
 // sent nowhere unless the user taps Send.
 //
-// When the sound is gone, the tones and two fixes are not optional: first the
-// speaker stream is restarted (the output suspended and resumed, so PipeWire
-// opens the DSP's playback stream again), then, if the beep is still not
-// heard, PipeWire itself. After each, the audio path is read again and the
-// beep replayed. (Lux's Thor reports, 10-23: the ADSP's playback stream
-// stops ~15 s after it starts while everything after it is powered.)
+// When the sound is gone, the tones and the fixes are not optional. Before
+// any fix, the root read (pbos-report-audio-root.service) checks which side
+// stopped and writes a "stall class:" line: A, PipeWire stopped writing (its
+// IRQ-driven ALSA sink lost its poll when the graph refused a cycle; seen live
+// on a Thor 10-27), B, the DSP or kernel stopped taking audio, or C, anything
+// else. The class picks the first fix; PipeWire's restart is always the last:
+//   A: the speaker node alone paused and started again (pw-cli send-command),
+//      which sets up its poll anew with the PCM left open;
+//   B, C: the speaker output suspended (pactl suspend-sink), so PipeWire
+//      closes the DSP's playback stream and opens it again for the next
+//      stream.
+// After each fix the speaker's playback pointer (hw_ptr) must move over 1 s
+// while silence plays; when it does, the beep is played again and the user
+// asked, when it doesn't, the next fix follows. The audio path is read again
+// after each. (Lux's Thor reports, 10-23: the ADSP's playback stream stops
+// ~15 s after it starts while everything after it is powered.)
 //
 // SDL2 for the window, the controller (Steam's virtual pad), keys and touch;
 // SDL2_ttf with Noto Sans for the text. Barry's head is drawn from its
@@ -27,12 +37,14 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
 #include <fstream>
 #include <functional>
+#include <map>
 #include <mutex>
 #include <regex>
 #include <cstring>
@@ -124,17 +136,16 @@ std::string real_output() {
     return trim(sh("pactl get-default-sink 2>/dev/null"));
 }
 
-// Ear safety: one steady, low beep, never a sweep or a click. 1 s of 440 Hz
-// at -26 dBFS (5 % of full scale), faded in and out over 0.15 s, as a 48 kHz
-// stereo WAV.
-std::string tone_file() {
+// A 48 kHz stereo WAV in the runtime directory: secs of 440 Hz at level (of
+// full scale), faded in and out over 0.15 s; level 0 is silence.
+std::string wav_file(const char* name, int secs, double level) {
     const char* rt = getenv("XDG_RUNTIME_DIR");
-    std::string path = std::string(rt && *rt ? rt : "/tmp") + "/pbos-sound-check-tone.wav";
-    const int rate = 48000, n = rate;
+    std::string path = std::string(rt && *rt ? rt : "/tmp") + "/" + name;
+    const int rate = 48000, n = rate * secs;
     std::vector<int16_t> pcm(n * 2);
     for (int i = 0; i < n; i++) {
         double env = std::min({1.0, i / 7200.0, (n - i) / 7200.0});
-        auto v = static_cast<int16_t>(std::sin(2 * M_PI * 440 * i / rate) * 0.05 * env * 32767);
+        auto v = static_cast<int16_t>(std::sin(2 * M_PI * 440 * i / rate) * level * env * 32767);
         pcm[2 * i] = pcm[2 * i + 1] = v;
     }
     std::ofstream f(path, std::ios::binary);
@@ -145,6 +156,87 @@ std::string tone_file() {
     u32(rate); u32(rate * 4); u16(4); u16(16); f.write("data", 4); u32(data);
     f.write(reinterpret_cast<const char*>(pcm.data()), data);
     return path;
+}
+
+// Ear safety: one steady, low beep, never a sweep or a click. 1 s of 440 Hz
+// at -26 dBFS (5 % of full scale).
+std::string tone_file() { return wav_file("pbos-sound-check-tone.wav", 1, 0.05); }
+// 3 s of silence: a stream for the playback pointer check that nobody hears.
+std::string silence_file() { return wav_file("pbos-sound-check-silence.wav", 3, 0); }
+
+// An output's properties as pactl lists them (alsa.card, object.id, ...).
+std::map<std::string, std::string> sink_props(const std::string& name) {
+    std::map<std::string, std::string> props;
+    std::istringstream in(sh("pactl list sinks 2>/dev/null"));
+    bool mine = false;
+    for (std::string line; std::getline(in, line);) {
+        std::string t = trim(line);
+        if (line.rfind("Sink #", 0) == 0) {
+            if (mine) break;
+            props.clear();
+        } else if (t.rfind("Name:", 0) == 0) {
+            mine = trim(t.substr(5)) == name;
+        } else if (size_t eq = t.find(" = \""); eq != std::string::npos && t.back() == '"') {
+            props[t.substr(0, eq)] = t.substr(eq + 4, t.size() - eq - 5);
+        }
+    }
+    if (!mine) props.clear();
+    return props;
+}
+
+// A field of an ALSA status file ("hw_ptr      : 1234" -> "1234").
+std::string status_field(const std::string& status, const std::string& key) {
+    std::istringstream in(status);
+    for (std::string line; std::getline(in, line);) {
+        size_t c = line.find(':');
+        if (c != std::string::npos && trim(line.substr(0, c)) == key) return trim(line.substr(c + 1));
+    }
+    return "";
+}
+
+std::string read_file(const std::string& path) {
+    std::ifstream f(path);
+    std::stringstream b;
+    b << f.rdbuf();
+    return b.str();
+}
+
+// The objective check of a fix: the output's playback pointer (hw_ptr) over
+// 1 s while 3 s of silence play on it. The DSP takes audio only while the
+// pointer moves. PBOS_REPORT_ASOUND: a test's stand-in for /proc/asound.
+struct Pointer {
+    enum { MOVES, FROZEN, UNKNOWN } verdict = UNKNOWN;
+    std::string detail;
+};
+Pointer pointer_check(const std::string& sink) {
+    auto p = sink_props(sink);
+    if (p.count("alsa.card") == 0 || p.count("alsa.device") == 0)
+        return {Pointer::UNKNOWN, "no ALSA playback device behind " + sink};
+    const char* asound = getenv("PBOS_REPORT_ASOUND");
+    std::string status = std::string(asound && *asound ? asound : "/proc/asound") + "/card" + p["alsa.card"] + "/pcm" +
+                         p["alsa.device"] + "p/sub" + (p.count("alsa.subdevice") ? p["alsa.subdevice"] : "0") + "/status";
+    sh("timeout 5 pw-play --target " + q(sink) + " " + q(silence_file()) + " >/dev/null 2>&1 &");
+    std::string where = status.substr(status.rfind("card"));
+    if (read_file(status).empty()) return {Pointer::UNKNOWN, where + " not readable"};
+    std::string a;
+    for (int i = 0; i < 30 && status_field(a = read_file(status), "state") != "RUNNING"; i++)
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    if (status_field(a, "state") != "RUNNING")
+        return {Pointer::FROZEN, where + " not running 3 s after silence started (" + trim(a.substr(0, a.find('\n'))) + ")"};
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+    std::string b = read_file(status), h0 = status_field(a, "hw_ptr"), h1 = status_field(b, "hw_ptr");
+    bool moves = status_field(b, "state") == "RUNNING" && !h0.empty() && h0 != h1;
+    return {moves ? Pointer::MOVES : Pointer::FROZEN,
+            where + " " + status_field(b, "state") + ", hw_ptr " + h0 + " -> " + h1 + " in 1 s"};
+}
+
+// The root read's verdict: "A (...)", "B (...)", "C (...)", or "" when
+// there is none.
+std::string stall_class(const std::string& root) {
+    size_t at = root.find("stall class: ");
+    if (at == std::string::npos) return "";
+    at += 13;
+    return root.substr(at, root.find('\n', at) - at);
 }
 
 std::string model() {
@@ -305,21 +397,32 @@ private:
         broken_ = broken;
         heard_.clear();
         fixlog_.clear();
-        fixed_ = 0;
+        fixed_ = -1;
         show({"Saving the report…", "This takes a few seconds.", {}, true});
         std::thread([this] {
-            std::string r = sh("pbos-report audio 2>&1");
-            // The audio path below PipeWire needs root: pbos-report-audio-root.service,
-            // which the user may start (50-pbos-report.rules), writes it to /run.
-            if (sh("timeout 60 systemctl start pbos-report-audio-root.service >/dev/null 2>&1 && echo ok").find("ok") == 0)
-                r += sh("cat /run/pbos-report/audio-root.txt 2>&1");
-            else
-                r += "\n=== audio path (root only): could not be read\n";
-            later([this, r] {
+            // The root part first: its stall check reads the stream as found,
+            // before anything here plays.
+            std::string root = audio_root("audio path, before any fix");
+            std::string r = sh("pbos-report audio 2>&1") + root;
+            later([this, r, root] {
                 report_ = r;
+                class_ = stall_class(root);
+                plan();
                 outputs();
             });
         }).detach();
+    }
+
+    // The fixes, in turn, by the stall class; PipeWire's restart always last.
+    enum Fix { NODE, STREAM, PIPEWIRE };
+    static const char* fix_name(Fix f) {
+        return f == NODE ? "speaker node paused and started" : f == STREAM ? "speaker stream reopened" : "PipeWire restarted";
+    }
+    void plan() {
+        if (!class_.empty() && class_[0] == 'A')
+            steps_ = {NODE, PIPEWIRE};
+        else
+            steps_ = {STREAM, PIPEWIRE};
     }
 
     // The outputs the tones play on: "Top screen" then the real one under
@@ -363,53 +466,90 @@ private:
         return "\n=== " + title + "\n" + sh("cat /run/pbos-report/audio-root.txt 2>&1");
     }
 
-    // The fixes, in turn, each checked with the beep: 1 restarts the speaker
-    // stream, 2 PipeWire.
-    void fix(int stage) {
-        const char* what = stage == 1 ? "Restarting the speaker stream…" : "Restarting PipeWire, the sound service…";
-        show({"Trying to fix it (step " + std::to_string(stage) + " of 2)", std::string(what) + " This takes a few seconds.",
-              {}, true});
+    // Fix steps_[stage], then the playback pointer check and a fresh read of
+    // the audio path.
+    void fix(size_t stage) {
+        Fix f = steps_[stage];
+        const char* what = f == NODE     ? "Restarting the speaker output…"
+                           : f == STREAM ? "Restarting the speaker stream…"
+                                         : "Restarting PipeWire, the sound service…";
+        show({"Trying to fix it (step " + std::to_string(stage + 1) + " of " + std::to_string(steps_.size()) + ")",
+              std::string(what) + " This takes a few seconds.", {}, true});
         std::string real = real_;
-        std::thread([this, stage, real] {
+        std::thread([this, stage, f, real] {
             std::string out;
-            if (stage == 1) {
-                // Closing the output closes the DSP's playback stream; it is opened again on resume.
+            if (f == NODE) {
+                // Only the stuck ALSA node: Pause takes its poll out of the data
+                // loop and stops the PCM; Start prepares and starts the PCM again
+                // and adds the poll anew, with POLLOUT. The PCM stays open; the
+                // graph, the other nodes and the streams are not touched.
+                // (PipeWire 1.6.8: the server hands every command but Suspend
+                // straight to the node: spa_alsa_pause(), spa_alsa_start().)
+                std::string id = sink_props(real)["object.id"];
+                if (id.empty()) {
+                    out = "no node id for " + real;
+                } else {
+                    out = sh("pw-cli send-command " + q(id) + " Pause '{}' 2>&1 >/dev/null; sleep 0.2; "
+                             "pw-cli send-command " + q(id) + " Start '{}' 2>&1 >/dev/null");
+                    out = "node " + id + (trim(out).empty() ? "" : ": " + trim(out));
+                }
+                sh("sleep 1");
+            } else if (f == STREAM) {
+                // Suspending the output closes the DSP's playback stream; the
+                // next stream (the silence below) opens it again. pipewire-pulse
+                // ignores the resume; it is there for PulseAudio's sake.
                 out = sh("pactl suspend-sink " + q(real) + " 1 2>&1; sleep 1; pactl suspend-sink " + q(real) + " 0 2>&1");
+                sh("sleep 1");
             } else {
                 out = sh("systemctl --user restart pipewire.service pipewire-pulse.service wireplumber.service 2>&1");
                 // The outputs come back, then PB-OS's own sound helpers set them up again.
                 sh("for i in $(seq 20); do pactl list short sinks 2>/dev/null | grep -q " + q(real) + " && break; sleep 0.5; done");
                 out += sh("systemctl --user try-restart sm8550-audio-pipewire.service barry_launcher_audio.service "
                           "sm8550-volume-keeper.service sm8550-volume-keys.service 2>&1");
+                sh("sleep 3");
             }
-            sh("sleep 3");
-            std::string log = "\n=== fix " + std::to_string(stage) + " (" + (stage == 1 ? "speaker stream restarted" : "PipeWire restarted") +
-                              ")" + (trim(out).empty() ? "" : ": " + trim(out)) + "\n";
-            log += audio_root("audio path after fix " + std::to_string(stage));
-            later([this, stage, log] {
+            Pointer ptr = pointer_check(real);
+            std::string n = std::to_string(stage + 1);
+            std::string log = "\n=== fix " + n + " (" + fix_name(f) + ")" + (trim(out).empty() ? "" : ": " + trim(out)) +
+                              "\nplayback pointer after fix " + n + ": " + verdict(ptr) + " (" + ptr.detail + ")\n";
+            log += audio_root("audio path after fix " + n);
+            later([this, stage, log, ptr] {
                 fixlog_ += log;
-                retest(stage);
+                // Frozen: the speakers can't play, so on to the next fix
+                // without a beep.
+                if (ptr.verdict == Pointer::FROZEN && stage + 1 < steps_.size()) {
+                    heard_.push_back("after fix " + std::to_string(stage + 1) + " (" + fix_name(steps_[stage]) +
+                                     "): playback pointer FROZEN, no tone");
+                    fix(stage + 1);
+                } else {
+                    retest(stage, ptr);
+                }
             });
         }).detach();
     }
 
-    void retest(int stage) {
+    static const char* verdict(const Pointer& p) {
+        return p.verdict == Pointer::MOVES ? "moves" : p.verdict == Pointer::FROZEN ? "FROZEN" : "unknown";
+    }
+
+    void retest(size_t stage, const Pointer& ptr) {
         show({"Listen", "The beep again, on " + tones_[0].second + ".", {}, true});
         std::string target = tones_[0].first;
-        std::thread([this, stage, target] {
+        std::thread([this, stage, target, ptr] {
             std::string err = play(target);
-            later([this, stage, err] { ask_fix(stage, err); });
+            later([this, stage, err, ptr] { ask_fix(stage, err, ptr); });
         }).detach();
     }
 
-    void ask_fix(int stage, const std::string& err) {
-        auto answer = [this, stage, err](bool heard) {
-            heard_.push_back("after fix " + std::to_string(stage) + ", tone on " + tones_[0].first + ": " +
-                             (heard ? "heard" : "NOT heard") + (err.empty() ? "" : " (pw-play: " + err + ")"));
+    void ask_fix(size_t stage, const std::string& err, const Pointer& ptr) {
+        auto answer = [this, stage, err, ptr](bool heard) {
+            heard_.push_back("after fix " + std::to_string(stage + 1) + " (" + fix_name(steps_[stage]) + "), playback pointer " +
+                             verdict(ptr) + ", tone on " + tones_[0].first + ": " + (heard ? "heard" : "NOT heard") +
+                             (err.empty() ? "" : " (pw-play: " + err + ")"));
             if (heard) {
-                fixed_ = stage;
+                fixed_ = static_cast<int>(stage);
                 save();
-            } else if (stage < 2) {
+            } else if (stage + 1 < steps_.size()) {
                 fix(stage + 1);
             } else {
                 save();
@@ -418,7 +558,7 @@ private:
         show({"Is the sound back?", "Did you hear the beep this time?",
               {{"Yes, I heard it", [answer] { answer(true); }},
                {"No, nothing", [answer] { answer(false); }},
-               {"Play it again", [this, stage] { retest(stage); }}},
+               {"Play it again", [this, stage, ptr] { retest(stage, ptr); }}},
               false, true});
     }
 
@@ -427,7 +567,7 @@ private:
             // Sound gone and the first beep (what games play through) not heard:
             // the fixes, always.
             bool first_heard = !heard_.empty() && heard_[0].find(": heard") != std::string::npos;
-            return broken_ && !first_heard && !tones_.empty() ? fix(1) : save();
+            return broken_ && !first_heard && !tones_.empty() ? fix(0) : save();
         }
         std::string target = tones_[i].first;
         show({"Playing tone " + std::to_string(i + 1) + " of " + std::to_string(tones_.size()),
@@ -455,10 +595,15 @@ private:
         std::string mode = broken_ ? "sound-gone" : "sound-works";
         std::string dir = std::string(getenv("HOME") ? getenv("HOME") : "/home/steamos") + "/Desktop/PB-OS Reports";
         std::string path = dir + "/pbos-soundcheck-" + mode + "-" + stamp("%Y-%m-%d-%H%M%S") + ".txt";
+        // First the class and which fix worked, then the answers.
         std::string head = "=== PB-OS Sound Check: " + mode + ", " + stamp("%F %T %Z") + "\n";
+        head += "stall class: " + (class_.empty() ? std::string("not read (the root read failed)") : class_) + "\n";
+        if (broken_)
+            head += fixed_ >= 0 ? "fixed by: fix " + std::to_string(fixed_ + 1) + " (" + fix_name(steps_[fixed_]) + ")\n"
+                    : fixlog_.empty() ? "fixed by: no fix tried\n"
+                                      : "fixed by: nothing (no fix brought the beep back)\n";
         for (const auto& h : heard_) head += h + "\n";
         if (heard_.empty()) head += "tones skipped\n";
-        if (broken_) head += fixed_ ? "fixed by fix " + std::to_string(fixed_) + "\n" : "";
         sh("mkdir -p " + q(dir));
         std::ofstream f(path);
         f << head << "\n" << report_ << fixlog_;
@@ -510,10 +655,13 @@ private:
 
     void done(const std::string& note) {
         std::string first = note.empty() ? "" : note + "\n\n";
-        if (broken_ && fixed_ == 1) {
-            show({"The sound is back!", first + "Restarting the speaker stream fixed it. Saved in " + shown_ + ".",
+        Fix f = broken_ && fixed_ >= 0 ? steps_[fixed_] : PIPEWIRE;
+        if (broken_ && fixed_ >= 0 && f != PIPEWIRE) {
+            show({"The sound is back!",
+                  first + (f == NODE ? "Restarting the speaker output" : "Restarting the speaker stream") +
+                      " fixed it. Saved in " + shown_ + ".",
                   {{"Quit", [this] { quit_ = true; }}}});
-        } else if (broken_ && fixed_ == 2) {
+        } else if (broken_ && fixed_ >= 0) {
             show({"The sound is back!",
                   first + "Restarting PipeWire fixed it. Steam needs a restart to get its own sound back. Saved in " +
                       shown_ + ".",
@@ -655,7 +803,9 @@ private:
     std::function<void()> next_;
     bool top_ = false, broken_ = false;
     std::string report_, shown_, sent_path_, real_, fixlog_;
-    int fixed_ = 0;  // the fix that brought the sound back, or 0
+    std::string class_;       // the root read's stall class line, "A (...)"
+    std::vector<Fix> steps_;  // the fixes for that class, in turn
+    int fixed_ = -1;          // the step in steps_ that brought the sound back, or -1
     std::vector<std::pair<std::string, std::string>> tones_;
     std::vector<std::string> heard_;
 };
@@ -674,6 +824,18 @@ int main(int argc, char** argv) {
     // Test: the output the second tone plays on.
     if (argc == 2 && std::string(argv[1]) == "--real-output") {
         printf("%s\n", real_output().c_str());
+        return 0;
+    }
+    // Test: the playback pointer check on an output (the real one by default).
+    if (argc >= 2 && std::string(argv[1]) == "--pointer") {
+        Pointer p = pointer_check(argc >= 3 ? argv[2] : real_output());
+        printf("%s: %s\n", p.verdict == Pointer::MOVES ? "moves" : p.verdict == Pointer::FROZEN ? "FROZEN" : "unknown",
+               p.detail.c_str());
+        return 0;
+    }
+    // Test: the stall class a saved root read gives.
+    if (argc == 3 && std::string(argv[1]) == "--stall-class") {
+        printf("%s\n", stall_class(read_file(argv[2])).c_str());
         return 0;
     }
     // Steam starts games with its (x86) overlay preloaded: every command run

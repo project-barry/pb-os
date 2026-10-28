@@ -204,8 +204,234 @@ trace_new() {
 # ADSP interrupts and packet counts (does the DSP still answer?).
 dsp_irqs() { grep -iE 'glink|ipcc|smp2p|adsp|lpass|swr|soundwire|6800000' /proc/interrupts | tr -s ' '; }
 
+# The stall check (the Thor sound dropout, seen live 10-27): which side
+# stopped, read before anything is changed. With the speakers IRQ-driven
+# (api.alsa.disable-tsched), PipeWire's ALSA sink turns its poll off while the
+# graph runs a cycle and on again when it writes; when the graph refuses the
+# cycle, nothing turns it on again. Then the PCM stays RUNNING with hw_ptr
+# frozen, PipeWire's data loop sleeps in epoll_wait with the PCM fd polled for
+# errors only (events 18: no POLLOUT, 0x4) and its timers off, and the DSP is
+# fine. The class, in the report's "stall class:" line, picks PB-OS Sound
+# Check's first fix:
+#   A  PipeWire stopped writing: hw_ptr frozen, the PCM fd in the data loop's
+#      epoll set without POLLOUT, no timer armed (the data loop's switches are
+#      shown; it may still wake for other fds on the same loop).
+#   B  DSP or kernel: hw_ptr frozen while PipeWire still waits for the PCM
+#      (POLLOUT or a timer armed) or keeps writing to the DSP.
+#   C  anything else, a working stream included: everything is recorded.
+# PBOS_REPORT_ASOUND: a test's stand-in for /proc/asound.
+ASOUND="${PBOS_REPORT_ASOUND:-/proc/asound}"
+
+# A field of a PCM status file ("hw_ptr      : 1234" -> 1234).
+pcm_field() {
+  awk -v k="$2" '{ i = index($0, ":"); n = substr($0, 1, i - 1); gsub(/[ \t]/, "", n)
+                   if (n == k) { v = substr($0, i + 1); gsub(/^[ \t]+|[ \t]+$/, "", v); print v; exit } }' "$1" 2>/dev/null
+}
+mono_now() { awk '/^now at/{printf "%.6f\n", $3 / 1e9; exit}' /proc/timer_list 2>/dev/null; }
+
+# Each thread of process $1: "tid comm state policy/rtprio switches", the
+# switches voluntary and not, added.
+threads() {
+  local t st
+  for t in /proc/$1/task/*; do
+    st="$(cat "$t/stat" 2>/dev/null)" || continue
+    set -- ${st##*) }
+    printf '%s %s %s %s/%s %s\n' "${t##*/}" "$(tr ' ' '_' < "$t/comm")" "$1" "${39:-?}" "${38:-?}" \
+      "$(awk '/^(non)?voluntary_ctxt_switches/{s += $2} END{print s + 0}' "$t/status" 2>/dev/null)"
+  done
+}
+
+# The recorder's writes to the DSP, packets back and periods between two
+# monotonic times (its clock).
+trace_counts() {
+  [[ -r $AIO/trace ]] || { echo "(recorder off)"; return; }
+  awk -v a="$1" -v b="$2" '
+    { for (i = 2; i <= NF; i++) if ($i ~ /^[0-9]+\.[0-9]+:$/) break
+      if (i >= NF) next
+      t = $i + 0; if (t < a || t > b) next
+      e = $(i + 1); sub(/:$/, "", e); n[e]++ }
+    END { printf "dsp_write %d, dsp_rx %d, period %d\n", n["dsp_write"], n["dsp_rx"], n["period"] }' "$AIO/trace"
+}
+
+audio_stall() {
+  section "stall check ($1): which side stopped (the classes: audio_stall in pbos-report)"
+  local s pcms=() pids=() pid t0 t1 i
+  for s in "$ASOUND"/card*/pcm*p/sub*/status; do
+    [[ $(pcm_field "$s" state) == RUNNING ]] && pcms+=("$s")
+  done
+  if ((${#pcms[@]} == 0)); then
+    echo "stall class: C (no playback stream running)"
+    return
+  fi
+  # The process holding each PCM (owner_pid is the thread that opened it).
+  for s in "${pcms[@]}"; do
+    pid="$(pcm_field "$s" owner_pid)"
+    pid="$(awk '/^Tgid:/{print $2}' "/proc/${pid:-0}/status" 2>/dev/null)"
+    pids+=("${pid:-0}")
+  done
+  # Everything twice, 1 s apart.
+  local before=() th0=()
+  t0="$(mono_now)"
+  for i in "${!pcms[@]}"; do
+    before+=("$(cat "${pcms[i]}")")
+    th0+=("$(threads "${pids[i]}")")
+  done
+  sleep 1
+  t1="$(mono_now)"
+  local cls="" why="" anchor="" seen=()
+  for i in "${!pcms[@]}"; do
+    s="${pcms[i]}"
+    pid="${pids[i]}"
+    local card dev node h0 h1 st1 fd f e line tfd link ep="" evs="" armed=0 dl="" dsw=""
+    card="${s#"$ASOUND"/card}"; card="${card%%/*}"
+    dev="${s#"$ASOUND"/card*/pcm}"; dev="${dev%%p/*}"
+    node="/dev/snd/pcmC${card}D${dev}p"
+    h0="$(pcm_field <(printf '%s\n' "${before[i]}") hw_ptr)"
+    h1="$(pcm_field "$s" hw_ptr)"
+    st1="$(pcm_field "$s" state)"
+    echo "-- ${s#"$ASOUND"/} ($node), process $pid ($(cat "/proc/$pid/comm" 2>/dev/null))"
+    printf 'status: %s\n' "$(tr '\n' ' ' <<< "${before[i]}")"
+    printf '1 s later: %s\n' "$(tr '\n' ' ' < "$s")"
+    # The epoll sets holding the PCM's fd, and what each fd in them is.
+    for fd in /proc/$pid/fd/*; do
+      [[ $(readlink "$fd" 2>/dev/null) == "$node" ]] || continue
+      fd="${fd##*/}"
+      for f in /proc/$pid/fdinfo/*; do
+        e="$(awk -v n="$fd" '$1 == "tfd:" && $2 == n {print $4; exit}' "$f" 2>/dev/null)"
+        [[ -n $e ]] || continue
+        ep+="${ep:+ }${f##*/}"
+        evs+="${evs:+ }$e"
+        echo "epoll fd ${f##*/}: the PCM's fd $fd with events 0x$e (POLLOUT $( ((0x$e & 0x4)) && echo on || echo off))"
+        while read -r line; do
+          tfd="$(awk '{print $2}' <<< "$line")"
+          link="$(readlink "/proc/$pid/fd/$tfd" 2>/dev/null)"
+          printf '  %s -> %s' "$line" "$link"
+          case "$link" in
+            *timerfd*)
+              printf ' [%s]' "$(grep -E '^(clockid|ticks|it_value|it_interval)' "/proc/$pid/fdinfo/$tfd" 2>/dev/null | tr '\n' ' ')"
+              grep -qE '^it_value: \(0, 0\)' "/proc/$pid/fdinfo/$tfd" 2>/dev/null || armed=$((armed + 1)) ;;
+            *eventfd*)
+              printf ' [%s]' "$(grep -E '^eventfd-count' "/proc/$pid/fdinfo/$tfd" 2>/dev/null)" ;;
+          esac
+          echo
+        done < <(grep '^tfd:' "$f")
+      done
+    done
+    # Each thread, and which one sleeps on that epoll set (the first argument
+    # of its epoll_pwait; else the thread named data-loop).
+    local tl task c0 sc
+    while read -r tl; do
+      set -- $tl
+      task=$1
+      sc="$(cat "/proc/$pid/task/$task/syscall" 2>/dev/null)"
+      c0="$(awk -v t="$task" '$1 == t {print $5}' <<< "${th0[i]}")"
+      printf 'thread %s %s: state %s, policy/rtprio %s, %s switches in 1 s, wchan %s, syscall %s\n' "$task" "$2" "$3" "$4" \
+        "$(($5 - ${c0:-$5}))" "$(cat "/proc/$pid/task/$task/wchan" 2>/dev/null)" "${sc:-?}"
+      for e in $ep; do
+        if [[ ${sc#* } == "$(printf '0x%x' "$e") "* ]] || [[ -z $dl && $2 == data-loop* ]]; then
+          dl="$task ($2)"
+          dsw=$(($5 - ${c0:-$5}))
+        fi
+      done
+    done < <(threads "$pid")
+    for task in /proc/$pid/task/*; do
+      [[ -r $task/stack ]] && printf 'kernel stack %s (%s):\n%s\n' "${task##*/}" "$(cat "$task/comm")" "$(sed 's/^/  /' "$task/stack")"
+    done
+    local counts
+    counts="$(trace_counts "$t0" "$t1")"
+    echo "recorder, the same second: $counts"
+    # The class: the first frozen stream's.
+    if [[ -z $cls && $st1 == RUNNING && -n $h0 && $h0 == "$h1" ]]; then
+      anchor="$(pcm_field "$s" tstamp)"
+      local pollout=0 x
+      for x in $evs; do ((0x$x & 0x4)) && pollout=1; done
+      if [[ -n $ep && $pollout == 0 && $armed == 0 ]]; then
+        cls=A
+        why="PipeWire stopped writing: ${node##*/} hw_ptr $h1 frozen, its fd polled without POLLOUT (events 0x${evs// /, 0x}),"
+        why+=" no timer armed, data loop ${dl:-not found} ${dsw:-?} switches in 1 s"
+      elif [[ -n $ep ]] || [[ $counts == "dsp_write "[1-9]* ]]; then
+        cls=B
+        why="DSP or kernel: ${node##*/} hw_ptr $h1 frozen while PipeWire waits for it"
+        why+=" (POLLOUT $( ((pollout)) && echo on || echo off), $armed timer(s) armed, data loop ${dsw:-?} switches; $counts)"
+      else
+        cls=C
+        why="${node##*/} hw_ptr $h1 frozen, but its fd is in no epoll set of process $pid"
+      fi
+    fi
+    seen+=("${node##*/} $st1 hw_ptr ${h0:-?} -> ${h1:-?}")
+  done
+  if [[ -z $cls ]]; then
+    cls=C
+    why="no frozen playback stream: $(IFS=';'; echo "${seen[*]}")"
+  fi
+  echo "stall class: $cls ($why)"
+  # The freeze's time: the frozen status's tstamp (CLOCK_MONOTONIC, as
+  # journalctl -o short-monotonic; /proc/uptime counts sleep too).
+  echo "freeze time (monotonic): ${anchor:-none}, read at $t1"
+  stall_context "${pids[0]}" "${anchor:-$t1}"
+}
+
+# What surrounds a stall: the ALSA plugin PipeWire runs (PB-OS's patched one
+# logs "graph did not start a cycle"), its nodes and their clients, and the
+# journal in the 2 minutes before $2 (monotonic s).
+stall_context() {
+  local pid=$1 at=$2 m l=""
+  section "PipeWire's ALSA plugin (process $pid)"
+  for m in /proc/$pid/map_files/*; do
+    l="$(readlink "$m" 2>/dev/null)"
+    [[ $l == */libspa-alsa.so* ]] || { l=""; continue; }
+    printf 'mapped %s: sha256 %s, "did not start a cycle" %s\n' "$l" "$(sha256sum < "$m" | cut -c1-64)" \
+      "$(grep -qa 'did not start a cycle' "$m" && echo 'present (patched)' || echo 'absent (stock)')"
+    break
+  done
+  [[ -n $l ]] || echo "(no libspa-alsa.so in its map_files)"
+  printf 'on disk: sha256 %s\n' "$(sha256sum 2>/dev/null < /usr/lib/spa-0.2/alsa/libspa-alsa.so | cut -c1-64)"
+  local refused
+  refused="$(journalctl -b --no-pager -o short-monotonic _SYSTEMD_USER_UNIT=pipewire.service -g 'did not start a cycle' 2>/dev/null \
+    | grep -v '^-- ')"
+  printf '"did not start a cycle" warnings this boot: %s\n' "$(grep -c . <<< "$refused")"
+  [[ -n $refused ]] && tail -n 5 <<< "$refused" | sed -E 's/^(\[[^]]*\]) [^ ]+ /\1 /'
+  section "PipeWire nodes and their clients (pw-dump)"
+  as_user timeout 10 pw-dump 2>&1 | python3 -I -c '
+import json, sys
+raw = sys.stdin.read()
+try:
+    d = json.loads(raw)
+except ValueError as e:
+    sys.exit("pw-dump unreadable (%s): %s" % (e, raw[:300]))
+clients = {o["id"]: (o.get("info") or {}).get("props", {}) for o in d if o.get("type") == "PipeWire:Interface:Client"}
+for o in d:
+    if o.get("type") != "PipeWire:Interface:Node":
+        continue
+    i = o.get("info") or {}
+    p = i.get("props", {})
+    c = clients.get(p.get("client.id"), {})
+    print("node %s %s [%s] %s, client %s %s pid %s%s" % (o["id"], p.get("node.name", "?"), p.get("media.class", ""),
+          i.get("state"), p.get("client.id", "-"), c.get("application.name", ""), c.get("application.process.id", "?"),
+          ", error " + i["error"] if i.get("error") else ""))
+' 2>&1
+  section "pw-top (batch, 2 samples)"
+  as_user timeout 6 pw-top -b -n 2 2>&1 | tail -n 60
+  section "journal, 2 minutes before the freeze (monotonic s): sound, Barry, the bottom screen"
+  # --since takes wall time, which counts sleep; /proc/uptime does too, so
+  # this start is early enough, and awk keeps the exact monotonic window.
+  local up since
+  up="$(cut -d. -f1 /proc/uptime)"
+  since=$(($(date +%s) - (up - ${at%.*}) - 125))
+  journalctl -b --no-pager -o short-monotonic --since "@$since" 2>/dev/null \
+    | awk -v a="$at" '{ s = $0; sub(/^\[ */, "", s); t = s + 0; if (t >= a - 120 && t <= a + 2) print }' \
+    | grep -E 'pipewire|wireplumber|[Bb]arry|run-bottom|gamescope|firefox|pbos-platformd|pbosd|sm8550-audio|volume-keeper|systemd\[[0-9]+\]: (Start|Stop)' \
+    | sed -E 's/^(\[[^]]*\]) [^ ]+ /\1 /' | tail -n 300
+}
+
 audio_root() {
   if [[ $EUID -ne 0 ]]; then section "audio path (root only): skipped, not root"; return; fi
+  # A stream still running is checked as found, before anything new plays.
+  local found=""
+  if grep -qs 'state: RUNNING' "$ASOUND"/card*/pcm*p/sub*/status; then
+    audio_stall "as found"
+    found=1
+  fi
   local quiet player=""
   quiet="$(mktemp /tmp/pbos-report-silence.XXXXXX.wav)"
   silence "$quiet" 10
@@ -220,6 +446,7 @@ audio_root() {
     sleep 0.25
   done
   sleep 1
+  [[ -n $found ]] || audio_stall "while silence plays"
   section "playback stream while silence plays (hw_params, then status twice, 1 s apart)"
   awk '/^now at/{printf "monotonic now: %.6f\n", $3 / 1e9; exit}' /proc/timer_list
   for p in /proc/asound/card*/pcm*p/sub0; do

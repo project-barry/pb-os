@@ -1,5 +1,6 @@
-# PB-OS Sound Check's root-only part: the audio path below PipeWire (DAPM
-# widgets, speaker amp registers, SoundWire, the playback pointer), read from
+# PB-OS Sound Check's root-only part: the stall check (which side stopped:
+# PipeWire's threads and epoll set, the playback pointer) and the audio path
+# below PipeWire (DAPM widgets, speaker amp registers, SoundWire), read from
 # debugfs into /run/pbos-report/audio-root.txt for the app to add to its
 # report. The desktop user may start it (50-pbos-report.rules). Temporary,
 # with PB-OS Sound Check.
@@ -13,5 +14,8 @@ RuntimeDirectoryMode=0755
 RuntimeDirectoryPreserve=yes
 ExecStart=/bin/sh -c '/usr/bin/pbos-report audio-root > /run/pbos-report/audio-root.txt.new && chmod 0644 /run/pbos-report/audio-root.txt.new && mv -f /run/pbos-report/audio-root.txt.new /run/pbos-report/audio-root.txt'
 TimeoutStartSec=60
-ProtectHome=yes
+# Read-only, not hidden: the silence it plays and pw-dump/pw-top reach the
+# session's PipeWire through its socket in /run/user, which ProtectHome=yes
+# hides.
+ProtectHome=read-only
 PrivateNetwork=yes
