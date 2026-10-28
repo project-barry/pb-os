@@ -1,0 +1,268 @@
+Subject: [PATCH] spa: alsa: IRQ mode: give every cycle a deadline
+
+With api.alsa.disable-tsched, playback_ready() turns the poll sources off
+(the PCM fd is then polled for errors only) and hands the cycle to the
+graph. Only spa_alsa_write(), reached when the graph delivered the sink's
+buffer, turns them on again, and IRQ mode has no timer. A cycle that never
+comes back (a client stalled or removed mid-cycle, the node being stopped
+or reconfigured, a ready callback that fails) therefore leaves the PCM
+unwatched for good: the sink stays silent until the node is reopened.
+Timer mode does not have this problem because its timer is re-armed on
+every wakeup, and node_ready() already treats a cycle that is still
+unfinished as a graph xrun and starts the next one.
+
+Make the period interrupt the clock the way the timer is in timer mode: a
+cycle started from an interrupt gets a deadline of two periods, using the
+timerfd, which is now created in both modes. spa_alsa_write() disarms it.
+If it fires first, play one period of silence, turn the poll sources on
+again and let the next interrupt start a regular cycle. A cycle refused by
+the ready callback is handled the same way right away. The deadline is
+armed only while the poll is off, after the ready callback returns, since
+that call can finish the cycle itself.
+
+add_sources() restores the poll mask: a follower that becomes the driver
+again was re-added with the mask 0 that playback_ready() had left, and
+nothing woke it.
+
+Capture is not changed.
+
+Fixes a permanent silence on an IRQ-driven sink when a cycle never
+completes (a client stalled or removed mid-cycle).
+---
+diff --git a/spa/plugins/alsa/alsa-pcm.c b/spa/plugins/alsa/alsa-pcm.c
+index 6a6095d33..dc582bf33 100644
+--- a/spa/plugins/alsa/alsa-pcm.c
++++ b/spa/plugins/alsa/alsa-pcm.c
+@@ -1230,16 +1230,16 @@ int spa_alsa_open(struct state *state, const char *params)
+ 			device_name,
+ 			state->stream == SND_PCM_STREAM_CAPTURE ? "capture" : "playback");
+ 
+-	if (!state->disable_tsched) {
+-		if ((err = spa_system_timerfd_create(state->data_system,
+-				CLOCK_MONOTONIC, SPA_FD_CLOEXEC | SPA_FD_NONBLOCK)) < 0)
+-			goto error_exit_close;
++	/* Timer mode uses the timer as the clock. IRQ mode uses it as the
++	 * deadline of a cycle started by a period interrupt. */
++	if ((err = spa_system_timerfd_create(state->data_system,
++			CLOCK_MONOTONIC, SPA_FD_CLOEXEC | SPA_FD_NONBLOCK)) < 0)
++		goto error_exit_close;
+ 
+-		state->timerfd = err;
+-	} else {
+-		/* ALSA pollfds may only be ready after setting swparams, so
+-		 * these are initialised in spa_alsa_start() */
+-	}
++	state->timerfd = err;
++
++	/* In IRQ mode the ALSA pollfds may only be ready after setting
++	 * swparams, so these are initialised in spa_alsa_start() */
+ 
+ 	state->opened = true;
+ 	state->sample_count = 0;
+@@ -1292,9 +1292,8 @@ int spa_alsa_close(struct state *state)
+ 		spa_log_warn(state->log, "%s: close failed: %s", state->name,
+ 				snd_strerror(err));
+ 
+-	if (!state->disable_tsched)
+-		spa_system_close(state->data_system, state->timerfd);
+-	else
++	spa_system_close(state->data_system, state->timerfd);
++	if (state->disable_tsched)
+ 		state->n_fds = 0;
+ 
+ 	if (state->have_format && state->card)
+@@ -3345,6 +3344,12 @@ again:
+ 
+ 	update_sources(state, true);
+ 
++	if (state->disable_tsched && !state->following) {
++		/* the graph delivered the buffer, the cycle is finished */
++		set_timeout(state, 0);
++		state->rt.cycle_pending = false;
++	}
++
+ 	return 0;
+ }
+ 
+@@ -3613,9 +3618,42 @@ int spa_alsa_skip(struct state *state)
+ }
+ 
+ 
+-static int playback_ready(struct state *state)
++static uint64_t get_time_ns(struct state *state);
++
++/* In IRQ mode the PCM is only polled for errors while the graph runs a cycle
++ * and spa_alsa_write() turns the poll on again when the graph delivered the
++ * buffer. When the cycle never gets there, nothing else wakes the PCM. Play
++ * one quantum of silence and poll the PCM again so that the next period
++ * interrupt starts a regular cycle. */
++static void alsa_irq_cycle_over(struct state *state, uint64_t current_time, int res)
++{
++	int suppressed;
++
++	if ((suppressed = spa_ratelimit_test(&state->rate_limit, current_time)) >= 0) {
++		if (res < 0)
++			spa_log_warn(state->log, "%s: graph did not start a cycle: %s, "
++					"playing silence (%d suppressed)", state->name,
++					spa_strerror(res), suppressed);
++		else
++			spa_log_warn(state->log, "%s: cycle did not finish in time, "
++					"playing silence (%d suppressed)", state->name,
++					suppressed);
++	}
++	if (SPA_UNLIKELY((res = spa_alsa_silence(state, state->threshold)) < 0)) {
++		/* the PCM is in XRUN or SETUP, get it running again */
++		res = alsa_recover(state);
++		spa_log_debug(state->log, "%s: recover: %s", state->name, spa_strerror(res));
++	}
++	update_sources(state, true);
++	set_timeout(state, 0);
++	state->rt.cycle_pending = false;
++}
++
++static int playback_ready(struct state *state, uint64_t current_time)
+ {
+ 	struct spa_io_buffers *io = state->io;
++	bool irq_driver = state->disable_tsched && !state->following;
++	int res;
+ 
+ 	spa_log_trace_fp(state->log, "%p: %d", state, io ? io->status : 0);
+ 
+@@ -3624,7 +3662,26 @@ static int playback_ready(struct state *state)
+ 	if (io != NULL)
+ 		io->status = SPA_STATUS_NEED_DATA;
+ 
+-	return spa_node_call_ready(&state->callbacks, SPA_STATUS_NEED_DATA);
++	if (irq_driver)
++		state->rt.cycle_pending = true;
++
++	res = spa_node_call_ready(&state->callbacks, SPA_STATUS_NEED_DATA);
++	if (irq_driver) {
++		if (SPA_UNLIKELY(res < 0))
++			/* the graph refused the cycle (the node is being
++			 * reconfigured or stopped), so spa_alsa_write() will
++			 * not run */
++			alsa_irq_cycle_over(state, current_time, res);
++		else if (state->rt.cycle_pending)
++			/* The cycle is still running with the poll off: give it
++			 * a deadline of two periods. The buffer holds more than
++			 * that, and a regular cycle writes right after the
++			 * interrupt. The ready call itself can finish the cycle
++			 * (xrun recovery), which then needs no deadline. */
++			set_timeout(state, get_time_ns(state) +
++				2 * (uint64_t)state->threshold * SPA_NSEC_PER_SEC / state->rate);
++	}
++	return res;
+ }
+ 
+ static int capture_ready(struct state *state)
+@@ -3698,7 +3755,7 @@ static inline int alsa_do_wakeup_work(struct state *state, uint64_t current_time
+ 
+ 	/* and then trigger the graph */
+ 	if (state->stream == SND_PCM_STREAM_PLAYBACK)
+-		playback_ready(state);
++		playback_ready(state, current_time);
+ 	else
+ 		capture_ready(state);
+ 
+@@ -3787,13 +3844,37 @@ static void alsa_timer_wakeup_event(struct spa_source *source)
+ 	set_timeout(state, state->next_time);
+ }
+ 
++static void alsa_irq_deadline_event(struct spa_source *source)
++{
++	struct state *state = source->data;
++	uint64_t expire;
++	int res;
++
++	if (SPA_UNLIKELY((res = spa_system_timerfd_read(state->data_system,
++				state->timerfd, &expire)) < 0)) {
++		/* the deadline was disarmed after the event was queued */
++		if (res != -EAGAIN)
++			spa_log_warn(state->log, "%p: error reading timerfd: %s",
++					state, spa_strerror(res));
++		return;
++	}
++	if (SPA_UNLIKELY(!state->started || state->following || !state->disable_tsched ||
++	    !state->rt.cycle_pending))
++		return;
++
++	alsa_irq_cycle_over(state, get_time_ns(state), 0);
++}
++
+ static void remove_sources(struct state *state)
+ {
+ 	int i;
+ 	if (state->rt.sources_added) {
+ 		for (i = 0; i < state->n_fds; i++)
+ 			spa_loop_remove_source(state->data_loop, &state->source[i]);
++		if (state->disable_tsched)
++			spa_loop_remove_source(state->data_loop, &state->deadline_source);
+ 		state->rt.sources_added = false;
++		state->rt.cycle_pending = false;
+ 	}
+ }
+ 
+@@ -3801,8 +3882,14 @@ static void add_sources(struct state *state)
+ {
+ 	int i;
+ 	if (!state->rt.sources_added) {
+-		for (i = 0; i < state->n_fds; i++)
++		for (i = 0; i < state->n_fds; i++) {
++			/* playback_ready() leaves the mask at 0 while a cycle runs */
++			if (state->disable_tsched)
++				state->source[i].mask = state->pfds[i].events;
+ 			spa_loop_add_source(state->data_loop, &state->source[i]);
++		}
++		if (state->disable_tsched)
++			spa_loop_add_source(state->data_loop, &state->deadline_source);
+ 		state->rt.sources_added = true;
+ 	}
+ }
+@@ -3842,8 +3929,7 @@ static int do_state_sync(struct spa_loop *loop, bool async, uint32_t seq,
+ 			spa_list_remove(&rt->driver_link);
+ 			rt->driver = NULL;
+ 		}
+-		if (!state->disable_tsched)
+-			set_timeout(state, 0);
++		set_timeout(state, 0);
+ 		remove_sources(state);
+ 	}
+ 	return 0;
+@@ -3932,6 +4018,13 @@ int spa_alsa_start(struct state *state)
+ 			state->source[i].mask = state->pfds[i].events;
+ 			state->source[i].rmask = 0;
+ 		}
++
++		/* the deadline of a cycle, added and removed with the above */
++		state->deadline_source.func = alsa_irq_deadline_event;
++		state->deadline_source.data = state;
++		state->deadline_source.fd = state->timerfd;
++		state->deadline_source.mask = SPA_IO_IN;
++		state->deadline_source.rmask = 0;
+ 	}
+ 
+ 	spa_list_for_each(follower, &state->followers, driver_link)
+diff --git a/spa/plugins/alsa/alsa-pcm.h b/spa/plugins/alsa/alsa-pcm.h
+index c6b423401..af66fe3da 100644
+--- a/spa/plugins/alsa/alsa-pcm.h
++++ b/spa/plugins/alsa/alsa-pcm.h
+@@ -93,6 +93,7 @@ struct rt_state {
+ 
+ 	unsigned int sources_added:1;
+ 	unsigned int following:1;
++	unsigned int cycle_pending:1;
+ };
+ 
+ struct bound_ctl {
+@@ -199,6 +200,10 @@ struct state {
+ 
+ 	/* Either a single source for tsched, or a set of pollfds from ALSA */
+ 	struct spa_source source[MAX_POLL];
++	/* IRQ mode only: fires when a cycle started by a period interrupt
++	 * did not finish in time. Not part of source[]/pfds[]: those are
++	 * handed to ALSA. */
++	struct spa_source deadline_source;
+ 	int timerfd;
+ 	struct pollfd pfds[MAX_POLL];
+ 	int n_fds;

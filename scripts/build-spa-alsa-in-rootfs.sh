@@ -3,8 +3,9 @@
 # (glibc 2.39), like build-mangoapp-in-rootfs.sh.
 #
 # Our speakers run the ALSA sink IRQ-driven (api.alsa.disable-tsched). In
-# that mode one refused graph cycle left the sink silent for good (the Thor
-# sound dropout). The source is upstream PipeWire at the version in
+# that mode a graph cycle that never finished (or was refused) left the
+# sink silent for good (the Thor sound dropout); the patch gives every
+# cycle a deadline. The source is upstream PipeWire at the version in
 # external-and-mods/pipewire-alsa/REF, which must match the rootfs' PipeWire,
 # plus the patches next to it. Only the plugin is built; the rest of
 # PipeWire stays stock.

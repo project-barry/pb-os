@@ -372,25 +372,32 @@ audio_stall() {
 }
 
 # What surrounds a stall: the ALSA plugin PipeWire runs (PB-OS's patched one
-# logs "graph did not start a cycle"), its nodes and their clients, and the
-# journal in the 2 minutes before $2 (monotonic s).
+# logs "graph did not start a cycle" and "cycle did not finish in time"), its
+# nodes and their clients, and the journal in the 2 minutes before $2
+# (monotonic s).
 stall_context() {
   local pid=$1 at=$2 m l=""
   section "PipeWire's ALSA plugin (process $pid)"
   for m in /proc/$pid/map_files/*; do
     l="$(readlink "$m" 2>/dev/null)"
     [[ $l == */libspa-alsa.so* ]] || { l=""; continue; }
-    printf 'mapped %s: sha256 %s, "did not start a cycle" %s\n' "$l" "$(sha256sum < "$m" | cut -c1-64)" \
-      "$(grep -qa 'did not start a cycle' "$m" && echo 'present (patched)' || echo 'absent (stock)')"
+    printf 'mapped %s: sha256 %s, "did not start a cycle" %s, "cycle did not finish in time" %s\n' "$l" \
+      "$(sha256sum < "$m" | cut -c1-64)" \
+      "$(grep -qa 'did not start a cycle' "$m" && echo 'present (patched)' || echo 'absent (stock)')" \
+      "$(grep -qa 'cycle did not finish in time' "$m" && echo 'present (patched)' || echo 'absent (stock)')"
     break
   done
   [[ -n $l ]] || echo "(no libspa-alsa.so in its map_files)"
   printf 'on disk: sha256 %s\n' "$(sha256sum 2>/dev/null < /usr/lib/spa-0.2/alsa/libspa-alsa.so | cut -c1-64)"
-  local refused
+  local refused late
   refused="$(journalctl -b --no-pager -o short-monotonic _SYSTEMD_USER_UNIT=pipewire.service -g 'did not start a cycle' 2>/dev/null \
     | grep -v '^-- ')"
   printf '"did not start a cycle" warnings this boot: %s\n' "$(grep -c . <<< "$refused")"
   [[ -n $refused ]] && tail -n 5 <<< "$refused" | sed -E 's/^(\[[^]]*\]) [^ ]+ /\1 /'
+  late="$(journalctl -b --no-pager -o short-monotonic _SYSTEMD_USER_UNIT=pipewire.service -g 'cycle did not finish in time' 2>/dev/null \
+    | grep -v '^-- ')"
+  printf '"cycle did not finish in time" warnings this boot: %s\n' "$(grep -c . <<< "$late")"
+  [[ -n $late ]] && tail -n 5 <<< "$late" | sed -E 's/^(\[[^]]*\]) [^ ]+ /\1 /'
   section "PipeWire nodes and their clients (pw-dump)"
   as_user timeout 10 pw-dump 2>&1 | python3 -I -c '
 import json, sys

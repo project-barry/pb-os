@@ -46,10 +46,11 @@ The speakers run IRQ-driven (`api.alsa.disable-tsched`,
 `54-konkr-quantum.conf`): PipeWire 1.6.8's ALSA sink turns its poll off
 when it asks the graph for a cycle (`playback_ready()` in
 `spa/plugins/alsa/alsa-pcm.c`) and only turns it on again when it writes;
-a refused cycle leaves it off for good. PB-OS's patched plugin
-(`../pipewire-alsa`) now plays silence and polls again, and logs
-`graph did not start a cycle`; the stall check shows whether it is the one
-loaded and how often it warned.
+a cycle that is refused or never finishes leaves it off for good. PB-OS's
+patched plugin (`../pipewire-alsa`) gives every cycle a deadline, plays
+silence and polls again, and logs `graph did not start a cycle` (refused) or
+`cycle did not finish in time` (deadline); the stall check shows whether it
+is the one loaded and how often it warned of each.
 
 The stall check (`audio_stall` in `pbos-report`, root) reads every RUNNING
 playback PCM twice, 1 s apart, and the PipeWire process holding it
