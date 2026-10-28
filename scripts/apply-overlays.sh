@@ -1129,6 +1129,14 @@ MANGOAPP_BUILD="${MANGOAPP_BUILD:-${WORKDIR}/mangoapp-build}"
 "${SCRIPT_DIR}/build-mangoapp-in-rootfs.sh" "$R" "$MANGOAPP_BUILD"
 install_file "$MANGOAPP_BUILD/mangoapp" "$R/usr/bin/mangoapp" 0755
 
+# PipeWire's ALSA plugin with PB-OS's IRQ-mode fix (one refused graph cycle
+# silenced the speakers until PipeWire restarted). See
+# external-and-mods/pipewire-alsa.
+log "== PipeWire ALSA plugin (upstream + PB-OS patch)"
+SPA_ALSA_BUILD="${SPA_ALSA_BUILD:-${WORKDIR}/spa-alsa-build}"
+"${SCRIPT_DIR}/build-spa-alsa-in-rootfs.sh" "$R" "$SPA_ALSA_BUILD"
+install_file "$SPA_ALSA_BUILD/libspa-alsa.so" "$R/usr/lib/spa-0.2/alsa/libspa-alsa.so" 0755
+
 # ---------------------------------------------------------------------------
 # Boot splash: Plymouth (built in the rootfs) with the PB-OS theme (script
 # engine, drawn by external-and-mods/plymouth/theme-src/make-theme.py). It shows

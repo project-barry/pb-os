@@ -1,0 +1,59 @@
+Subject: [PATCH] spa: alsa: IRQ mode: keep waking when the graph refuses a cycle
+
+With api.alsa.disable-tsched, playback_ready() turns the poll sources off
+and only spa_alsa_write() turns them on again, once the graph delivered a
+buffer. When the ready callback refuses the cycle (-EIO from the adapter's
+"ready stopped node" or the node's "ready non-active node", both logged at
+info level), no write follows and nothing else wakes the PCM: the sink stays
+silent until the node is reopened. Timer mode re-arms its timer every
+wakeup and does not have this problem.
+
+Play one quantum of silence and turn the sources on again, so the next
+period interrupt retries like a regular cycle.
+
+---
+--- a/spa/plugins/alsa/alsa-pcm.c
++++ b/spa/plugins/alsa/alsa-pcm.c
+@@ -3613,9 +3613,10 @@
+ }
+ 
+ 
+-static int playback_ready(struct state *state)
++static int playback_ready(struct state *state, uint64_t current_time)
+ {
+ 	struct spa_io_buffers *io = state->io;
++	int res, suppressed;
+ 
+ 	spa_log_trace_fp(state->log, "%p: %d", state, io ? io->status : 0);
+ 
+@@ -3624,7 +3625,20 @@
+ 	if (io != NULL)
+ 		io->status = SPA_STATUS_NEED_DATA;
+ 
+-	return spa_node_call_ready(&state->callbacks, SPA_STATUS_NEED_DATA);
++	res = spa_node_call_ready(&state->callbacks, SPA_STATUS_NEED_DATA);
++	if (SPA_UNLIKELY(res < 0 && state->disable_tsched && !state->following)) {
++		/* The graph refused the cycle (the node is being reconfigured or
++		 * stopped), so spa_alsa_write() will not run and enable the
++		 * sources again. Nothing else wakes an IRQ-driven PCM, so play
++		 * one quantum of silence and wait for the next period. */
++		if ((suppressed = spa_ratelimit_test(&state->rate_limit, current_time)) >= 0)
++			spa_log_warn(state->log, "%s: graph did not start a cycle: %s, "
++					"playing silence (%d suppressed)", state->name,
++					spa_strerror(res), suppressed);
++		spa_alsa_silence(state, state->threshold);
++		update_sources(state, true);
++	}
++	return res;
+ }
+ 
+ static int capture_ready(struct state *state)
+@@ -3698,7 +3712,7 @@
+ 
+ 	/* and then trigger the graph */
+ 	if (state->stream == SND_PCM_STREAM_PLAYBACK)
+-		playback_ready(state);
++		playback_ready(state, current_time);
+ 	else
+ 		capture_ready(state);
+ 
