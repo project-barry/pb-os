@@ -1,5 +1,7 @@
 #include "pageswipe.h"
 
+#include "panzoomarea.h"
+
 #include <QMouseEvent>
 #include <QPointerEvent>
 #include <QTouchEvent>
@@ -158,17 +160,9 @@ bool PageSwipe::noTapNow(const QEventPoint &point) const
 
 void PageSwipe::letGo(QPointerEvent *event, const QEventPoint &point)
 {
-    // A passive grab cannot be cancelled as such: each tap handler watching
-    // the touch is made its grabber, and this takes the touch from it, which
-    // cancels it (no tap as it lifts).
-    const auto watchers = event->passiveGrabbers(point);
-    for (const QPointer<QObject> &watcher : watchers) {
-        if (!watcher || !watcher->inherits("QQuickTapHandler"))
-            continue;
-        event->setExclusiveGrabber(point, watcher);
-        event->setExclusiveGrabber(point, this);
-        event->removePassiveGrabber(point, watcher);
-    }
+    // Its tap handlers tap nothing: one rule with Barry's scroll and pan
+    // surfaces (panzoomarea.h).
+    barry::takeFromTaps(event, point, this);
 }
 
 bool PageSwipe::atWork(QObject *grabber) const
@@ -178,6 +172,10 @@ bool PageSwipe::atWork(QObject *grabber) const
     // nothing, though it takes the touch.
     if (!grabber || grabber == this)
         return false;
+    // A list or view on Barry's touch rules (TouchScroll, PanZoomArea) holds
+    // a touch from its press, but is at work only once it drags.
+    if (auto *surface = qobject_cast<GestureSurface *>(grabber))
+        return surface->dragging();
     if (grabber->inherits("QQuickFlickable")) {
         auto *item = static_cast<QQuickItem *>(grabber);
         return grabber->property("contentHeight").toReal() > item->height() + 0.5

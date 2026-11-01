@@ -30,7 +30,10 @@ qt_add_qml_module(barryinput
     uinputdevice.cpp uinputdevice.h
     virtualmouse.cpp virtualmouse.h
     virtualkeyboard.cpp virtualkeyboard.h
+    touchrules.h
     gesture.cpp gesture.h
+    panzoom.cpp panzoom.h
+    panzoomarea.cpp panzoomarea.h
     touchtrackpad.cpp touchtrackpad.h
     trackpadarea.cpp trackpadarea.h
     xtesttyper.cpp xtesttyper.h
@@ -66,6 +69,20 @@ if(BARRY_INPUT_GLIDE_TEST)
     keyboardlanguages.cpp keyboardlanguages.h)
   target_compile_options(glide-engine-test PRIVATE -Wall -Wextra -Werror)
   target_link_libraries(glide-engine-test PRIVATE Qt6::Core Qt6::Qml barryglide)
+endif()
+
+# The touch rules' tests (tests/gestures): PanZoomGesture alone (no Qt), and
+# TouchScroll / PanZoomArea under Qt's touch events, offscreen.
+option(BARRY_INPUT_GESTURE_TEST "Build tests/gestures' pan-zoom-test and touch-surfaces-test" OFF)
+if(BARRY_INPUT_GESTURE_TEST)
+  add_executable(pan-zoom-test tests/gestures/pan_zoom_test.cpp panzoom.cpp panzoom.h touchrules.h)
+  target_compile_options(pan-zoom-test PRIVATE -Wall -Wextra -Werror)
+  find_package(Qt6 REQUIRED COMPONENTS Test)
+  qt_add_executable(touch-surfaces-test
+    tests/gestures/touch_surfaces_test.cpp
+    panzoom.cpp panzoom.h panzoomarea.cpp panzoomarea.h pageswipe.cpp pageswipe.h touchrules.h)
+  target_compile_options(touch-surfaces-test PRIVATE -Wall -Wextra -Werror)
+  target_link_libraries(touch-surfaces-test PRIVATE Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::Test)
 endif()
 
 # KeyboardController's test (tests/keyboard_controller): offscreen, a stub

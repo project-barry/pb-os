@@ -1,5 +1,6 @@
 #include "gesture.h"
 
+#include "touchrules.h"
 #include "virtualmouse.h"
 
 #include <linux/input-event-codes.h>
@@ -10,14 +11,16 @@
 namespace barry {
 namespace {
 
-constexpr double TAP_SLOP = 14;   // design pixels a tap may wander
-constexpr double TAP_S = 0.22;    // a tap's click waits this long for a touch that drags
-constexpr double TAP_MAX_S = 0.3;
+// The Launcher's touch rules (touchrules.h): how far a tap may wander, how
+// long its click waits for a touch that drags, how long it may be down.
+constexpr double TAP_SLOP = touch::SLOP;
+constexpr double TAP_S = touch::TAP_S;
+constexpr double TAP_MAX_S = touch::TAP_MAX_S;
 // Two fingers never land at once: the pointer waits this long at the start
 // of a touch, so a second finger makes a clean scroll, not a jump and then
 // a scroll.
 constexpr double SETTLE_S = 0.07;
-constexpr double SCROLL_PX = 70;  // design pixels per notch
+constexpr double SCROLL_PX = touch::WHEEL_PX;  // design pixels per notch
 
 }  // namespace
 
