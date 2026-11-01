@@ -1,9 +1,11 @@
 #include "pageswipe.h"
 
 #include "panzoomarea.h"
+#include "touchrules.h"
 
 #include <QMouseEvent>
 #include <QPointerEvent>
+#include <QQuickWindow>
 #include <QTouchEvent>
 #include <QtMath>
 
@@ -17,6 +19,12 @@ constexpr qreal kFling = 0.6;
 // After a swipe, touches this soon are no taps: the page is still moving
 // (it settles in 380-460 ms), and a thumb meeting it was not aimed.
 constexpr qint64 kSettleQuietMs = 350;
+// A thrown page settles at the finger's pace, as Android's pager: the time
+// is this many times the rest of the way over the speed it was let go at
+// (the ease starts about that much faster than its average), never quicker
+// than kShortestSettleMs.
+constexpr qreal kThrowPace = 4.0;
+constexpr qreal kShortestSettleMs = 150;
 }  // namespace
 
 PageSwipe::PageSwipe(QQuickItem *parent) : QQuickItem(parent)
@@ -56,11 +64,25 @@ int PageSwipe::clampPage(int page) const
     return qBound(m_minPage, page, qMax(m_minPage, m_maxPage));
 }
 
+qreal PageSwipe::threshold() const
+{
+    if (m_threshold >= 0)
+        return m_threshold;
+    // Barry's touch slop, in the Launcher's layout (1240 x 1080 at 1).
+    const QQuickWindow *w = window();
+    const qreal scale = w && w->width() > 0 && w->height() > 0 ? qMin(w->width() / 1240.0, w->height() / 1080.0) : 1;
+    return barry::touch::SLOP * scale;
+}
+
 void PageSwipe::settleTo(int target)
 {
     target = clampPage(target);
     setPage(target);
-    emit settle(target, m_velocity);
+    // Thrown toward the page: its own pace (0, the page's usual one, when not).
+    const qreal rest = target - m_progress;
+    const bool thrown = qAbs(m_velocity) > kFling && rest * m_velocity > 0;
+    const qreal ms = thrown ? qMax(kShortestSettleMs, kThrowPace * qAbs(rest) / qAbs(m_velocity) * 1000.0) : 0;
+    emit settle(target, m_velocity, ms);
 }
 
 void PageSwipe::goTo(int page)
@@ -113,7 +135,7 @@ bool PageSwipe::take(QPointerEvent *event, const QEventPoint &point, Touch &touc
     track(touch, pos);
     const qreal dx = pos.x() - touch.start.x();
     const qreal dy = pos.y() - touch.start.y();
-    if (qAbs(dx) < m_threshold || qAbs(dx) < kSideways * qAbs(dy))
+    if (qAbs(dx) < threshold() || qAbs(dx) < kSideways * qAbs(dy))
         return false;
     // Only a direction with a page to go to; and something that keeps its
     // touch (a slider) keeps it. Either way this touch is not a swipe,
@@ -135,8 +157,9 @@ bool PageSwipe::take(QPointerEvent *event, const QEventPoint &point, Touch &touc
     m_pointId = point.id();
     m_strays.remove(m_pointId);
     m_swipe = touch;
-    // Measure from here, so the page does not jump by the threshold.
-    m_swipe.start = pos;
+    // Measured from where the finger came down, so the page sits under it
+    // (it catches up the slop in one step, under a millimeter; measured from
+    // here it trailed the finger by the slop the whole way, 2026-11-01).
     m_swipe.startProgress = m_progress;
     // The other fingers down now (a resting thumb) tap nothing.
     for (auto it = m_touches.cbegin(); it != m_touches.cend(); ++it)
@@ -190,7 +213,7 @@ void PageSwipe::stray(QPointerEvent *event, const QEventPoint &point)
     if (m_strays.contains(id))
         return;
     const QPointF d = point.scenePosition() - point.scenePressPosition();
-    if (qMax(qAbs(d.x()), qAbs(d.y())) < m_threshold)
+    if (qMax(qAbs(d.x()), qAbs(d.y())) < threshold())
         return;
     if (atWork(event->exclusiveGrabber(point)))
         return;

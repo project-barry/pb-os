@@ -260,17 +260,18 @@ Window {
             // are Game Mode's: their controls do nothing under KWin).
             minPage: win.desktop ? 0 : -1
             maxPage: win.desktop ? 0 : 1
-            threshold: 24 * win.s
             // Not while the quick settings are being arranged (widgets drag).
             swipeEnabled: win.barryShown && !win.following && !(quick.item && quick.item.editing)
             onDragStarted: settleAnim.stop()
-            onSettle: function (target, velocity) {
+            onSettle: function (target, velocity, duration) {
                 settleAnim.stop()
                 // As the keyboard: toward a side page, a quick move with a
                 // visible overshoot; back to the apps, a softer settle.
                 const opening = target !== 0
                 settleAnim.to = target
-                settleAnim.duration = opening ? 460 : 380
+                // A thrown page goes at the finger's pace (faster thrown, sooner there).
+                const usual = opening ? 460 : 380
+                settleAnim.duration = duration > 0 ? Math.min(usual, duration) : usual
                 // A side panel going back to its app: no spring past the
                 // middle (the other side page would peek in over the app).
                 settleAnim.easing.overshoot = win.sidePanel && !opening ? 0 : opening ? 1.4 : 0.8
