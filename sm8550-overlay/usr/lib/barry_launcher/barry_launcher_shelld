@@ -35,6 +35,13 @@ keyboard (shell/Keyboard.qml), which call it on 127.0.0.1:PORT:
   POST /apps/install {"path": archive}: install or update a user app
                   (barry_apps), {"ok": bool, "app": manifest | "error": str}
   POST /apps/remove  {"app": id}: remove a user app and its data
+  GET  /updates   {"serial": n, "phase": "idle" | "offer" | "updating" |
+                  "done", "apps": [{"id", "name", "installed", "version",
+                  "status", "error"}]}: new versions of Project Barry's
+                  apps, offered once after each PB-OS update (barry_updates;
+                  shell/AppUpdates.qml shows it)
+  POST /updates   {"do": "update" | "later" | "close"}: the offer's
+                  answer (Update, Not now), or the results seen
   GET  /game-links   {"links": [{"game", "gameName", "app", "appName", "close"}]}
   POST /game-links   {"links": [...]}: the apps that open with games
   POST /game-event   {"game": appid, "running": bool}: a game started or
@@ -66,7 +73,7 @@ The same state comes as events too, for the shell and the keyboard
 (Barry.Input) instead of asking over and over: a Unix socket
 (EVENTS_SOCKET, external-and-mods/barry-launcher-input/SHELLD-EVENTS.md)
 sends each client every topic's GET answer as it connects (home, keyboard,
-top-keyboard, keyd, apps, tools), then a line for a topic each time its
+top-keyboard, keyd, apps, tools, updates), then a line for a topic each time its
 answer changes, one JSON object a line ({"topic": t, "data": answer}). A
 client may send {"keyboard_height": n}, as GET /keyboard?h=n; a tool's
 window {"tool": true} (it slides away when asked) and {"tool_left": true}
@@ -140,7 +147,10 @@ ones; each runs in shell/AppHost.qml, with its service if it has one
 (started first, stopped when the app ends), their output in
 ~/.cache/barry_launcher/ID.log. They are picked up as they are installed.
 Those that come with Barry Launcher (Dino) are installed at its start
-unless the user removed them.
+unless the user removed them. The first start after a PB-OS update looks
+for new versions of the apps Project Barry makes elsewhere (barry_updates)
+that the user has, and offers them (the updates topic); they download and
+install (install_app) only on the user's tap.
 """
 from __future__ import annotations
 
@@ -168,6 +178,7 @@ from gi.repository import Atspi, Gio, GLib  # noqa: E402
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import barry_apps  # noqa: E402
+import barry_updates  # noqa: E402
 # barry_glide is imported on the first /glide, /suggest or /type that needs
 # a dictionary (dictionary()): Barry.Input does its own (barryglide).
 
@@ -443,7 +454,7 @@ KEYS = {"BackSpace", "Return", "Tab", "Left", "Right", "Up", "Down", "Escape", "
 # The event stream (SHELLD-EVENTS.md): its topics, in a snapshot's order.
 EVENTS_SOCKET = os.path.join(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}"),
                              "barry_launcher", "shelld.sock")
-TOPICS = ("home", "keyboard", "top-keyboard", "keyd", "apps", "tools")
+TOPICS = ("home", "keyboard", "top-keyboard", "keyd", "apps", "tools", "updates")
 EVENT_LINE_MAX = 4096  # a client's line, at most
 EVENT_BACKLOG_MAX = 1 << 20  # unsent bytes a client may fall behind by before it is dropped
 # gamescope rewrites this root property as windows come and go: the
@@ -473,6 +484,9 @@ PSI_TRIGGER = os.environ.get("BARRY_PSI_TRIGGER", "some 300000 2000000")
 # AUDIO_RETRY_S.
 AUDIO_SETTLE_MS = 150
 AUDIO_RETRY_S = 5
+# App updates (check_updates): checks again when the network comes up,
+# at most this many times a run.
+UPDATE_RETRIES = 3
 
 
 def log(msg: str) -> None:
@@ -1331,6 +1345,56 @@ def install_app(body: dict) -> tuple[int, dict]:
     return 200, {"ok": True, "app": m}
 
 
+def install_update(path: str) -> tuple[bool, str]:
+    """An app update barry_updates downloaded and checked: installed as
+    every app is (install_app)."""
+    code, r = install_app({"path": path})
+    return code == 200, r.get("error", "")
+
+
+# New versions of Project Barry's apps (barry_updates): checked at the
+# first start after a PB-OS update; offered on the updates topic.
+UPDATES = barry_updates.Updater(barry_updates.GitHub(), install_update, lambda: publish("updates"), log=log)
+
+
+def check_updates() -> None:
+    """Look for app updates if this PB-OS version has not had its look yet
+    (in a thread of its own: GitHub may be slow). Should GitHub not
+    answer (offline at start: Barry Launcher starts before Wi-Fi is up),
+    again once the network comes up (Gio's network monitor tells; no
+    polling), at most UPDATE_RETRIES times a run, and at the next start."""
+    if not UPDATES.due():
+        return
+    monitor = Gio.NetworkMonitor.get_default()
+    tries = [0]
+    handler = [0]
+    busy = [False]  # these on the main loop only
+
+    def run() -> None:
+        done = UPDATES.run_check()
+        GLib.idle_add(ran, done)
+
+    def ran(done: bool) -> bool:
+        busy[0] = False
+        if (done or tries[0] > UPDATE_RETRIES) and handler[0]:
+            monitor.disconnect(handler[0])
+            handler[0] = 0
+        return False
+
+    def start() -> None:
+        if busy[0]:
+            return
+        busy[0] = True
+        tries[0] += 1
+        threading.Thread(target=run, daemon=True).start()
+
+    def network_changed(_monitor, available: bool) -> None:
+        if available and handler[0]:
+            start()
+    handler[0] = monitor.connect("network-changed", network_changed)
+    start()
+
+
 def stop(app: str, wait_s: float = 3.0) -> None:
     """Close an app and wait until it has ended: one that saves as it
     quits could otherwise write into a folder just removed."""
@@ -1854,6 +1918,8 @@ class Handler(BaseHTTPRequestHandler):
             self._json(*install_app(body))
         elif path == "/apps/remove":
             self._json(*remove_app(body))
+        elif path == "/updates":
+            self._json(*UPDATES.answer(body))
         elif path == "/game-links":
             self._json(*set_game_links(body))
         elif path == "/game-event":
@@ -2582,8 +2648,13 @@ def tools_state() -> dict:
         return {"serial": STATE.tools_serial, "leaving": dict(STATE.leaving)}
 
 
+def updates_state() -> dict:
+    """GET /updates' answer."""
+    return UPDATES.payload()
+
+
 TOPIC_STATE = {"home": home_state, "keyboard": keyboard_state, "top-keyboard": top_keyboard_state,
-               "keyd": keyd_state, "apps": apps_state, "tools": tools_state}
+               "keyd": keyd_state, "apps": apps_state, "tools": tools_state, "updates": updates_state}
 
 
 class Events:
@@ -2843,6 +2914,7 @@ def main() -> None:
     monitors = watch_config()
     refresh_user_apps()
     publish("apps")  # Dino's place moved
+    check_updates()  # after the bundled apps: those are never offered
     Atspi.init()  # page_shown reads Firefox's page; text focus is barry_launcher_keyd's
     threading.Thread(target=watch_touches, daemon=True).start()
     if DESKTOP:

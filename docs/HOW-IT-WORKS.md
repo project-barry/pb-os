@@ -173,6 +173,56 @@ its shorter typical half-travel, and `sm8550-fixpad` leaves that range alone.
 Retroid's Android use (10,4 instead of the driver's 40,7; kernel patch 0548):
 the MCU then reports a stick once it has moved 11 counts instead of 41.
 
+### Barry Launcher: updates for Project Barry's apps (AYN Thor)
+
+Barry Launcher apps Project Barry makes outside the image (ONI Companion,
+Pip-Boy, Stardew Dual Screen, Dice, WhatsApp) get new versions on GitHub
+between PB-OS releases. The image carries a list of them,
+`/usr/share/barry_launcher/app-updates.json` (each app's id, its repository,
+a regex for its release file, and where its `barry-app.json` is in the
+repository). Apps the image brings itself (Dino) are not on it, since the
+next image updates them.
+
+- **When:** the first Barry Launcher start after the PB-OS version changes
+  (`/usr/share/pb-os/version`, set by a new image or an in-place update).
+  `~/.local/share/barry_launcher/app-updates.json` keeps the version whose
+  check is done. That is when the user has answered the offer, or when a
+  check got through with nothing new. If GitHub can't be reached (offline,
+  or Wi-Fi not up yet at boot), the check runs again when the network comes
+  up (GIO's network monitor, up to 3 times) and at the next start. There
+  are no timers and no polling.
+- **Check:** only the listed apps the user has installed. For each one,
+  `barry_launcher_shelld` asks GitHub's API (https, no token) for its
+  repository's releases. It takes the newest one that isn't a draft or
+  pre-release, whose tag matches, and that has the app's file. The version
+  compared with the installed one is the app's own `barry-app.json` at that
+  release's tag, not the tag itself: one repository can hold several apps
+  (barry-launcher-apps v1.2.0 has Dice 1.0.0). A repository with no release
+  yet (ONI Companion, for now) offers nothing.
+- **Offer:** a card over Barry's pages, in the current theme (themes may
+  replace `AppUpdates.qml`). It lists the apps and their versions, with
+  **Update** and **Not now**. Nothing downloads until the user taps
+  Update. Not now waits until the next PB-OS version.
+- **Update:** each file is downloaded to a temporary folder, from GitHub's
+  hosts only and at most 100 MB. Its size has to match the release's, and
+  its SHA-256 has to match GitHub's digest. It has to be a zip of the same
+  app id, at a newer version. Then it installs the way every Barry app
+  installs (`barry_apps.install`), which keeps the app's data and closes a
+  running old copy. The card shows how each app went. An app that fails
+  keeps its old version.
+
+Code: `barry_updates.py` (catalog, check, download checks, the offer's
+state), wired into `barry_launcher_shelld` (the `updates` event topic,
+`GET`/`POST /updates`), shown by `shell/AppUpdates.qml`. Tests:
+`external-and-mods/barry-launcher-input/tests/app_updates/`.
+
+**`minApi`:** an app's `barry-app.json` can say which Barry Launcher API
+level it needs (`"minApi": 2`; level 2 is Barry.Input's TouchScroll and
+PanZoomArea, and 1, the default, is everything before them). If Barry
+Launcher is older than that, it refuses to install the app and says PB-OS
+needs an update first. The update check doesn't offer such a release.
+Barry Launchers from before this field ignore it.
+
 ### Desktop Mode: no "requested access to input devices" prompt
 
 Steam moves the pointer through X11 XTest. The Frame base ships KWin 6.2.5,

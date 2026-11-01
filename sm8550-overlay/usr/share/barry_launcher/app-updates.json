@@ -1,0 +1,44 @@
+{
+ "format": 1,
+ "apps": [
+  {
+   "id": "io.github.project-barry.oni-companion",
+   "name": "ONI Companion",
+   "repo": "project-barry/oni-companion",
+   "asset": "^oni-companion-[0-9.]+\\.zip$",
+   "manifest": "clients/barry/barry-app.json"
+  },
+  {
+   "id": "io.github.project-barry.pipboy",
+   "name": "Pip-Boy",
+   "repo": "project-barry/PyPipboyApp",
+   "asset": "^pipboy-[0-9][0-9A-Za-z.+-]*\\.zip$",
+   "manifest": "barry/barry-app.json",
+   "tags": "^v[0-9]"
+  },
+  {
+   "id": "io.github.project-barry.stardew",
+   "name": "Stardew Dual Screen",
+   "repo": "project-barry/stardew-dual-screen",
+   "asset": "^stardew-[0-9][0-9A-Za-z.+-]*\\.zip$",
+   "manifest": "app/barry-app.json",
+   "tags": "^v[0-9]"
+  },
+  {
+   "id": "io.github.project-barry.dice",
+   "name": "Dice",
+   "repo": "project-barry/barry-launcher-apps",
+   "asset": "^dice\\.zip$",
+   "manifest": "apps/dice/barry-app.json",
+   "tags": "^v[0-9]"
+  },
+  {
+   "id": "io.github.project-barry.whatsapp",
+   "name": "WhatsApp",
+   "repo": "project-barry/barry-launcher-apps",
+   "asset": "^whatsapp\\.zip$",
+   "manifest": "apps/whatsapp/barry-app.json",
+   "tags": "^v[0-9]"
+  }
+ ]
+}

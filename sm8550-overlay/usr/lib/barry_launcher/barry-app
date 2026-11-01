@@ -22,7 +22,9 @@ check, pack and install warn (and go on) when the app's QML scrolls, pans or
 zooms by itself: a PinchHandler or PinchArea, or a Flickable, ListView or
 GridView outside Barry.Input's TouchScroll that the user can drag. Barry
 apps scroll with TouchScroll and pan and zoom with PanZoomArea, so touch
-feels the same as in Barry Launcher (barry_apps.touch_warnings).
+feels the same as in Barry Launcher (barry_apps.touch_warnings). An app that
+uses them says "minApi": 2 in its barry-app.json: older Barry Launchers then
+refuse it with a clear message (barry_apps.API).
 """
 from __future__ import annotations
 

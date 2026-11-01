@@ -4,7 +4,7 @@ Socket: AF_UNIX stream at $XDG_RUNTIME_DIR/barry_launcher/shelld.sock (dir 0700,
 
 Server -> client: newline-delimited JSON, UTF-8, one object per line:
   {"topic": "<topic>", "data": <payload>}
-On connect: one line per topic with the current payload (full snapshot), in this order: home, keyboard, top-keyboard, keyd, apps, tools.
+On connect: one line per topic with the current payload (full snapshot), in this order: home, keyboard, top-keyboard, keyd, apps, tools, updates.
 After that: a line for a topic ONLY when its serialized payload differs from the last one sent on that connection (dedupe per topic).
 
 Topics and payloads (payload = byte-for-byte the same JSON object the existing HTTP GET returns, so QML parsing code can be shared):
@@ -23,6 +23,12 @@ Topics and payloads (payload = byte-for-byte the same JSON object the existing H
                  (~240 ms), sends {"tool_left": true} and stays up until shelld ends it (SIGTERM) as
                  Barry's window comes forward. shelld waits for every pid listed (tool_left, or its exit)
                  at most 400 ms, then ends them as before. Cleared to {} once done.
+  updates      = GET /updates  (added after tools; clients ignore topics they do not know)
+                 {"serial": <int>, "phase": "idle"|"offer"|"updating"|"done",
+                  "apps": [{"id", "name", "installed", "version", "status": ""|"updating"|"updated"|"failed", "error"}]}
+                 New versions of Project Barry's apps the user has (barry_updates), offered once after each PB-OS
+                 update; serial counts the offers. The shell (AppUpdates.qml) answers with POST /updates
+                 {"do": "update"|"later"|"close"}.
 
 Client -> server: newline-delimited JSON objects, optional:
   {"keyboard_height": <int>}   same effect as GET /keyboard?h=<int> (apply_inset when it changes)

@@ -14,6 +14,7 @@ such a folder: the archive may hold it directly or inside one folder):
     "description": "...", "author": "...", "homepage": "..."   optional
     "service": "service.py"          optional: see below
     "keepAwake": true                optional: see below
+    "minApi": 2                      optional: see below
   }
 
 A QML app may come with a service: a Python 3 script (standard library
@@ -51,6 +52,15 @@ like the Launcher and every touch fix in Barry Launcher reaches it
 (Barry.Input's GESTURES.md). check and install warn about QML that still
 scrolls or pinches by itself (touch_warnings); it installs all the same.
 
+"minApi": the Barry Launcher API level the app needs (API below; 1 when
+left out). Level 2 is Barry.Input's TouchScroll and PanZoomArea: an app
+that imports them says "minApi": 2, and a Barry Launcher older than that
+refuses to install it, saying PB-OS needs an update first, instead of
+installing an app whose window cannot load. (Barry Launchers from before
+the field ignore it: there the app installs and its window fails to load,
+as before.) The level goes up by one each time Barry Launcher gives apps
+something new they may need.
+
 Barry Launcher runs main.qml in a full-screen window of its own
 (shell/AppHost.qml), the way it runs its own QML apps, with its config
 and data XDG folders pointed into its data folder (app_env): whatever it or
@@ -61,7 +71,9 @@ deletes the app, its data, its log and its place on the home screen.
 
 Apps that come with Barry Launcher (BUNDLED, folders) are installed at
 its start unless the user removed them (REMOVED lists those), and
-updated when Barry Launcher brings a newer version.
+updated when Barry Launcher brings a newer version. The apps Project Barry
+makes elsewhere (Pip-Boy, ...) are offered as they get new versions
+(barry_updates): once after each PB-OS update, and only on the user's tap.
 
 barry_launcher_shelld lists and starts the installed apps; the barry-app
 command and the Barry Launcher Decky plugin install and remove them.
@@ -92,6 +104,9 @@ LOGS = os.path.join(os.environ.get("XDG_CACHE_HOME", f"{HOME}/.cache"), "barry_l
 BUNDLED = "/usr/share/barry_launcher/apps"
 MANIFEST = "barry-app.json"
 FORMAT = 1
+# The Barry Launcher API level this one has (an app's "minApi", above):
+# 1 the first apps, 2 Barry.Input's TouchScroll and PanZoomArea.
+API = 2
 # A dot keeps every user app's id apart from Barry Launcher's own apps.
 ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*(\.[a-z0-9][a-z0-9_-]*)+$")
 ID_MAX = 64
@@ -188,8 +203,15 @@ def read_manifest(root: str) -> dict:
     keep_awake = m.get("keepAwake", False)
     if not isinstance(keep_awake, bool):
         raise AppError(f'{MANIFEST}: "keepAwake" must be true or false')
+    min_api = m.get("minApi", 1)
+    if isinstance(min_api, bool) or not isinstance(min_api, int) or min_api < 1:
+        raise AppError(f'{MANIFEST}: "minApi" must be a whole number, 1 or more')
+    if min_api > API:
+        raise AppError(f"{name} {version} needs a newer Barry Launcher (API level {min_api}; this one has "
+                       f"{API}): update PB-OS first")
     out = {"format": FORMAT, "id": app_id, "name": name, "version": version, "type": kind,
-           "main": main, "web": web, "service": service, "icon": icon, "keepAwake": keep_awake}
+           "main": main, "web": web, "service": service, "icon": icon, "keepAwake": keep_awake,
+           "minApi": min_api}
     for key in ("description", "author", "homepage"):
         v = m.get(key)
         if isinstance(v, str) and v.strip():
