@@ -137,7 +137,30 @@ TouchScroll's child, with property aliases for what callers set on it.
 | Quick settings' edit bar, the hidden widgets row (`shell/QuickSettings.qml`) | TouchScroll |
 | Page swipe (`Shell.qml`, PageSwipe) | its own (pages, not a view); shares the tap-cancel rule and knows a TouchScroll at work |
 | Quick settings' widget move while editing (DragHandler) | unchanged: a drag-and-drop, not a pan or scroll |
-| Keyboards (GridPanel's MultiPointTouchArea), trackpads | their own controllers in this module |
+| Quick settings' sliders and color picker (MouseArea) | unchanged: a value under the finger, not a pan or scroll |
+| Keyboards (GridPanel's MultiPointTouchArea, KeyPanel's glide), trackpads | their own controllers in this module |
+| Dino (`apps/dino`) | taps only (MouseArea); nothing scrolls |
+
+## In Barry apps
+
+The same items, for every app (`import Barry.Input`; the module is on every
+device): a list scrolls in a TouchScroll, a map or a picture pans and zooms
+in a PanZoomArea. An app has no Flickable drag, PinchHandler, DragHandler
+for scrolling or fling math of its own; a touch that feels wrong in an app is
+fixed here, for all of them.
+
+`barry-app check`, `pack` and `install` (and shelld's install, in its log)
+warn, and install all the same, when an app's QML scrolls or pinches by
+itself (`barry_apps.touch_warnings`): a `PinchHandler` or `PinchArea`, or a
+`Flickable`, `ListView` or `GridView` that is not inside a `TouchScroll`, is
+not the one a TouchScroll names (`flickable:`) and does not set
+`interactive: false`. A plain look at each `.qml` file's text (comments and
+strings left out); DragHandler, MouseArea and MultiPointTouchArea are not
+looked at (mostly taps, sliders and drag and drop).
+
+| App | Now |
+|---|---|
+| ONI Companion (its five Flickables; ScreenView's is a file's root) | TouchScroll |
 
 ## Tuning
 

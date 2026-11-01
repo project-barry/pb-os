@@ -19,6 +19,10 @@
 //                               JSON; done(status, reply) gets the reply's
 //                               JSON (null if none), status 0 if no answer
 //
+// Touch is Barry Launcher's: an app scrolls with Barry.Input's TouchScroll
+// and pans and zooms with its PanZoomArea (`import Barry.Input`), never with
+// touch handling of its own (Barry.Input's GESTURES.md).
+//
 // A main.qml that fails to load shows why, here, instead of a black screen.
 import QtQuick
 import QtQuick.Window

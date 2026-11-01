@@ -17,6 +17,12 @@
 Installs go through barry_launcher_shelld when it runs, so the home screen
 shows the app at once (and a running old version closes); otherwise
 straight to ~/.local/share/barry_launcher/apps, for the next start.
+
+check, pack and install warn (and go on) when the app's QML scrolls, pans or
+zooms by itself: a PinchHandler or PinchArea, or a Flickable, ListView or
+GridView outside Barry.Input's TouchScroll that the user can drag. Barry
+apps scroll with TouchScroll and pan and zoom with PanZoomArea, so touch
+feels the same as in Barry Launcher (barry_apps.touch_warnings).
 """
 from __future__ import annotations
 
@@ -59,6 +65,12 @@ def shelld(path: str, body: dict) -> dict | None:
         return None
 
 
+def warn_touch(m: dict) -> None:
+    """The app's touch warnings (barry_apps.touch_warnings), if any."""
+    for w in m.get("touchWarnings") or []:
+        print(f"barry-app: warning: {w}", file=sys.stderr)
+
+
 def describe(m: dict) -> str:
     service = ", with a Python service" if m.get("service") else ""
     return f'{m["name"]} {m["version"]} ({m["id"]}{service})'
@@ -73,6 +85,7 @@ def cmd_install(a) -> int:
         except barry_apps.AppError as err:
             print(f"barry-app: {err}", file=sys.stderr)
             return 1
+        warn_touch(m)
         print(f"{'Updated' if m['updated'] else 'Installed'} {describe(m)}; "
               "Barry Launcher shows it when it next starts.")
         return 0
@@ -80,6 +93,7 @@ def cmd_install(a) -> int:
         print(f"barry-app: {reply.get('error')}", file=sys.stderr)
         return 1
     m = reply["app"]
+    warn_touch(m)
     print(f"{'Updated' if m['updated'] else 'Installed'} {describe(m)}: it is on the home screen.")
     return 0
 
@@ -114,6 +128,7 @@ def cmd_check(a) -> int:
     if m["id"] in BUILTIN:
         print(f"barry-app: \"{m['id']}\" is one of Barry Launcher's own apps", file=sys.stderr)
         return 1
+    warn_touch(m)
     print(f"OK: {describe(m)}")
     return 0
 
@@ -140,7 +155,7 @@ def cmd_pack(a) -> int:
                     return 1
                 zf.write(full, os.path.join(top, os.path.relpath(full, folder)))
     try:
-        barry_apps.check(out)
+        warn_touch(barry_apps.check(out))
     except barry_apps.AppError as err:
         print(f"barry-app: the packed app does not install: {err}", file=sys.stderr)
         return 1

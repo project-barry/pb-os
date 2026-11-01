@@ -44,6 +44,13 @@ keeps it running in the background all the time (a chat app that must
 hear new messages, an app talking to a game): a cost in battery, so only
 for apps that need it.
 
+Touch is Barry Launcher's: an app scrolls, pans and zooms with Barry.Input's
+TouchScroll (around a Flickable, ListView or GridView) and PanZoomArea (a
+view, such as a map), never with touch handling of its own, so it feels
+like the Launcher and every touch fix in Barry Launcher reaches it
+(Barry.Input's GESTURES.md). check and install warn about QML that still
+scrolls or pinches by itself (touch_warnings); it installs all the same.
+
 Barry Launcher runs main.qml in a full-screen window of its own
 (shell/AppHost.qml), the way it runs its own QML apps, with its config
 and data XDG folders pointed into its data folder (app_env): whatever it or
@@ -260,19 +267,113 @@ def _package_root(unpacked: str) -> str:
     raise AppError(f"no {MANIFEST} at the top of the archive, or in its one folder")
 
 
+# touch_warnings: QML that scrolls, pans or zooms by itself instead of with
+# Barry.Input. A simple look at the text, per .qml file, with comments and
+# strings left out; it warns and never refuses (apps made before
+# Barry.Input still install):
+#   - a PinchHandler or PinchArea: a pinch of its own (PanZoomArea);
+#   - a Flickable, ListView or GridView that is not inside a TouchScroll,
+#     is not the one a TouchScroll names (flickable: its id) and does not
+#     say "interactive: false": a drag scroll of its own (TouchScroll).
+# DragHandler, MouseArea and MultiPointTouchArea are left alone: most are
+# taps, sliders or drag and drop, not scrolling.
+SCROLLERS = ("Flickable", "ListView", "GridView")
+PINCHES = ("PinchHandler", "PinchArea")
+_QML_NOISE = re.compile(r'//[^\n]*|/\*.*?\*/|"(?:\\.|[^"\\\n])*"|\'(?:\\.|[^\'\\\n])*\'|`(?:\\.|[^`\\])*`',
+                        re.S)
+_QML_TYPE = re.compile(r"(?:^|[^\w.])((?:[A-Za-z_]\w*\.)*([A-Z]\w*))\s*$")
+
+
+def _blank(match: re.Match) -> str:
+    """The comment or string, as spaces (its lines kept)."""
+    return re.sub(r"[^\n]", " ", match.group(0))
+
+
+def _own(block: str) -> str:
+    """A QML object's block (its braces' inside) without its children."""
+    out, depth = [], 0
+    for c in block:
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+        elif depth == 0:
+            out.append(c)
+    return "".join(out)
+
+
+def _qml_touch(text: str) -> list[tuple[int, str, str]]:
+    """(line, type, what) for each object in QML text that scrolls or
+    pinches by itself."""
+    code = _QML_NOISE.sub(_blank, text)
+    stack: list[tuple[str | None, int]] = []
+    scrollers: list[tuple[int, str, bool, str]] = []  # at, type, in a TouchScroll, own text
+    named: set[str] = set()  # ids TouchScrolls name with flickable:
+    found = []
+    for i, c in enumerate(code):
+        if c == "{":
+            m = _QML_TYPE.search(code, max(0, i - 200), i)
+            stack.append((m.group(2) if m else None, i))
+        elif c == "}" and stack:
+            kind, at = stack.pop()
+            if kind in SCROLLERS:
+                inside = any(k == "TouchScroll" for k, _ in stack)
+                scrollers.append((at, kind, inside, _own(code[at + 1:i])))
+            elif kind == "TouchScroll":
+                m = re.search(r"\bflickable\s*:\s*([A-Za-z_]\w*)", _own(code[at + 1:i]))
+                if m:
+                    named.add(m.group(1))
+            elif kind in PINCHES:
+                found.append((code.count("\n", 0, at) + 1, kind, "pinch"))
+    for at, kind, inside, own in scrollers:
+        ident = re.search(r"\bid\s*:\s*([A-Za-z_]\w*)", own)
+        if inside or (ident and ident.group(1) in named) or re.search(r"\binteractive\s*:\s*false\b", own):
+            continue
+        found.append((code.count("\n", 0, at) + 1, kind, "scroll"))
+    return sorted(found)
+
+
+def touch_warnings(root: str) -> list[str]:
+    """What in the app folder at root's QML scrolls, pans or zooms by
+    itself instead of with Barry.Input (see above), as "file:line: ..."."""
+    out = []
+    for folder, dirs, files in os.walk(root):
+        dirs[:] = sorted(d for d in dirs if not d.startswith("."))
+        for f in sorted(files):
+            if not f.endswith(".qml"):
+                continue
+            path = os.path.join(folder, f)
+            try:
+                with open(path, encoding="utf-8", errors="replace") as fh:
+                    text = fh.read()
+            except OSError:
+                continue
+            rel = os.path.relpath(path, root).replace(os.sep, "/")
+            for line, kind, what in _qml_touch(text):
+                if what == "pinch":
+                    out.append(f"{rel}:{line}: {kind} pinches by itself; pan and zoom with "
+                               "Barry.Input's PanZoomArea, so it follows Barry Launcher's touch rules")
+                else:
+                    out.append(f"{rel}:{line}: {kind} scrolls by its own drag; put it in "
+                               "Barry.Input's TouchScroll, so it follows Barry Launcher's touch rules")
+    return out
+
+
 def check(path: str) -> dict:
     """The manifest of the app in archive or folder path, if it would
-    install."""
+    install, with "touchWarnings" (touch_warnings)."""
     if os.path.isdir(path):
-        return read_manifest(path)
+        return dict(read_manifest(path), touchWarnings=touch_warnings(path))
     with tempfile.TemporaryDirectory(prefix="barry-app-") as tmp:
         _unpack(path, tmp)
-        return read_manifest(_package_root(tmp))
+        root = _package_root(tmp)
+        return dict(read_manifest(root), touchWarnings=touch_warnings(root))
 
 
 def install(archive: str, reserved: set[str] = frozenset()) -> dict:
     """Install (or update) the app in archive (or an app folder); its
-    manifest, with "updated": whether it replaced an installed version."""
+    manifest, with "updated": whether it replaced an installed version, and
+    "touchWarnings" (touch_warnings)."""
     if not os.path.isfile(archive) and not os.path.isdir(archive):
         raise AppError(f"no file {archive}")
     os.makedirs(APPS_DIR, exist_ok=True)
@@ -288,6 +389,7 @@ def install(archive: str, reserved: set[str] = frozenset()) -> dict:
             _unpack(archive, tmp)
             root = _package_root(tmp)
         m = read_manifest(root)
+        warnings = touch_warnings(root)
         if m["id"] in reserved:
             raise AppError(f'"{m["id"]}" is one of Barry Launcher\'s own apps')
         dest = os.path.join(APPS_DIR, m["id"])
@@ -301,7 +403,7 @@ def install(archive: str, reserved: set[str] = frozenset()) -> dict:
         if old:
             shutil.rmtree(old, ignore_errors=True)
         _set_removed(m["id"], False)
-        return dict(m, updated=old is not None)
+        return dict(m, updated=old is not None, touchWarnings=warnings)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

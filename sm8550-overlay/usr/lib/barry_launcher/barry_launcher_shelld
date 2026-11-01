@@ -1324,6 +1324,10 @@ def install_app(body: dict) -> tuple[int, dict]:
         close(m["id"])
     refresh_user_apps(force=True)
     log(f"{'updated' if m['updated'] else 'installed'} {m['id']} {m['version']}")
+    # Touch it handles by itself instead of with Barry.Input (it installs
+    # all the same; barry-app shows these too).
+    for w in m.get("touchWarnings") or []:
+        log(f"{m['id']}: {w}")
     return 200, {"ok": True, "app": m}
 
 
