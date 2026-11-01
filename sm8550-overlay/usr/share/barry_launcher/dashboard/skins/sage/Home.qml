@@ -220,34 +220,39 @@ Rectangle {
     // Up to three rows (nine apps) fit the screen, the tiles a little
     // smaller for the third; with more (user apps) they scroll, above the
     // hint at the bottom.
-    Flickable {
-        id: flick
+    // Barry's touch rules scroll it (Barry.Input's TouchScroll).
+    TouchScroll {
         anchors { fill: parent; bottomMargin: 70 * home.s }
-        contentWidth: width
-        contentHeight: Math.max(height, grid.height + 60 * home.s)
-        boundsBehavior: Flickable.StopAtBounds
-        clip: true
 
-        Grid {
-            id: grid
-            anchors.horizontalCenter: parent.horizontalCenter
-            // Centred on the screen when there is room, as high as needed
-            // when not.
-            y: Math.max(20 * home.s, Math.min((flick.height - height) / 2 + 35 * home.s,
-                                              flick.height - height - 20 * home.s))
-            columns: 3
-            columnSpacing: 60 * home.ts
-            rowSpacing: 30 * home.ts
+        Flickable {
+            id: flick
+            anchors.fill: parent
+            contentWidth: width
+            contentHeight: Math.max(height, grid.height + 60 * home.s)
+            boundsBehavior: Flickable.StopAtBounds
+            clip: true
 
-            Repeater {
-                id: tilesRep
-                model: home.tiles
-                delegate: Tile {
-                    required property var modelData
-                    app: modelData.app
-                    name: modelData.name
-                    iconKind: modelData.icon
-                    closable: modelData.closable
+            Grid {
+                id: grid
+                anchors.horizontalCenter: parent.horizontalCenter
+                // Centred on the screen when there is room, as high as needed
+                // when not.
+                y: Math.max(20 * home.s, Math.min((flick.height - height) / 2 + 35 * home.s,
+                                                  flick.height - height - 20 * home.s))
+                columns: 3
+                columnSpacing: 60 * home.ts
+                rowSpacing: 30 * home.ts
+
+                Repeater {
+                    id: tilesRep
+                    model: home.tiles
+                    delegate: Tile {
+                        required property var modelData
+                        app: modelData.app
+                        name: modelData.name
+                        iconKind: modelData.icon
+                        closable: modelData.closable
+                    }
                 }
             }
         }

@@ -1275,36 +1275,40 @@ Rectangle {
                 opacity: 0.75
                 font { family: qs.font; pixelSize: 22 * qs.s; weight: Font.DemiBold }
             }
-            Flickable {
+            // Scrolled by Barry's touch rules (Barry.Input's TouchScroll).
+            TouchScroll {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                contentWidth: addRow.width
-                clip: true
-                flickableDirection: Flickable.HorizontalFlick
-                Row {
-                    id: addRow
-                    height: parent.height
-                    spacing: 8 * qs.s
-                    Repeater {
-                        model: qs.hidden
-                        delegate: Rectangle {
-                            id: chip
-                            required property string modelData
-                            height: parent.height
-                            width: chipText.implicitWidth + 36 * qs.s
-                            radius: height / 2
-                            color: chipTap.pressed ? Skin.colors.pressed : Skin.colors.raised
-                            Text {
-                                id: chipText
-                                anchors.centerIn: parent
-                                text: "+ " + qs.catalog[chip.modelData].title
-                                color: Skin.colors.text
-                                font { family: qs.font; pixelSize: 21 * qs.s; weight: Font.DemiBold }
-                            }
-                            TapHandler {
-                                id: chipTap
-                                gesturePolicy: TapHandler.ReleaseWithinBounds
-                                onTapped: qs.add(chip.modelData)
+                Flickable {
+                    anchors.fill: parent
+                    contentWidth: addRow.width
+                    clip: true
+                    flickableDirection: Flickable.HorizontalFlick
+                    Row {
+                        id: addRow
+                        height: parent.height
+                        spacing: 8 * qs.s
+                        Repeater {
+                            model: qs.hidden
+                            delegate: Rectangle {
+                                id: chip
+                                required property string modelData
+                                height: parent.height
+                                width: chipText.implicitWidth + 36 * qs.s
+                                radius: height / 2
+                                color: chipTap.pressed ? Skin.colors.pressed : Skin.colors.raised
+                                Text {
+                                    id: chipText
+                                    anchors.centerIn: parent
+                                    text: "+ " + qs.catalog[chip.modelData].title
+                                    color: Skin.colors.text
+                                    font { family: qs.font; pixelSize: 21 * qs.s; weight: Font.DemiBold }
+                                }
+                                TapHandler {
+                                    id: chipTap
+                                    gesturePolicy: TapHandler.ReleaseWithinBounds
+                                    onTapped: qs.add(chip.modelData)
+                                }
                             }
                         }
                     }
