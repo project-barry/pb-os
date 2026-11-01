@@ -8,7 +8,9 @@
 // lifting without a jump, a quick pinch's release (no fling from the
 // finger left, unless it moves), tap against long press, a fling's glide and
 // a touch stopping it, the zoom's clamps, a list's bounds and axes, the
-// wheel, double taps.
+// wheel (eased, notches adding up), double taps, Fill bounds (the content
+// fills the view at every zoom, through pan, pinch, fling, eased zoom and
+// wheel).
 #include "../../panzoom.h"
 #include "../../touchrules.h"
 
@@ -320,9 +322,11 @@ void clamps()
     r.up(1);
     r.up(2);
     r.g.wheel(500, 400, 0, -40, r.t);
+    r.glide();
     check(near(r.g.view().zoom, 0.25), "clamp: wheel out stops at the min");
     const double under = r.cx(200);
     r.g.wheel(200, 400, 0, 1, r.t);
+    r.glide();
     check(near(r.g.view().zoom, 0.25 * touch::WHEEL_ZOOM, 1e-9), "wheel: a notch zooms a step");
     check(near(r.cx(200), under, 1e-9), "wheel: around the pointer");
 }
@@ -364,7 +368,187 @@ void list()
     // A wheel notch: WHEEL_PX.
     r.g.setView({500, 1000, 1});
     r.g.wheel(500, 400, 0, -1, r.t);
+    r.glide();
     check(near(r.g.view().y, 1000 + touch::WHEEL_PX), "list: a wheel notch down scrolls WHEEL_PX");
+}
+
+void wheelEases()
+{
+    // A list's notch: a short glide, so the view is moving, then not.
+    Rig r(false);
+    r.g.setAxes(false, true);
+    r.g.setBounds(500, 400, 500, 1600);
+    r.g.setView({500, 1000, 1});
+    r.g.wheel(500, 400, 0, -1, r.t);
+    check(r.g.animating(), "wheel: a notch on a list is a glide (moving)");
+    check(near(r.g.view().y, 1000), "wheel: no jump at the notch");
+    r.t += touch::WHEEL_ANIM_S / 2;
+    r.g.step(r.t);
+    const double mid = r.g.view().y;
+    check(mid > 1000 + touch::WHEEL_PX / 2 && mid < 1000 + touch::WHEEL_PX, "wheel: eased out, most of the way early");
+    r.g.wheel(500, 400, 0, -1, r.t);  // a second notch while it eases
+    r.glide();
+    check(near(r.g.view().y, 1000 + 2 * touch::WHEEL_PX), "wheel: notches while it eases add up");
+    check(!r.g.animating(), "wheel: and it stops (moving off)");
+    r.g.setView({500, 1600, 1});
+    r.g.wheel(500, 400, 0, -1, r.t);
+    check(!r.g.animating() && near(r.g.view().y, 1600), "wheel: at the end, nothing moves");
+    // Toward the end by more than is left: stops there.
+    r.g.setView({500, 1550, 1});
+    r.g.wheel(500, 400, 0, -3, r.t);
+    r.glide();
+    check(near(r.g.view().y, 1600), "wheel: notches past the end stop at it");
+
+    // A view's notch: an eased zoom step around the pointer.
+    Rig z;
+    const double under = z.cx(200);
+    z.g.wheel(200, 400, 0, 1, z.t);
+    check(z.g.animating() && near(z.g.view().zoom, 1), "wheel: a zoom notch is a glide too");
+    z.t += 0.01;
+    z.g.wheel(200, 400, 0, 1, z.t);
+    z.glide();
+    check(near(z.g.view().zoom, touch::WHEEL_ZOOM * touch::WHEEL_ZOOM, 1e-9), "wheel: zoom notches add up");
+    check(near(z.cx(200), under, 1e-9), "wheel: still around the pointer");
+    check(!z.g.animating(), "wheel: the zoom step stops");
+    z.g.setView({0, 0, 8});
+    z.g.wheel(200, 400, 0, 1, z.t);
+    check(!z.g.animating(), "wheel: at the max zoom, nothing moves");
+
+    // A touch stops a wheel's glide, as a fling's.
+    Rig c(false);
+    c.g.setAxes(false, true);
+    c.g.setBounds(500, 400, 500, 1600);
+    c.g.setView({500, 1000, 1});
+    c.g.wheel(500, 400, 0, -2, c.t);
+    c.t += 0.02;
+    c.g.step(c.t);
+    c.down(1, 500, 500);
+    const double held = c.g.view().y;
+    check(!c.g.animating(), "wheel: a touch stops its glide");
+    c.t += 0.2;
+    c.g.step(c.t);
+    check(near(c.g.view().y, held), "wheel: nothing glides on after the touch");
+    c.up(1, 0.05);
+}
+
+// The content (Fill bounds 0 .. 2000 x 0 .. 1600) fills the 1000 x 800
+// view: its edges outside the view's, or centered where it is the smaller.
+bool fills(const Rig &r)
+{
+    const auto v = r.g.view();
+    const auto axis = [](double c, double lo, double hi, double size, double zoom) {
+        const double a = (lo - c) * zoom + size / 2, b = (hi - c) * zoom + size / 2;
+        if (b - a <= size + 1e-9)
+            return near(a + b, size, 1e-6);
+        return a <= 1e-6 && b >= size - 1e-6;
+    };
+    return axis(v.x, 0, 2000, 1000, v.zoom) && axis(v.y, 0, 1600, 800, v.zoom);
+}
+
+void fillBounds()
+{
+    const auto rig = [](Rig &r) {
+        r.g.setBoundsMode(PanZoomGesture::BoundsMode::Fill);
+        r.g.setBounds(0, 0, 2000, 1600);
+        r.g.setView({1000, 800, 1});
+    };
+    Rig r;
+    rig(r);
+    r.g.setView({0, 0, 1});
+    check(near(r.g.view().x, 500) && near(r.g.view().y, 400), "fill: the view stops at the content's corner");
+    r.g.setView({5000, 5000, 1});
+    check(near(r.g.view().x, 1500) && near(r.g.view().y, 1200), "fill: and at the far corner");
+    r.g.setView({0, 0, 0.25});
+    check(near(r.g.view().x, 1000) && near(r.g.view().y, 800), "fill: content smaller than the view: centered");
+    r.g.setView({0, 0, 0.625});  // 1250 x 1000 on 1000 x 800: larger both ways
+    check(near(r.g.view().x, 800) && near(r.g.view().y, 640), "fill: the clamp follows the zoom");
+    r.g.setView({0, 0, 0.55});  // 1100 x 880: larger across, narrowly
+    check(fills(r) && near(r.g.view().x, 1000 - 50 / 0.55), "fill: just larger: its edge at the view's");
+
+    // A pan past the corner stops at it, and pans back at once.
+    r.g.setView({600, 500, 1});
+    r.down(1, 500, 400);
+    r.move(1, 520, 420);
+    r.move(1, 900, 800);
+    check(near(r.g.view().x, 500) && near(r.g.view().y, 400), "fill: a pan stops at the content's edges");
+    r.move(1, 850, 750);
+    check(near(r.g.view().x, 550) && near(r.g.view().y, 450), "fill: and moves back at once (no slack)");
+    r.wait(0.1);
+    r.up(1);
+
+    // A pinch out at the corner: the content fills the view all the way, and
+    // centers once it is smaller.
+    Rig p;
+    rig(p);
+    p.g.setView({500, 400, 1});
+    p.down(1, 100, 100);
+    p.down(2, 300, 300);
+    bool always = true;
+    for (int i = 1; i <= 12; i++) {
+        p.move(1, 100 + 7 * i, 100 + 7 * i);
+        p.move(2, 300 - 7 * i, 300 - 7 * i);
+        always = always && fills(p);
+    }
+    check(always, "fill: pinched out at the corner, the content fills the view every frame");
+    check(p.g.view().zoom < 0.5 && near(p.g.view().x, 1000) && near(p.g.view().y, 800),
+          "fill: pinched smaller than the view: centered");
+    p.up(1);
+    p.up(2);
+    // And in again: off-center, kept filling.
+    p.down(1, 400, 300);
+    p.down(2, 450, 350);
+    always = true;
+    for (int i = 1; i <= 20; i++) {
+        p.move(1, 400 - 15 * i, 300 - 15 * i);
+        p.move(2, 450 + 15 * i, 350 + 15 * i);
+        always = always && fills(p);
+    }
+    check(always && p.g.view().zoom > 1, "fill: pinched in, it fills the view every frame");
+    p.up(1);
+    p.up(2);
+
+    // A fling toward an edge stops at it, early.
+    Rig f;
+    rig(f);
+    f.g.setView({900, 800, 1});
+    f.down(1, 300, 400);
+    for (int i = 0; i < 10; i++)
+        f.move(1, 300 + 30 * (i + 1), 400);
+    f.up(1);
+    check(f.g.animating(), "fill: thrown toward the left edge");
+    const double t0 = f.t;
+    f.glide();
+    check(near(f.g.view().x, 500), "fill: the glide stops at the edge");
+    check(f.t - t0 < 0.5, "fill: at once there, not running on");
+
+    // An eased zoom out (a button) and the wheel: every step fills.
+    Rig e;
+    rig(e);
+    e.g.setView({500, 400, 2});
+    e.g.zoomAround(0, 0, 0.25, e.t);
+    always = true;
+    while (e.g.animating()) {
+        e.t += 1.0 / 120;
+        e.g.step(e.t);
+        always = always && fills(e);
+    }
+    check(always && near(e.g.view().zoom, 0.5), "fill: an eased zoom out fills the view every step");
+    e.g.setView({1500, 1200, 1});
+    e.g.wheel(1000, 800, 0, -3, e.t);
+    always = true;
+    while (e.g.animating()) {
+        e.t += 1.0 / 120;
+        e.g.step(e.t);
+        always = always && fills(e);
+    }
+    check(always && near(e.g.view().zoom, std::pow(touch::WHEEL_ZOOM, -3), 1e-9),
+          "fill: wheel zoom steps fill the view every step");
+
+    // Center (the default) is as before: the center goes to the rect's edge.
+    Rig c;
+    c.g.setBounds(0, 0, 2000, 1600);
+    c.g.setView({-100, -100, 1});
+    check(near(c.g.view().x, 0) && near(c.g.view().y, 0), "center: the default keeps only the center in bounds");
 }
 
 void doubleTap()
@@ -411,7 +595,9 @@ int main()
     flingAndCatch();
     clamps();
     list();
+    wheelEases();
     doubleTap();
+    fillBounds();
     std::printf("%s (%d failed)\n", failures ? "FAILED" : "ALL PASSED", failures);
     return failures ? 1 : 0;
 }

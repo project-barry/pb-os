@@ -42,14 +42,25 @@ else is installed for it.
   nothing under it (Android's RecyclerView).
 - **Bounds.** Lists stop at their ends (no rubber band, no overscroll); a
   glide that reaches an end stops there. A view's zoom stays in
-  `minZoom .. maxZoom`; its center can be kept in `bounds`.
+  `minZoom .. maxZoom`. `bounds` keeps it in place, by `boundsMode`:
+  `Center` (the default) keeps its center in the rect; `Fill` makes the rect
+  the content (a map, a picture) and keeps the view inside it as Android's
+  gallery does: where the content is larger than the view, its edges never
+  come inside the view's; where it is smaller (zoomed out), it is centered
+  on that axis. The core works the Fill limits out from the zoom and size of
+  the moment on every step (pan, pinch, fling, eased zoom, wheel, a resize);
+  an app does not re-bind `bounds` as it zooms. Its edges stop the view as a
+  list's ends do.
 - **Children keep their taps.** Buttons and tiles inside a surface get their
   touches exactly as before. Only once a touch is a drag is it taken (its tap
   handlers tap nothing) and kept (a page swipe around does not take a list's
   scroll back). A touch something else takes first (the page swipe, a slider)
   is let go.
 - **Mouse and wheel.** A mouse drags as one finger. A wheel notch zooms a
-  view by `WHEEL_ZOOM` around the pointer, or scrolls a list `WHEEL_PX`.
+  view by `WHEEL_ZOOM` around the pointer, or scrolls a list `WHEEL_PX`,
+  eased over `WHEEL_ANIM_S` (0.15 s): a short glide, so `moving` goes on and
+  off for it as for a fling (an app that saves its place when `moving` ends
+  sees wheel scrolls too). Notches while one eases add up; a touch stops it.
 
 ## QML API (`import Barry.Input`)
 
@@ -64,7 +75,8 @@ Both items share: `interactive` (bool, default true), and read-only
 | `centerX`, `centerY` | the content point at the area's center (content units; read/write) |
 | `zoom` | area pixels per content unit (read/write, kept in range) |
 | `minZoom`, `maxZoom` | the zoom range (default 0.1 .. 10) |
-| `bounds` | rect the center stays in; unset / `Qt.rect(0, 0, 0, 0)`: anywhere |
+| `bounds` | content units, by `boundsMode`; unset / `Qt.rect(0, 0, 0, 0)`: anywhere |
+| `boundsMode` | `PanZoomArea.Center` (default): `bounds` is where the center may go; `PanZoomArea.Fill`: `bounds` is the content's rect, which the view stays inside (content larger than the view fills it, smaller is centered), at every zoom |
 | `doubleTapZoom` | double taps zoom in a step (default false: taps are at once) |
 | `tapped(x, y)`, `doubleTapped(x, y)`, `longPressed(x, y)` | where, area pixels |
 | `mapToContent(x, y)`, `mapFromContent(x, y)` | area pixels <-> content units |
@@ -73,6 +85,19 @@ Both items share: `interactive` (bool, default true), and read-only
 Content is drawn at `area = (content - center) * zoom + size / 2`. Writing
 `centerX`, `centerY` or `zoom` (following a player, a saved view) stops a
 glide.
+
+A picture-sized map (one image, content units its pixels) that fills the
+screen as a gallery does:
+
+```qml
+PanZoomArea {
+    anchors.fill: parent
+    bounds: Qt.rect(0, 0, map.sourceSize.width, map.sourceSize.height)
+    boundsMode: PanZoomArea.Fill
+    minZoom: Math.min(width / map.sourceSize.width, height / map.sourceSize.height)
+    maxZoom: 4
+}
+```
 
 Example consumer (a map that keeps its view as `cx`, `cz`, `zoom` in world
 units, such as Wayfarer's MapView): its PinchHandler, DragHandler and
@@ -167,7 +192,7 @@ looked at (mostly taps, sliders and drag and drop).
 Only in `touchrules.h`: `SLOP`, `TAP_S`, `TAP_MAX_S`, `LONG_PRESS_S`,
 `DOUBLE_TAP_SLOP`, `VELOCITY_WINDOW_S`, `STOPPED_S`, `FLING_MIN`, `FLING_MAX`,
 `FLING_FRICTION`, `DESIGN_PPI`, `PINCH_STILL`, `WHEEL_PX`, `WHEEL_ZOOM`,
-`DOUBLE_TAP_ZOOM`, `ZOOM_ANIM_S`. Design pixels: an item multiplies them by
+`WHEEL_ANIM_S`, `DOUBLE_TAP_ZOOM`, `ZOOM_ANIM_S`. Design pixels: an item multiplies them by
 its window's scale as the Launcher's layout (`min(w / 1240, h / 1080)`).
 A longer or shorter glide: `FLING_FRICTION` (Android's 0.015) or
 `DESIGN_PPI`.
@@ -177,9 +202,10 @@ A longer or shorter glide: `FLING_FRICTION` (Android's 0.015) or
 `tests/gestures/run.sh <rootfs> <work dir>` (as root in the build VM): builds
 and runs `pan-zoom-test` (the core on frames: slop, pan, pinch, pinch to pan,
 lift and land, quick pinch release, tap and long press, fling and catch,
-clamps, list bounds and axes, wheel, double tap) and `touch-surfaces-test`
-(TouchScroll in a PageSwipe and PanZoomArea under Qt's touch events,
-offscreen). The rootfs needs `/t` (`/work/rootfs-stable` has it).
+clamps, list bounds and axes, wheel (eased, adding up, stopped by a touch),
+double tap, Fill bounds through pan, pinch, fling, eased zoom and wheel) and
+`touch-surfaces-test` (TouchScroll in a PageSwipe and PanZoomArea under Qt's
+touch and wheel events, a Fill view as set, zoomed and resized, offscreen). The rootfs needs `/t` (`/work/rootfs-stable` has it).
 
 ## Hand test on a device
 

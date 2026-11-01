@@ -139,6 +139,11 @@ void PanZoomGesture::clearBounds()
     m_bounded = false;
 }
 
+void PanZoomGesture::setBoundsMode(BoundsMode mode)
+{
+    m_boundsMode = mode;
+}
+
 void PanZoomGesture::setDoubleTapZoom(bool on)
 {
     m_doubleTap = on;
@@ -152,6 +157,17 @@ void PanZoomGesture::clamp(View &v) const
         v.zoom = std::clamp(v.zoom, m_minZoom, m_maxZoom);
     if (!m_bounded)
         return;
+    if (m_boundsMode == BoundsMode::Fill) {
+        // The view's half size in content units, at this zoom: the content's
+        // edges stay outside the view's, or it is centered where it is the
+        // smaller.
+        const auto fill = [](double c, double lo, double hi, double half) {
+            return hi - lo <= 2 * half ? (lo + hi) / 2 : std::clamp(c, lo + half, hi - half);
+        };
+        v.x = fill(v.x, m_bx0, m_bx1, m_w / 2 / v.zoom);
+        v.y = fill(v.y, m_by0, m_by1, m_h / 2 / v.zoom);
+        return;
+    }
     v.x = m_bx1 < m_bx0 ? (m_bx0 + m_bx1) / 2 : std::clamp(v.x, m_bx0, m_bx1);
     v.y = m_by1 < m_by0 ? (m_by0 + m_by1) / 2 : std::clamp(v.y, m_by0, m_by1);
 }
@@ -451,24 +467,57 @@ void PanZoomGesture::due(double now)
 
 void PanZoomGesture::wheel(double x, double y, double notchesX, double notchesY, double now)
 {
-    (void)now;
-    stop();
+    // A notch is a short eased move, so the view is moving while it eases;
+    // notches while one eases add up from where it was going. With fingers
+    // down, at once (the touch moves the view too).
     if (m_zoomOn) {
-        if (notchesY != 0)
-            apply(x, y, x, y, std::pow(touch::WHEEL_ZOOM, notchesY));
+        if (notchesY == 0)
+            return;
+        const double factor = std::pow(touch::WHEEL_ZOOM, notchesY);
+        if (active()) {
+            stop();
+            apply(x, y, x, y, factor);
+            return;
+        }
+        const bool easing = m_anim == Zoom && m_wheelZoom;
+        const double from = easing ? m_zoomTo : m_view.zoom;
+        const double to = std::clamp(from * factor, m_minZoom, m_maxZoom);
+        if (to == from) {
+            if (!easing)
+                stop();
+            return;
+        }
+        startZoom(x, y, to, touch::WHEEL_ANIM_S, now);
+        m_wheelZoom = true;
         return;
     }
     // Up (away) shows what is above: the view's center goes up.
-    View v = m_view;
+    View v = m_anim == Scroll ? View{m_scrollToX, m_scrollToY, m_view.zoom} : m_view;
     if (m_axisX)
         v.x -= notchesX * touch::WHEEL_PX * m_scale / v.zoom;
     if (m_axisY)
         v.y -= notchesY * touch::WHEEL_PX * m_scale / v.zoom;
     clamp(v);
-    if (v.x == m_view.x && v.y == m_view.y)
+    if (active()) {
+        stop();
+        if (v.x == m_view.x && v.y == m_view.y)
+            return;
+        m_view = v;
+        emitChanged();
         return;
-    m_view = v;
-    emitChanged();
+    }
+    if (m_anim == Scroll && v.x == m_scrollToX && v.y == m_scrollToY)
+        return;  // already going there (an end)
+    if (v.x == m_view.x && v.y == m_view.y) {
+        stop();
+        return;
+    }
+    m_from = m_view;
+    m_scrollToX = v.x;
+    m_scrollToY = v.y;
+    m_animStart = now;
+    m_animDur = touch::WHEEL_ANIM_S;
+    m_anim = Scroll;
 }
 
 void PanZoomGesture::zoomAround(double x, double y, double factor, double now)
@@ -476,13 +525,19 @@ void PanZoomGesture::zoomAround(double x, double y, double factor, double now)
     stop();
     if (!m_zoomOn || !(factor > 0))
         return;
+    startZoom(x, y, std::clamp(m_view.zoom * factor, m_minZoom, m_maxZoom), touch::ZOOM_ANIM_S, now);
+}
+
+void PanZoomGesture::startZoom(double x, double y, double zoomTo, double dur, double now)
+{
     m_from = m_view;
-    m_zoomTo = std::clamp(m_view.zoom * factor, m_minZoom, m_maxZoom);
+    m_zoomTo = zoomTo;
     m_zoomFx = x;
     m_zoomFy = y;
     m_animStart = now;
-    m_animDur = touch::ZOOM_ANIM_S;
+    m_animDur = dur;
     m_anim = Zoom;
+    m_wheelZoom = false;
 }
 
 bool PanZoomGesture::step(double now)
@@ -501,6 +556,11 @@ bool PanZoomGesture::step(double now)
         const bool xStuck = m_dirX == 0 || v.x != free.x;
         const bool yStuck = m_dirY == 0 || v.y != free.y;
         blocked = xStuck && yStuck;
+    } else if (m_anim == Scroll) {
+        // A wheel's step, eased out as the zoom steps are.
+        const double e = 1 - (1 - t) * (1 - t);
+        v = View{m_from.x + (m_scrollToX - m_from.x) * e, m_from.y + (m_scrollToY - m_from.y) * e, m_from.zoom};
+        clamp(v);
     } else {
         // Eased out: most of the way early, as Android's zoom steps.
         const double e = 1 - (1 - t) * (1 - t);

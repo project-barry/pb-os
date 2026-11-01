@@ -8,9 +8,12 @@
 // Covers: a tap on the list's content still taps; a drag scrolls it (and
 // taps nothing); a throw glides on; a touch stops the glide and taps
 // nothing; a sideways swipe over the list is still the page swipe's; the
-// view's tap, long press, pinch and a mouse drag.
+// view's tap, long press, pinch and a mouse drag; a wheel notch on each
+// eases (moving on, then off); a Fill view keeps its content filling it
+// (as set, zoomed and resized).
 #include "../../pageswipe.h"
 #include "../../panzoomarea.h"
+#include "../../touchrules.h"
 
 #include <QGuiApplication>
 #include <QPointingDevice>
@@ -19,6 +22,7 @@
 #include <QQuickItem>
 #include <QQuickWindow>
 #include <QTest>
+#include <QWheelEvent>
 #include <cstdio>
 
 namespace {
@@ -68,6 +72,13 @@ Window {
         onTapped: (x, y) => root.events.push("tap")
         onLongPressed: (x, y) => root.events.push("long")
     }
+    PanZoomArea {
+        objectName: "pic"
+        x: 640; y: 620; width: 600; height: 400
+        minZoom: 0.25; maxZoom: 4; zoom: 1
+        bounds: Qt.rect(0, 0, 1200, 800)
+        boundsMode: PanZoomArea.Fill
+    }
 }
 )";
 
@@ -77,6 +88,14 @@ QQuickWindow *window;
 void press(int id, QPoint at) { QTest::touchEvent(window, touchscreen).press(id, at, window); }
 void move(int id, QPoint at) { QTest::touchEvent(window, touchscreen).move(id, at, window); }
 void release(int id, QPoint at) { QTest::touchEvent(window, touchscreen).release(id, at, window); }
+
+// A mouse wheel turned by notches (up / away: positive) at a point.
+void wheel(QPointF at, int notches)
+{
+    QWheelEvent event(at, window->mapToGlobal(at), QPoint(), QPoint(0, 120 * notches), Qt::NoButton,
+                      Qt::NoModifier, Qt::NoScrollPhase, false);
+    QGuiApplication::sendEvent(window, &event);
+}
 
 // A finger from a to b in steps, ms apart.
 void stroke(int id, QPoint a, QPoint b, int steps, int ms, bool lift = true)
@@ -221,6 +240,44 @@ int main(int argc, char **argv)
     const qreal dragged = (mx - map->property("centerX").toReal()) * map->property("zoom").toReal();
     std::printf("     mouse dragged 100 px: the view moved %.1f px\n", dragged);
     check(dragged > 70 && dragged <= 100, "view: a mouse drag pans it");
+
+    // A wheel notch: a short glide, so moving goes on and then off (an app
+    // that saves its place when moving ends sees wheel scrolls too).
+    QTest::qWait(300);
+    const qreal y0 = contentY();
+    wheel({300, 250}, -1);
+    check(scroll->property("moving").toBool(), "list: a wheel notch moves it (moving on)");
+    QTest::qWait(400);
+    std::printf("     a wheel notch down: contentY %.1f -> %.1f\n", y0, contentY());
+    check(!scroll->property("moving").toBool(), "list: and settles (moving off)");
+    check(qAbs(contentY() - (y0 + barry::touch::WHEEL_PX)) < 0.5, "list: by WHEEL_PX");
+    const qreal z0 = map->property("zoom").toReal();
+    wheel({940, 300}, 1);
+    check(map->property("moving").toBool(), "view: a wheel notch zooms it (moving on)");
+    QTest::qWait(400);
+    check(!map->property("moving").toBool(), "view: and settles (moving off)");
+    check(qAbs(map->property("zoom").toReal() - z0 * barry::touch::WHEEL_ZOOM) < 1e-6, "view: by WHEEL_ZOOM");
+
+    // Fill: the content (1200 x 800) fills the 600 x 400 view, or is
+    // centered where it is the smaller.
+    auto *pic = root->findChild<QQuickItem *>(QStringLiteral("pic"));
+    const auto at = [pic](qreal x, qreal y) {
+        return qAbs(pic->property("centerX").toReal() - x) < 1e-6 && qAbs(pic->property("centerY").toReal() - y) < 1e-6;
+    };
+    check(at(300, 200), "fill: from the start, the view inside the content (its corner)");
+    pic->setProperty("centerX", 5000);
+    check(at(900, 200), "fill: a center written past the edge stops at it");
+    pic->setProperty("zoom", 0.25);
+    check(at(600, 400), "fill: zoomed out smaller than the view: centered");
+    pic->setProperty("zoom", 1);
+    pic->setProperty("centerX", 0);
+    check(at(300, 400), "fill: zoomed in again, at the edge");
+    pic->setWidth(1400);
+    check(at(600, 400), "fill: the view grown wider than the content: centered across");
+    pic->setWidth(600);
+    pic->setProperty("boundsMode", 0);
+    pic->setProperty("centerX", 0);
+    check(at(0, 400), "fill off (Center): the center goes to the rect's edge");
 
     std::printf("%s (%d failed)\n", failures ? "FAILED" : "ALL PASSED", failures);
     delete root;

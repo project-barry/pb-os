@@ -46,6 +46,8 @@ constexpr double PINCH_STILL = 0.02;
 // pixels, or this zoom factor.
 constexpr double WHEEL_PX = 70;
 constexpr double WHEEL_ZOOM = 1.25;
+// A wheel notch eases over this long (the view is moving meanwhile).
+constexpr double WHEEL_ANIM_S = 0.15;
 // A double tap that zooms: by this factor, eased over this long.
 constexpr double DOUBLE_TAP_ZOOM = 2;
 constexpr double ZOOM_ANIM_S = 0.25;

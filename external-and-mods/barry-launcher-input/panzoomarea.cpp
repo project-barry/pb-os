@@ -370,6 +370,8 @@ void GestureSurface::wheelEvent(QWheelEvent *event)
     }
     m_gesture.wheel(event->position().x(), event->position().y(), nx, ny, monotonic());
     refresh();
+    if (m_gesture.animating())
+        kick();
     event->accept();
 }
 
@@ -419,6 +421,8 @@ void PanZoomArea::limits()
     m_gesture.setZoomEnabled(true);
     m_gesture.setAxes(true, true);
     m_gesture.setZoomRange(m_minZoom, m_maxZoom);
+    m_gesture.setBoundsMode(m_boundsMode == Fill ? barry::PanZoomGesture::BoundsMode::Fill
+                                                 : barry::PanZoomGesture::BoundsMode::Center);
     if (m_bounds.isNull())
         m_gesture.clearBounds();
     else
@@ -510,6 +514,29 @@ void PanZoomArea::setBounds(const QRectF &bounds)
     m_bounds = bounds;
     emit boundsChanged();
     set(m_gesture.view());
+}
+
+void PanZoomArea::setBoundsMode(BoundsMode mode)
+{
+    if (mode == m_boundsMode)
+        return;
+    m_boundsMode = mode;
+    emit boundsModeChanged();
+    set(m_gesture.view());
+}
+
+void PanZoomArea::geometryChange(const QRectF &newGeometry, const QRectF &oldGeometry)
+{
+    GestureSurface::geometryChange(newGeometry, oldGeometry);
+    // Fill's limits follow the size: kept to them, a glide running on.
+    if (m_boundsMode != Fill || newGeometry.size() == oldGeometry.size())
+        return;
+    const auto before = m_gesture.view();
+    syncIn();
+    m_gesture.syncView(before);
+    const auto after = m_gesture.view();
+    if (after.x != before.x || after.y != before.y || after.zoom != before.zoom)
+        emit viewChanged();
 }
 
 void PanZoomArea::setDoubleTapZoom(bool on)

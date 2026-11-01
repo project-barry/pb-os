@@ -24,6 +24,18 @@
 // tap may wait for a double tap (when double taps are on), which zooms in a
 // step around it.
 //
+// Bounds, by mode. Center: the view's center stays in the bounds rect.
+// Fill: the bounds rect is the content (a map, a picture), and the view
+// stays inside it as a gallery's does: where the content is larger than the
+// view (at the zoom of the moment) its edges never come inside the view's;
+// where it is smaller, it is centered on that axis. Fill depends on the
+// zoom and the size, so every pan, pinch, fling, eased zoom and wheel step
+// clamps anew. Either way the edges stop the view hard, as a list's ends do
+// (no rubber band, no overscroll).
+//
+// A wheel notch is a short eased move (or zoom step), so animating() turns
+// on and off for it as for a fling; notches while it eases add up.
+//
 // Lifted while moving: a fling, the view gliding on as Android's scroller
 // does (a spline that slows to a stop), from the finger's speed over its
 // last moments. A finger that rested before lifting throws nothing; nor
@@ -53,6 +65,8 @@ public:
         double x, y, zoom;
     };
 
+    enum class BoundsMode { Center, Fill };
+
     struct Callbacks {
         std::function<void(double, double)> tapped;
         std::function<void(double, double)> doubleTapped;
@@ -72,9 +86,12 @@ public:
     void setZoomEnabled(bool enabled);
     // The axes a drag moves (a list: its scrolling ones). None: never a drag.
     void setAxes(bool x, bool y);
-    // Where the view's center may go, content units (max < min: the middle).
+    // Center: where the view's center may go, content units (max < min:
+    // the middle). Fill: the content's rect, which the view stays inside
+    // (see the header).
     void setBounds(double minX, double minY, double maxX, double maxY);
     void clearBounds();
+    void setBoundsMode(BoundsMode mode);
     void setDoubleTapZoom(bool on);
 
     View view() const { return m_view; }
@@ -90,7 +107,7 @@ public:
     // The touch was taken away: no tap, no fling.
     void cancel();
     // A wheel: notches (up / away: positive) zoom around (x, y), or scroll
-    // the content (x, y notches) where zoom is off.
+    // the content (x, y notches) where zoom is off; eased, as a short glide.
     void wheel(double x, double y, double notchesX, double notchesY, double now);
     // Zoom by factor around (x, y), eased (a button's zoom step).
     void zoomAround(double x, double y, double factor, double now);
@@ -98,7 +115,8 @@ public:
     // When a long press or a waiting tap is due.
     std::optional<double> nextDue() const;
     void due(double now);
-    // The glide (a fling, an eased zoom) at now; false once it is over.
+    // The glide (a fling, an eased zoom, a wheel's step) at now; false once
+    // it is over.
     bool step(double now);
     void stop();
 
@@ -109,7 +127,7 @@ public:
 private:
     // Spent: no tap, no drag (it long-pressed, or moved where nothing moves).
     enum State { Idle, Pending, Dragging, Spent };
-    enum Anim { None, Fling, Zoom };
+    enum Anim { None, Fling, Zoom, Scroll };
     struct Sample {
         double t, x, y, zoom;
     };
@@ -117,6 +135,7 @@ private:
     double slop() const;
     void apply(double fx0, double fy0, double fx1, double fy1, double ratio);
     void clamp(View &v) const;
+    void startZoom(double x, double y, double zoomTo, double dur, double now);
     void lift(double now, double stamp);
     void startFling(double vx, double vy, double now);
     void tap(double x, double y, double now);
@@ -130,6 +149,7 @@ private:
     double m_minZoom = 1, m_maxZoom = 1;
     bool m_zoomOn = true, m_axisX = true, m_axisY = true;
     bool m_bounded = false;
+    BoundsMode m_boundsMode = BoundsMode::Center;
     double m_bx0 = 0, m_by0 = 0, m_bx1 = 0, m_by1 = 0;
     bool m_doubleTap = false;
     View m_view{0, 0, 1};
@@ -155,6 +175,8 @@ private:
     View m_from{0, 0, 1};
     double m_flingDist = 0, m_dirX = 0, m_dirY = 0;  // content units, unit vector
     double m_zoomTo = 1, m_zoomFx = 0, m_zoomFy = 0;
+    bool m_wheelZoom = false;              // the Zoom glide is a wheel's
+    double m_scrollToX = 0, m_scrollToY = 0;  // a wheel's Scroll glide
 };
 
 }  // namespace barry

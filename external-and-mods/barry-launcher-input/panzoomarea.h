@@ -8,7 +8,11 @@
 //   area = (content - center) * zoom + size / 2.
 // One or more fingers pan and pinch it, a lift while moving flings it, taps,
 // double taps and long presses are reported where they were (area pixels).
-// A mouse drags it as a finger; a wheel zooms around the pointer.
+// A mouse drags it as a finger; a wheel zooms around the pointer. bounds
+// keeps it in place, by boundsMode: Center keeps the center in the rect;
+// Fill makes the rect the content (a map, a picture) and keeps the view
+// inside it, as a gallery does (the content fills the view where it is
+// larger, and is centered where it is smaller), at every zoom.
 //
 // TouchScroll: the Launcher's scrolling lists. It goes around a Flickable,
 // which keeps its look (content, clip, size) and stops taking input itself;
@@ -144,13 +148,22 @@ class PanZoomArea : public GestureSurface {
     Q_PROPERTY(qreal zoom READ zoom WRITE setZoom NOTIFY viewChanged)
     Q_PROPERTY(qreal minZoom READ minZoom WRITE setMinZoom NOTIFY zoomRangeChanged)
     Q_PROPERTY(qreal maxZoom READ maxZoom WRITE setMaxZoom NOTIFY zoomRangeChanged)
-    // Where the center may go, content units; an empty rect: anywhere.
+    // Content units; an empty rect: anywhere. By boundsMode: where the
+    // center may go (Center), or the content's rect, which the view stays
+    // inside (Fill).
     Q_PROPERTY(QRectF bounds READ bounds WRITE setBounds NOTIFY boundsChanged)
+    Q_PROPERTY(BoundsMode boundsMode READ boundsMode WRITE setBoundsMode NOTIFY boundsModeChanged)
     // A double tap zooms in a step around it (and taps wait a moment for a
     // second one); off: taps are at once, no double taps.
     Q_PROPERTY(bool doubleTapZoom READ doubleTapZoom WRITE setDoubleTapZoom NOTIFY doubleTapZoomChanged)
 
 public:
+    // Center (the default): bounds holds the center. Fill: bounds is the
+    // content; the view shows no more than it, and centers it where it is
+    // smaller than the view.
+    enum BoundsMode { Center, Fill };
+    Q_ENUM(BoundsMode)
+
     explicit PanZoomArea(QQuickItem *parent = nullptr);
 
     qreal centerX() const { return m_gesture.view().x; }
@@ -165,6 +178,8 @@ public:
     void setMaxZoom(qreal zoom);
     QRectF bounds() const { return m_bounds; }
     void setBounds(const QRectF &bounds);
+    BoundsMode boundsMode() const { return m_boundsMode; }
+    void setBoundsMode(BoundsMode mode);
     bool doubleTapZoom() const { return m_doubleTapZoom; }
     void setDoubleTapZoom(bool on);
 
@@ -180,6 +195,7 @@ signals:
     void viewChanged();
     void zoomRangeChanged();
     void boundsChanged();
+    void boundsModeChanged();
     void doubleTapZoomChanged();
     // Where, area pixels.
     void tapped(qreal x, qreal y);
@@ -190,6 +206,7 @@ protected:
     void syncIn() override;
     void showView() override;
     void tap(Tap kind, double x, double y) override;
+    void geometryChange(const QRectF &newGeometry, const QRectF &oldGeometry) override;
 
 private:
     void limits();
@@ -198,6 +215,7 @@ private:
     qreal m_minZoom = 0.1;
     qreal m_maxZoom = 10;
     QRectF m_bounds;
+    BoundsMode m_boundsMode = Center;
     bool m_doubleTapZoom = false;
 };
 
