@@ -862,10 +862,11 @@ if [[ "$SOC" != sm8650 ]]; then
     install_file "$SM8550_OVL/usr/lib/barry_launcher/$f" "$R/usr/lib/barry_launcher/$f" 0755
   done
   # Glide typing's decoder, the Desktop Mode (KWin) side and user apps
-  # (barry_apps, also barry-app's), imported by barry_launcher_shelld; the
-  # quick settings' Wi-Fi, Bluetooth, volume and capture (barry_quick),
-  # imported by barry_launcher_statsd.
-  for f in barry_glide.py barry_desktop.py barry_apps.py barry_quick.py; do
+  # (barry_apps, also barry-app's) and their updates (barry_updates, with
+  # the catalog /usr/share/barry_launcher/app-updates.json), imported by
+  # barry_launcher_shelld; the quick settings' Wi-Fi, Bluetooth, volume and
+  # capture (barry_quick), imported by barry_launcher_statsd.
+  for f in barry_glide.py barry_desktop.py barry_apps.py barry_updates.py barry_quick.py; do
     install_file "$SM8550_OVL/usr/lib/barry_launcher/$f" "$R/usr/lib/barry_launcher/$f" 0644
   done
   # barry-app: install and make Barry Launcher apps from a terminal.

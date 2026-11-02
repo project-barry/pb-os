@@ -1,5 +1,7 @@
 #include "edgeswipe.h"
 
+#include "touchrules.h"
+
 #include <QDebug>
 #include <QDir>
 #include <QFile>
@@ -23,8 +25,8 @@ const char TOUCH_NAME[] = "bottom_touchscreen";
 // As TouchTrackpad: the panel is portrait and turned right; screen x is raw
 // y, screen y runs along raw x, bottom to top. Design pixels (s = 1).
 constexpr double SCREEN_W = 1240, SCREEN_H = 1080;
-// The finger's last moments, for its speed at release.
-constexpr double VELOCITY_WINDOW_S = 0.1;
+// The finger's last moments, for its speed at release (the touch rules').
+constexpr double VELOCITY_WINDOW_S = barry::touch::VELOCITY_WINDOW_S;
 
 double monotonic()
 {

@@ -30,6 +30,7 @@ constexpr TopicInfo TOPICS[] = {
     {"keyd", "/keyd", 100},
     {"apps", "/apps", 1000},
     {"tools", "/tools", 1000},  // no one watches it: an older shelld has no /tools
+    {"updates", "/updates", 5000},  // nor this: an older shelld has no /updates
 };
 
 // Waiting to try the socket again: from the first, doubling up to the last.
@@ -157,6 +158,7 @@ void ShellState::take(int topic, const QJsonValue &value)
         emit toolsChanged();
         takeTools();
         break;
+    case Updates: emit updatesChanged(); break;
     }
 }
 

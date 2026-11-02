@@ -2,9 +2,9 @@
   "format": 1,
   "id": "io.github.project-barry.dino",
   "name": "Dino",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "main": "main.qml",
-  "icon": "icon.svg",
+  "icon": "icon-symbolic.svg",
   "description": "An endless runner after Chrome's offline dinosaur game. Tap to jump; it keeps your best score.",
   "author": "Project Barry",
   "homepage": "https://github.com/project-barry/barry-launcher-apps"

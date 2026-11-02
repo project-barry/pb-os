@@ -59,7 +59,7 @@ import threading
 import time
 
 PORT = 47990
-TOPICS = ("home", "keyboard", "top-keyboard", "keyd", "apps", "tools")
+TOPICS = ("home", "keyboard", "top-keyboard", "keyd", "apps", "tools", "updates")
 OLD_TOPICS = TOPICS[:5]  # the old shelld's (no /tools)
 TOOL_SLIDE_S = 0.24  # qml6_stub.py's slide, as ToolStage.qml's
 TOOL_LEAVE_S = 0.4  # shelld's cap

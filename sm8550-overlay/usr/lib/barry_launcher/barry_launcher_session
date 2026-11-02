@@ -8,6 +8,13 @@
 # page of the shell, left of home. X11 clients, so gamescope's stacking and
 # overlays apply.
 export QT_QPA_PLATFORM=xcb QT_XCB_GL_INTEGRATION=xcb_egl
+# No wait for vblank in the swap: gamescope composites the windows on the
+# screen's own vblank anyway. With it, Qt's GUI thread sat blocked behind the
+# render thread's swap (15-27 ms a frame), so touches arrived two at a time
+# and a dragged page moved 30 times a second, a frame or two behind the
+# finger; without it, every touch (53 Hz) reaches the page (2026-11-01).
+# The shell, the keyboard and every app shelld starts inherit it.
+export vblank_mode=0
 SHELL_QML=/usr/share/barry_launcher/shell
 /usr/lib/barry_launcher/barry_launcher_statsd &
 /usr/lib/barry_launcher/barry_launcher_shelld &

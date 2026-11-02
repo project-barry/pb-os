@@ -5,7 +5,8 @@
 //
 // It watches its children's touches (and mouse, for a test without a
 // touchscreen) without taking them: a tap on a tile is still a tap. A touch
-// becomes a swipe only once it has moved `threshold` pixels, mostly
+// becomes a swipe only once it has moved `threshold` pixels (unset: Barry's
+// touch slop, touchrules.h), mostly
 // sideways, in a direction that moves the page; then the swipe takes the
 // touch, and progress follows the finger. On release the page goes to the
 // side it was thrown toward, or the nearer one, and settle() says where;
@@ -87,7 +88,9 @@ signals:
     // A finger took the page (stop any settling animation).
     void dragStarted();
     // Animate progress to target (a page); velocity in progress per second.
-    void settle(qreal target, qreal velocity);
+    // duration: a thrown page's, in ms, at the finger's pace (0: not thrown,
+    // the page's usual pace); at most the usual one.
+    void settle(qreal target, qreal velocity, qreal duration);
 
 protected:
     bool childMouseEventFilter(QQuickItem *item, QEvent *event) override;
@@ -123,13 +126,14 @@ private:
     void setPage(int page);
     void settleTo(int target);
     int clampPage(int page) const;
+    qreal threshold() const;
 
     qreal m_progress = 0;
     bool m_dragging = false;
     int m_page = 0;
     int m_minPage = 0;
     int m_maxPage = 1;
-    qreal m_threshold = 24;
+    qreal m_threshold = -1;  // unset: Barry's touch slop
     bool m_swipeEnabled = true;
 
     // Touches down that may still become the swipe.

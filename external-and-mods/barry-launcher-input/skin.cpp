@@ -19,7 +19,7 @@ const char DEFAULT_SKIN[] = "ayn";
 constexpr int SETTLE_MS = 150;
 // The files a skin may replace.
 const char *const VIEWS[] = {"KeyPanel.qml", "GridPanel.qml", "TopInput.qml", "DeckControls.qml", "Home.qml",
-                             "Hero.qml", "QuickSettings.qml"};
+                             "Hero.qml", "QuickSettings.qml", "AppUpdates.qml"};
 
 }  // namespace
 

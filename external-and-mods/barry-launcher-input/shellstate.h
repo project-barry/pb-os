@@ -41,6 +41,9 @@ class ShellState : public QObject {
     Q_PROPERTY(QJsonValue keyd READ keyd NOTIFY keydChanged)
     Q_PROPERTY(QJsonValue apps READ apps NOTIFY appsChanged)
     Q_PROPERTY(QJsonValue tools READ tools NOTIFY toolsChanged)
+    // New versions of Project Barry's apps on offer (GET /updates;
+    // shell/AppUpdates.qml).
+    Q_PROPERTY(QJsonValue updates READ updates NOTIFY updatesChanged)
     // This process is a tool's window that slides away when asked.
     Q_PROPERTY(bool tool READ tool WRITE setTool NOTIFY toolChanged)
     // shelld asks this tool to go (Barry opens): it slides away, then calls
@@ -60,6 +63,7 @@ public:
     QJsonValue keyd() const { return m_values.value(Keyd); }
     QJsonValue apps() const { return m_values.value(Apps); }
     QJsonValue tools() const { return m_values.value(Tools); }
+    QJsonValue updates() const { return m_values.value(Updates); }
     bool tool() const { return m_tool; }
     void setTool(bool tool);
     bool leaving() const { return m_leaving; }
@@ -69,7 +73,7 @@ public:
     // up by it.
     Q_INVOKABLE void setKeyboardHeight(int height);
     // A topic this process follows ("home", "keyboard", "top-keyboard",
-    // "keyd", "apps", "tools"): only those are asked over HTTP without the
+    // "keyd", "apps", "tools", "updates"): only those are asked over HTTP without the
     // socket.
     // Counted: each watch() wants an unwatch().
     Q_INVOKABLE void watch(const QString &topic);
@@ -89,12 +93,13 @@ signals:
     void keydChanged();
     void appsChanged();
     void toolsChanged();
+    void updatesChanged();
     void toolChanged();
     void leavingChanged();
     void connectedChanged();
 
 private:
-    enum Topic { Home, Keyboard, TopKeyboard, Keyd, Apps, Tools, TopicCount };
+    enum Topic { Home, Keyboard, TopKeyboard, Keyd, Apps, Tools, Updates, TopicCount };
 
     ShellState();
     void connectNow();

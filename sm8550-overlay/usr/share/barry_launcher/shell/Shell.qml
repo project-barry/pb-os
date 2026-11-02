@@ -40,6 +40,10 @@
 // Desktop Mode ("desktop" argument, barry_launcher_desktop) it is always
 // off: the art is Game Mode's, for the game selected in Steam.
 //
+// New versions of Project Barry's apps (shelld's updates topic, the first
+// start after a PB-OS update found some) show as a card over Barry's pages
+// (AppUpdates.qml), whenever Barry shows, until the user answers it.
+//
 // Opening, the apps fly in toward the screen, the middle ones first
 // (Home.qml's dropIn, Barry.Input's TileDrop; a skin's home screen without
 // it slides up instead): shelld counts the openings, this puts Barry at
@@ -260,17 +264,18 @@ Window {
             // are Game Mode's: their controls do nothing under KWin).
             minPage: win.desktop ? 0 : -1
             maxPage: win.desktop ? 0 : 1
-            threshold: 24 * win.s
             // Not while the quick settings are being arranged (widgets drag).
             swipeEnabled: win.barryShown && !win.following && !(quick.item && quick.item.editing)
             onDragStarted: settleAnim.stop()
-            onSettle: function (target, velocity) {
+            onSettle: function (target, velocity, duration) {
                 settleAnim.stop()
                 // As the keyboard: toward a side page, a quick move with a
                 // visible overshoot; back to the apps, a softer settle.
                 const opening = target !== 0
                 settleAnim.to = target
-                settleAnim.duration = opening ? 460 : 380
+                // A thrown page goes at the finger's pace (faster thrown, sooner there).
+                const usual = opening ? 460 : 380
+                settleAnim.duration = duration > 0 ? Math.min(usual, duration) : usual
                 // A side panel going back to its app: no spring past the
                 // middle (the other side page would peek in over the app).
                 settleAnim.easing.overshoot = win.sidePanel && !opening ? 0 : opening ? 1.4 : 0.8
@@ -455,6 +460,23 @@ Window {
         cache: false
         fillMode: Image.Stretch
     }
+    // New versions of Project Barry's apps (see the top): over the pages,
+    // while Barry shows; untouched, Barry stays up meanwhile (standbyWanted).
+    SkinView {
+        id: appUpdates
+        file: "AppUpdates.qml"
+        anchors.fill: parent
+        z: 60
+        visible: win.barryShown && !win.sidePanel
+    }
+    readonly property bool updatesShown: appUpdates.item !== null && appUpdates.item.visible && appUpdates.visible
+    Binding { target: appUpdates.item; property: "s"; value: win.s }
+    Binding { target: appUpdates.item; property: "updates"; value: ShellState.updates }
+    Connections {
+        target: appUpdates.item
+        ignoreUnknownSignals: true
+        function onAnswer(what) { win.post("/updates", { do: what }) }
+    }
     function underClear() {
         win.underCover = false
         win.underShot = ""
@@ -518,7 +540,7 @@ Window {
     // the binding, and a touch or a page change then ran it on the side
     // pages too (they closed after 15 s).
     readonly property bool standbyWanted: heroOn && barryOpen && standbySeconds > 0
-                                          && pages.page === 0 && !pages.dragging
+                                          && pages.page === 0 && !pages.dragging && !updatesShown
     function standbyAgain() {
         if (standbyWanted)
             standby.restart()

@@ -19,6 +19,15 @@
 //                               JSON; done(status, reply) gets the reply's
 //                               JSON (null if none), status 0 if no answer
 //
+// Touch is Barry Launcher's: an app scrolls with Barry.Input's TouchScroll
+// and pans and zooms with its PanZoomArea (`import Barry.Input`), never with
+// touch handling of its own (Barry.Input's GESTURES.md).
+//
+// Its icon follows the skin's theme like the built-in icons: one-color white
+// (#ffffff) line art on transparent, named icon-symbolic.svg, which the home
+// screen tints with the theme's icon color (barry_apps.icon_warnings warns
+// about one that would not).
+//
 // A main.qml that fails to load shows why, here, instead of a black screen.
 import QtQuick
 import QtQuick.Window
