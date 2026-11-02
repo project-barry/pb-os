@@ -1094,6 +1094,23 @@ void proton_games_save(const Value& state) {
     chown_config(path);
 }
 
+// The games the frontend has put at 60 Hz once (app ids as strings).
+Value refresh_games_read() {
+    Value st = read_json(pbos_config("refresh-games.json"));
+    Value out = Value::object();
+    out["set"] = st.has("set") ? st["set"] : Value::array();
+    return out;
+}
+
+void refresh_games_save(const Value& state) {
+    Value st = Value::object();
+    st["set"] = state.has("set") ? state["set"] : Value::array();
+    std::string path = pbos_config("refresh-games.json");
+    makedirs(dirname(path));
+    write_json(path, st);
+    chown_config(path);
+}
+
 // ---------------------------------------------------------------- games --
 Value game_info() {
     // The wrapper knows the presets and this device's core groups.
@@ -1521,6 +1538,13 @@ public:
             if (a.at(0).is_object()) proton_games_save(a.at(0));
             std::string note = arg(a, 1, "").str();
             if (!note.empty()) log("tools: Proton PB-OS: %s", note.c_str());
+            return true;
+        }
+        if (m == "get_refresh_games") return refresh_games_read();
+        if (m == "set_refresh_games") {
+            if (a.at(0).is_object()) refresh_games_save(a.at(0));
+            std::string note = arg(a, 1, "").str();
+            if (!note.empty()) log("tools: 60 Hz: %s", note.c_str());
             return true;
         }
         throw CallError("PB-OS Tools has no method " + m);

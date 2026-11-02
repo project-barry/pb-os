@@ -63,6 +63,8 @@ const setChargeControl = callable("set_charge_control");
 const getProton = callable("get_proton");
 const getProtonGames = callable("get_proton_games");
 const setProtonGames = callable("set_proton_games");
+const getRefreshGames = callable("get_refresh_games");
+const setRefreshGames = callable("set_refresh_games");
 // Per-game profiles, applied at launch by /usr/bin/pbos-game-launch.
 const getGameProfiles = callable("get_game_profiles");
 const setGameProfile = callable("set_game_profile");
@@ -2000,6 +2002,52 @@ function protonSoon(appids) {
 }
 let protonEvents = [];
 
+// Azahar and melonDS games at 60 Hz. On a screen set faster than 60 Hz they
+// run behind (Thor at 120 Hz, two windows: 48-50 fps, slow music). The first
+// time such a game is started, its Steam per-game profile is turned on with
+// 60 Hz, before the game runs; recorded in refresh-games.json, so whatever
+// the user sets there later stays. Only where Steam offers more than 60 Hz.
+const SIXTY_HZ_EMULATORS = /azahar|melonds/i;
+let perfStore = null;
+function systemPerf() {
+    if (perfStore) return perfStore;
+    for (const m of DFL.modules.values()) {
+        if (!m || typeof m !== "object") continue;
+        for (const name in m) {
+            try {
+                const v = m[name];
+                if (v && typeof v.CreateSettingsUpdateRequest === "function" && typeof v.SetDisplayRefreshRateManualHz === "function") {
+                    perfStore = v;
+                    return v;
+                }
+            } catch (e) { /* a throwing getter: next */ }
+        }
+    }
+    return null;
+}
+// A non-Steam shortcut's game id: (appid << 32) | 0x02000000.
+function gameId(appid) {
+    const id = BigInt(appid >>> 0);
+    return String(id >= 0x80000000n ? (id << 32n) | 0x02000000n : id);
+}
+async function sixtyHz(appid) {
+    const perf = systemPerf();
+    const limits = perf && perf.msgState && perf.msgState.limits;
+    if (!limits || !(limits.display_refresh_manual_hz_max > 60) || !(limits.display_refresh_manual_hz_min <= 60)) return;
+    const key = String(appid);
+    const state = await getRefreshGames();
+    if (state.set.includes(key)) return;
+    const d = await appDetails(Number(appid));
+    if (!d || !SIXTY_HZ_EMULATORS.test(`${d.strShortcutExe || ""} ${d.strLaunchOptions || ""}`)) return;
+    const req = perf.CreateSettingsUpdateRequest(gameId(appid));
+    const app = req.settings_delta().per_app(true);
+    app.set_is_game_perf_profile_enabled(true);
+    app.set_display_refresh_manual_hz(60);
+    SteamClient.System.Perf.UpdateSettings(req.serializeBase64String());
+    state.set.push(key);
+    await setRefreshGames(state, `${key} (${d.strDisplayName || "?"}): per-game profile at 60 Hz (once)`);
+}
+
 // ---------------------------------------------------------- import apk ---
 // Import APK (Personalization, at the bottom): APKs and bundles (.apk, .apkm,
 // .xapk, .apks) from Downloads, the SD card or a USB drive go to
@@ -2266,7 +2314,10 @@ protonEvents = [
         else setTimeout(() => { reportGame(); androidTitles().catch(() => {}); }, 1000);
     }),
     SteamClient.Apps.RegisterForAppOverviewChanges(() => protonSoon(null)),
-    SteamClient.Apps.RegisterForGameActionStart((_action, appid) => protonSoon([String(appid)])),
+    SteamClient.Apps.RegisterForGameActionStart((_action, appid) => {
+        protonSoon([String(appid)]);
+        sixtyHz(appid).catch((e) => P.fail("60 Hz", e));
+    }),
 ];
 api.addEventListener("pbos_update_available", onAvailable);
 api.addEventListener("pbos_mode", onMode);
