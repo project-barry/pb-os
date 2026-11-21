@@ -605,6 +605,14 @@ EOF
     sudo_run install -m0644 "${ktmp}" "${MNT}/boot/KERNEL-rpduo"
   fi
   rm -f "${ktmp}"
+  # Test only (EFI_BOOT_ENTRY=1): the same kernel, initrd, cmdline and DTBs as
+  # an EFI-stub boot entry, for OpenABL newer than 1.2 (no \KERNEL support).
+  # Off for releases: Software Update replaces only KERNEL, so this entry
+  # would keep booting the old kernel after an update.
+  if [[ "${EFI_BOOT_ENTRY:-0}" == 1 ]]; then
+    log "Adding the EFI-stub boot entry (loader/entries/pbos.conf)"
+    sudo_run python3 -I "${SCRIPTS}/bls-from-bootimg.py" "${MNT}/boot/KERNEL" "${MNT}/boot"
+  fi
   stage_openabl
 
   sudo_run mkdir -p "${MNT}/root/opt/steamos-sm8650"
