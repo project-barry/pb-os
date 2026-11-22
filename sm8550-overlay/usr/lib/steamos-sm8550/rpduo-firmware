@@ -73,10 +73,21 @@ WANTED = {
     # The unit's factory stick calibration (FactoryTest writes it).
     "rpduo-persist/joys": ["retrostation/joys"],
 }
+# Files that belong to this one unit come only from persist. When persist
+# could not be read, modem's image/qca6750/bdwlan.elf (another chip's
+# board data) was taken for board.bin and the WPSS crashed on it
+# (2026-11-22); better no file now and another try next boot.
+PERSIST_ONLY = {
+    "ath12k/WCN7750/hw1.0/board.bin",
+    "rpduo-persist/wlan_mac.bin",
+    "rpduo-persist/quec_bt_mac",
+    "rpduo-persist/joys",
+}
 # Bumped when WANTED or the sources change: everything is copied again once
 # (2: vendor_b read whole through device-mapper; the video firmware; MACs;
-# the stick calibration).
-VERSION = "2"
+# the stick calibration. 3: board.bin from persist only, so a wrong one
+# taken from modem is replaced).
+VERSION = "3"
 STAMP = FWROOT / "rpduo-version"
 WLAN_LINK = Path("/etc/systemd/network/10-rpduo-wlan.link")
 
@@ -261,8 +272,13 @@ class Mounted:
                 return None
             self.loop = src = r.stdout.strip()
         self.dir = tempfile.mkdtemp(prefix="rpduo-fw.")
-        for fstype in ("erofs", "ext4", "vfat"):
-            if run("mount", "-r", "-t", fstype, src, self.dir, check=False).returncode == 0:
+        # ext4 with noload: Android often leaves persist's journal
+        # unreplayed, and a read-only mount then refuses ("recovery required
+        # on readonly filesystem"). noload reads it as it is on disk; the
+        # files wanted from it are written once at the factory.
+        for fstype, opts in (("erofs", []), ("ext4", ["-o", "noload"]), ("vfat", [])):
+            if run("mount", "-r", "-t", fstype, *opts, src, self.dir,
+                   check=False).returncode == 0:
                 return Path(self.dir)
         self.__exit__()
         return None
@@ -335,6 +351,8 @@ def collect(force):
                     files.setdefault(p.name.lower(), p)
                     paths.append((rel.lower(), p))
             for want, names in list(missing.items()):
+                if want in PERSIST_ONLY and label != "persist":
+                    continue
                 for n in names:
                     if "/" in n:
                         src = next((p for r, p in sorted(paths)
@@ -477,9 +495,14 @@ def fix_speaker_acf(path):
 
 
 def start_remoteprocs():
-    """Remoteprocs that failed at boot for want of firmware sit offline."""
+    """Remoteprocs that failed at boot for want of firmware sit offline.
+    Not the WPSS: ath12k boots it itself when it binds (bind_wifi). Started
+    from here first, ath12k found it running, loaded its firmware and never
+    finished the second QMI round, so no wlan0 (first boot, 2026-11-21)."""
     for rp in Path("/sys/class/remoteproc").glob("remoteproc*"):
         try:
+            if (rp / "name").read_text().strip() == "wpss":
+                continue
             if (rp / "state").read_text().strip() == "offline":
                 (rp / "state").write_text("start")
                 log(f"started {rp.name} ({(rp / 'firmware').read_text().strip()})")

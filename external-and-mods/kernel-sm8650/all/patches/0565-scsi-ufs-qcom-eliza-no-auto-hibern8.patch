@@ -1,0 +1,47 @@
+From: lavachemist <48248311+lavachemist@users.noreply.github.com>
+Subject: [PATCH] scsi: ufs: qcom: no auto-hibern8 on Eliza
+
+On the Retroid Pocket Duo (Eliza) a read issued a few seconds after
+boot sometimes never completes (2 of 5 boots): the host has entered
+hibern8 on its own (HW_H8_ENTER_CNT=1, HW_H8_EXIT_CNT=0), clock gating
+then enters hibern8 again from software on top of it
+(SW_AFTER_HW_H8_ENTER_CNT=1), and after the software exit the link
+never serves the request. The SCSI timeout fires at 30 s, the abort,
+device reset and link startup all fail and UFS is gone for that boot.
+
+Leave hibern8 to clock gating alone on Eliza: mark auto-hibern8 broken,
+which also skips the hardware clock control that goes with it. Other
+SoCs keep the SM8550 data unchanged.
+
+
+---
+--- a/drivers/ufs/host/ufs-qcom.c
++++ b/drivers/ufs/host/ufs-qcom.c
+@@ -3030,6 +3030,18 @@
+ 	.no_phy_retention = true,
+ };
+
++/*
++ * Eliza (Retroid Pocket Duo): with auto-hibern8 on, a request issued after
++ * the hardware entered hibern8 and clock gating entered it again from
++ * software sometimes never completes, and UFS is lost after the 30 s SCSI
++ * timeout. Clock gating still puts the link in hibern8 when idle.
++ */
++static const struct ufs_qcom_drvdata ufs_qcom_eliza_drvdata = {
++	.quirks = UFSHCD_QUIRK_BROKEN_LSDBS_CAP |
++		  UFSHCD_QUIRK_BROKEN_AUTO_HIBERN8,
++	.no_phy_retention = true,
++};
++
+ static const struct ufs_qcom_drvdata ufs_qcom_sa8255p_drvdata = {
+ 	.vops = &ufs_hba_qcom_sa8255p_vops
+ };
+@@ -3038,7 +3050,7 @@
+ 	{ .compatible = "qcom,ufshc" },
+ 	{ .compatible = "qcom,sm8550-ufshc", .data = &ufs_qcom_sm8550_drvdata },
+ 	{ .compatible = "qcom,sm8650-ufshc", .data = &ufs_qcom_sm8550_drvdata },
+-	{ .compatible = "qcom,eliza-ufshc", .data = &ufs_qcom_sm8550_drvdata },
++	{ .compatible = "qcom,eliza-ufshc", .data = &ufs_qcom_eliza_drvdata },
+ 	{ .compatible = "qcom,sa8255p-ufshc", .data = &ufs_qcom_sa8255p_drvdata },
+ 	{},
+ };
