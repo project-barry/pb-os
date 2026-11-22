@@ -59,3 +59,15 @@
 		};
 	};
 };
+
+/*
+ * Linux 7.3 has no driver for the crypto engine (QCE is marked BROKEN), so
+ * this node never gets one and the interconnect providers wait for it
+ * forever ("sync_state() pending due to 1dfa000.crypto"). Until they sync,
+ * every bus and memory vote stays at its maximum, asleep too, and the SoC
+ * never reaches its low-power state (AYN Thor, 2026-11-20: about 100 mA
+ * asleep). As in the Retroid Pocket DTs.
+ */
+&crypto {
+	status = "disabled";
+};

@@ -17,7 +17,8 @@ command -v bwrap >/dev/null || { echo "bwrap required" >&2; exit 1; }
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
-cp "$HERE/barry_launcher_keyd.cpp" "$work/"
+# bottompanel.h: where a touch is on the bottom screen, shared with Barry.Input.
+cp "$HERE/barry_launcher_keyd.cpp" "$HERE/../barry-launcher-input/bottompanel.h" "$work/"
 bwrap --bind "$R" / --bind "$work" /build --dev /dev --proc /proc --tmpfs /tmp \
   --unshare-pid --die-with-parent --chdir /build --setenv PATH /usr/bin \
   sh -c 'g++ -std=c++17 -O2 -Wall -Wextra -Werror -o barry_launcher_keyd barry_launcher_keyd.cpp \

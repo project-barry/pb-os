@@ -4,7 +4,7 @@ ConditionPathExists=/sys/firmware/devicetree/base/compatible
 
 [Service]
 Type=simple
-ExecCondition=/bin/sh -c 'grep -qaE "retroidpocket,(rp6|rpnova)|ayn,(thor|odin2)|konkr,pocket-fit" /sys/firmware/devicetree/base/compatible'
+ExecCondition=/bin/sh -c 'grep -qaE "retroidpocket,(rp6|rpnova|rpduo)|ayn,(thor|odin2)|konkr,pocket-fit" /sys/firmware/devicetree/base/compatible'
 # The daemon is pbos-platformd's charge-control module; the script at
 # /usr/lib/steamos-sm8550/sm8550-charge-control stays as its settings CLI.
 ExecStart=/usr/lib/pbos-platformd/pbos-platformd --system --only charge-control

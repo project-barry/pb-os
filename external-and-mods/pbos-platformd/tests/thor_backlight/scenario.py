@@ -13,6 +13,12 @@ stub that logs (and answers xprop). After each step the case waits for
 things to settle and takes a snapshot: both panels, bl_power, the
 touchscreen's inhibited, the flags and files, the mounts, the commands run
 and the daemon's log (prefixes and event numbers normalized).
+
+Cases named duo-* are the Retroid Pocket Duo's profile (the module only;
+run.sh fakes its compatible): the panels the other way round (bottom
+ae96000 max 3445, top ae94000 max 4095, Steam's), no AYN button, Barry's
+Screen off flag. They have no Python to compare with: each snapshot carries
+"expect", the checks it made, which compare.py reports.
 """
 import fcntl
 import json
@@ -119,6 +125,9 @@ class Case:
         self.daemon = None
         self.key = self.touch = None
         self.steam_fd = None
+        # The panels' backlights (the Duo's: duo_panels).
+        self.bottom_name, self.top_name = "ae94000.dsi.0", "ae96000.dsi.0"
+        self.expect = []  # [what, ok] since the last snapshot (duo-* cases)
 
     # --- setup ---
 
@@ -231,9 +240,9 @@ class Case:
         words = [w for w in (sb or "").replace("\0", " ").split() if w.isdigit()]
         self.snaps.append({
             "label": label,
-            "bottom": rd(f"{BL}/ae94000.dsi.0/brightness"),
-            "top": rd(f"{BL}/ae96000.dsi.0/brightness"),
-            "bl_power": rd(f"{BL}/ae94000.dsi.0/bl_power"),
+            "bottom": rd(f"{BL}/{self.bottom_name}/brightness"),
+            "top": rd(f"{BL}/{self.top_name}/brightness"),
+            "bl_power": rd(f"{BL}/{self.bottom_name}/bl_power"),
             "inhibited": self.touch.inhibited() if self.touch else None,
             "bottom_seen": (rd(f"{BOTTOM_SYS}/brightness") or "").replace("\0", "").split()[-1:],
             "type_seen": rd(f"{BOTTOM_SYS}/type"),
@@ -252,6 +261,27 @@ class Case:
             "cmds": newcmds,
             "log": new,
         })
+        if self.expect:
+            self.snaps[-1]["expect"] = self.expect
+            self.expect = []
+
+    def check(self, what, ok):
+        """A duo-* case's expectation, kept with the next snapshot."""
+        self.expect.append([what, bool(ok)])
+
+    def duo_panels(self, bottom=2000, top=1500):
+        """The Retroid Pocket Duo's: top ae94000 (max 4095, Steam's), bottom
+        ae96000 (max 3445)."""
+        self.bottom_name, self.top_name = "ae96000.dsi.0", "ae94000.dsi.0"
+        for name, mx, val in (("ae94000.dsi.0", 4095, top), ("ae96000.dsi.0", 3445, bottom)):
+            d = f"{BL}/{name}"
+            os.makedirs(d, exist_ok=True)
+            for f, v in (("max_brightness", mx), ("brightness", val), ("actual_brightness", val),
+                         ("bl_power", 0), ("type", "raw")):
+                wr(f"{d}/{f}", f"{v}\n")
+        os.makedirs(VAR, exist_ok=True)
+        os.makedirs(os.path.dirname(SETTINGS), exist_ok=True)
+        replace(SETTINGS, json.dumps({"bottomSleepSeconds": 0}))
 
 
 # --- the cases ---
@@ -670,6 +700,107 @@ def c_idle(c):
         cpu1, rss = usage(c.daemon.pid)
         c.snap(f"idle {label}")
         c.snaps[-1]["measure"] = {"cpu_ms_per_min": (cpu1 - cpu0) * 60 // secs, "rss_kb": rss}
+
+
+# --- the Retroid Pocket Duo (DUO profile) ---
+
+DUO_BOTTOM = f"{BL}/ae96000.dsi.0"
+DUO_TOP = f"{BL}/ae94000.dsi.0"
+
+
+def linear(f, mx=3445):
+    """thor_backlight.h's linear_bottom (panel_value)."""
+    f = max(0.0, min(1.0, f))
+    return max(10, min(mx, int(1 + f * 4094) * mx // 4095))
+
+
+def c_duo_boot(c):
+    c.duo_panels(bottom=2000, top=1500)
+    c.devices(key=False)
+    c.start()
+    s = json.loads(rd(SCREENS) or "{}")
+    f = 2000 / 3445
+    c.check("SCREENS made from the bottom panel",
+            abs(s.get("bottom", -1) - f) < 1e-9 and abs(s.get("top", -1) - f) < 1e-9)
+    c.check("bottom panel about where it was", abs(int(rd(f"{DUO_BOTTOM}/brightness")) - 2000) <= 2)
+    c.check("top panel untouched", rd(f"{DUO_TOP}/brightness") == "1500")
+    c.check("nothing mounted over the panels", not any(
+        line.split()[4].startswith("/sys/class/backlight/") for line in open("/proc/self/mountinfo")))
+    c.check("no Steam file, no level",
+            rd(f"{RUN}/steam-bottom-brightness") is None and rd(f"{RUN}/steam-brightness") is None)
+    c.check("Screen off flag made, 0, group-writable",
+            rd(f"{RUN}/sleep") == "0" and os.stat(f"{RUN}/sleep").st_mode & 0o777 == 0o664)
+    c.snap("started, nothing saved")
+    replace(SCREENS, '{"top": 0.9, "bottom": 0.5, "steam": 0}\n')
+    time.sleep(0.8)
+    c.check("bottom follows SCREENS' bottom, linearly", rd(f"{DUO_BOTTOM}/brightness") == str(linear(0.5)))
+    c.check("top panel still untouched", rd(f"{DUO_TOP}/brightness") == "1500")
+    c.snap("bottom slider 50")
+    wr(f"{DUO_TOP}/brightness", "3000")  # Steam's slider, on the top panel
+    time.sleep(0.6)
+    c.check("Steam's top write left alone", rd(f"{DUO_TOP}/brightness") == "3000")
+    c.check("bottom not moved by it", rd(f"{DUO_BOTTOM}/brightness") == str(linear(0.5)))
+    c.check("SCREENS not moved by it", json.loads(rd(SCREENS))["bottom"] == 0.5)
+    c.snap("Steam moved the top screen")
+    replace(SCREENS, '{"top": 0.9, "bottom": 0.0, "steam": 0}\n')
+    time.sleep(0.8)
+    c.check("bottom at its lowest", rd(f"{DUO_BOTTOM}/brightness") == str(linear(0.0)))
+    c.snap("bottom slider 0")
+
+
+def c_duo_screen_off(c):
+    c.duo_panels()
+    replace(SCREENS, '{"top": 0.5, "bottom": 0.5, "steam": 0}\n')
+    c.devices(key=False)
+    c.proc("gamescope", "--steam")
+    c.start()
+    wr(f"{RUN}/overlay", "1")
+    time.sleep(0.6)
+    c.snap("Barry open")
+    wr(f"{RUN}/sleep", "1")  # Barry's Screen off tile (statsd)
+    time.sleep(0.6)
+    c.check("dark", rd(f"{DUO_BOTTOM}/bl_power") == "4")
+    c.check("touch still on", c.touch.inhibited() == "0")
+    c.check("Barry closed", rd(f"{RUN}/overlay") == "0")
+    c.check("flag taken", rd(f"{RUN}/sleep") == "0")
+    c.snap("Screen off")
+    time.sleep(1.5)
+    c.check("stays dark with Sleep after: Never", rd(f"{DUO_BOTTOM}/bl_power") == "4")
+    c.snap("still asleep")
+    c.touch.touch()
+    time.sleep(0.6)
+    c.check("a touch wakes it", rd(f"{DUO_BOTTOM}/bl_power") == "0")
+    c.check("at its level", rd(f"{DUO_BOTTOM}/brightness") == str(linear(0.5)))
+    c.snap("touch wakes")
+    wr(f"{RUN}/sleep", "1")
+    time.sleep(0.1)
+    c.touch.touch()  # the tap's own finger, just after: no wake
+    time.sleep(0.6)
+    c.check("a touch within the grace keeps it asleep", rd(f"{DUO_BOTTOM}/bl_power") == "4")
+    c.snap("grace")
+
+
+def c_duo_switch(c):
+    c.duo_panels()
+    replace(SCREENS, '{"top": 0.5, "bottom": 0.5, "steam": 0}\n')
+    c.devices(key=False)
+    c.start()
+    wr(STATE, "off")
+    time.sleep(0.8)
+    c.check("switch off: dark", rd(f"{DUO_BOTTOM}/bl_power") == "4")
+    c.check("switch off: touch inhibited", c.touch.inhibited() == "1")
+    c.check("top panel untouched",
+            rd(f"{DUO_TOP}/bl_power") == "0" and rd(f"{DUO_TOP}/brightness") == "1500")
+    c.snap("switch off")
+    wr(f"{RUN}/sleep", "1")
+    time.sleep(0.6)
+    c.check("Screen off while off: still off, touch inhibited", c.touch.inhibited() == "1")
+    c.snap("Screen off while switched off")
+    wr(STATE, "on")
+    time.sleep(0.8)
+    c.check("switch on: lit, touch on",
+            rd(f"{DUO_BOTTOM}/bl_power") == "0" and c.touch.inhibited() == "0")
+    c.snap("switch on")
 
 
 CASES = {name[2:].replace("_", "-"): fn for name, fn in globals().items() if name.startswith("c_")}

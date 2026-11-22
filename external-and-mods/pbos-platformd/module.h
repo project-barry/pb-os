@@ -47,6 +47,9 @@ std::unique_ptr<Module> make_volume_keeper();
 bool charge_control_here();
 std::unique_ptr<Module> make_charge_control();
 std::unique_ptr<Module> make_fan();
+// The device's own fan file read over fan.conf (fan.cpp's DEVICE_CONFS: the
+// Retroid Pocket Duo's), "" when it has none; thor-controls reads it too.
+std::string fan_device_conf();
 std::unique_ptr<Module> make_power_button();
 std::unique_ptr<Module> make_volume_keys();
 bool konkr_volume_here();

@@ -301,7 +301,10 @@ Rectangle {
         anchors.horizontalCenter: parent.horizontalCenter
         anchors.bottom: parent.bottom
         anchors.bottomMargin: 30 * home.s
-        text: "swipe right: performance  ·  swipe left: quick settings  ·  AYN: close"
+        // The device's Barry button closes; without one, a swipe up from the
+        // bottom edge (Barry.Input's EdgeSwipe).
+        text: "swipe right: performance  ·  swipe left: quick settings  ·  "
+              + (Device.barryButton !== "" ? Device.barryButton + ": close" : "swipe up from the bottom edge: close")
         // Game Mode's pages and button (no side pages in Desktop Mode).
         visible: Qt.application.arguments.indexOf("desktop") < 0
         color: home.c.text

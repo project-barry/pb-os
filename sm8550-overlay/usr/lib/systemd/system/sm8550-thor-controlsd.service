@@ -1,10 +1,10 @@
 [Unit]
-Description=AYN Thor: fan profile and stick lighting for Barry Launcher's quick controls
+Description=AYN Thor, Retroid Pocket Duo: fan profile and stick lighting for Barry Launcher's quick controls
 After=sm8550-fand.service
 
 [Service]
 Type=simple
-ExecCondition=/bin/sh -c 'grep -qa "ayn,thor" /sys/firmware/devicetree/base/compatible'
+ExecCondition=/bin/sh -c 'grep -qaE "ayn,thor|retroidpocket,rpduo" /sys/firmware/devicetree/base/compatible'
 ExecStart=/usr/lib/pbos-platformd/pbos-platformd --system --only thor-controls
 Restart=always
 RestartSec=2

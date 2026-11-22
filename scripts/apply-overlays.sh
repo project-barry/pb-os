@@ -101,6 +101,11 @@ cp -a "$KOUT/modules/$KREL" "$R/usr/lib/modules/$KREL"
 # Merge firmware without wiping Frame blobs (Frame ships SM8650 GPU fw too;
 # the AYANEO-signed ADSP/CDSP/zap live under qcom/sm8650/ayaneo/ps2).
 cp -a "$KOUT/firmware/." "$R/usr/lib/firmware/"
+# Retroid Pocket Duo: its AudioReach topology, built from Retroid's
+# audioreach-topology (retroidpocket/v1.0.5, 2c2f735; BSD-3-Clause) with
+# m4 + alsatplg 1.2.11; the kernel loads qcom/<driver>/<card>-tplg.bin.
+install_file "$OVL/usr/lib/firmware/qcom/eliza/ELIZA-RetroidPocket-I2S-tplg.bin" \
+  "$R/usr/lib/firmware/qcom/eliza/ELIZA-RetroidPocket-I2S-tplg.bin" 0644
 # Frame supplies the exact upstream VPU33 firmware under its vendor name.
 # Iris requests the upstream alias. Verify before creating that alias.
 _vpu="$R/usr/lib/firmware/qcom/vpu/vpu33_4v.mbn"
@@ -450,6 +455,9 @@ install_file "$OVL/usr/share/wireplumber/wireplumber.conf.d/52-sm8550-alsa.conf"
   "$R/usr/share/wireplumber/wireplumber.conf.d/52-sm8550-alsa.conf" 0644
 install_file "$OVL/etc/wireplumber/wireplumber.conf.d/52-sm8550-alsa.conf" \
   "$R/etc/wireplumber/wireplumber.conf.d/52-sm8550-alsa.conf" 0644
+# Retroid Pocket Duo: its UCM HiFi profile (matches only its card name).
+install_file "$OVL/etc/wireplumber/wireplumber.conf.d/53-rpduo-audio.conf" \
+  "$R/etc/wireplumber/wireplumber.conf.d/53-rpduo-audio.conf" 0644
 install_file "$OVL/usr/share/pipewire/pipewire.conf.d/99-sm8550-buffers.conf" \
   "$R/usr/share/pipewire/pipewire.conf.d/99-sm8550-buffers.conf" 0644
 install_file "$OVL/usr/share/pipewire/pipewire-pulse.conf.d/99-sm8550-buffers.conf" \
@@ -824,6 +832,8 @@ if [[ "$SOC" != sm8650 ]]; then
   log "== SM8550 overlay (fan curve, power button, thread boost, steamos-manager devices, Thor touch)"
   install_file "$SM8550_OVL/usr/share/sm8550-fand/fan.conf" \
     "$R/usr/share/sm8550-fand/fan.conf" 0644
+  install_file "$SM8550_OVL/usr/share/sm8550-fand/fan-rpduo.conf" \
+    "$R/usr/share/sm8550-fand/fan-rpduo.conf" 0644
   install_file "$SM8550_OVL/usr/lib/systemd/system/sm8550-fand.service" \
     "$R/usr/lib/systemd/system/sm8550-fand.service" 0644
   for t in retroid-pocket6.toml retroid-pocket-nova.toml retroid-pocket-duo.toml ayn-thor.toml; do
@@ -869,6 +879,9 @@ if [[ "$SOC" != sm8650 ]]; then
   for f in barry_glide.py barry_desktop.py barry_apps.py barry_updates.py barry_quick.py; do
     install_file "$SM8550_OVL/usr/lib/barry_launcher/$f" "$R/usr/lib/barry_launcher/$f" 0644
   done
+  # The device's facts (AYN Thor, Retroid Pocket Duo), sourced by
+  # barry_launcher_session and sm8550-run-bottom.
+  install_file "$SM8550_OVL/usr/lib/barry_launcher/barry_device" "$R/usr/lib/barry_launcher/barry_device" 0644
   # barry-app: install and make Barry Launcher apps from a terminal.
   ln -sfn ../lib/barry_launcher/barry-app "$R/usr/bin/barry-app"
   # Desktop Mode: Barry's keyboard as KWin's input method, a small Wayland

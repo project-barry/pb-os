@@ -15,6 +15,9 @@ barry_launcher_statsd on /quick (its docstring has the JSON).
               gamescope) to ~/Pictures/Screenshots
   Record      the top screen with everything playing (barry_capture, on the
               top gamescope's PipeWire stream) to ~/Videos
+  Screen off  on a device without a Barry button (the Retroid Pocket Duo):
+              the bottom screen asleep now, dark with its touchscreen on (a
+              touch wakes it), through sm8550-thor-backlightd's SLEEP_FLAG
 
 A bottom-screen app is any process under the gamescope Barry Launcher runs
 in (barry_launcher_session, statsd too). A stream knows only the process id its app
@@ -47,6 +50,9 @@ GAMESCOPE_NAMES = ("gamescope", "gamescope-wl")
 RUNTIME = os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
 MIN_FREE_TO_RECORD = 2 * 1024**3
 AUDIO_UNIT = "barry_launcher_audio.service"
+# "1": sm8550-thor-backlightd puts the bottom screen to sleep (it makes the
+# file, group input, only where the device has no Barry button).
+SLEEP_FLAG = "/run/sm8550-thor/sleep"
 
 
 def run(*cmd: str, timeout: float = 4) -> subprocess.CompletedProcess | None:
@@ -387,6 +393,26 @@ class Recorder:
             self._finished(code)
 
 
+# Screen off
+
+def screen_off_here() -> bool:
+    """No Barry button (barry_device's BARRY_BUTTON empty) and the daemon's
+    flag is there."""
+    return os.environ.get("BARRY_BUTTON", "AYN") == "" and os.path.exists(SLEEP_FLAG)
+
+
+def screen_off() -> str | None:
+    if not screen_off_here():
+        return "Screen off isn't here: it is for devices without a Barry button, with sm8550-thor-backlightd running."
+    try:
+        with open(SLEEP_FLAG, "w", encoding="utf-8") as fh:
+            fh.write("1")
+    except OSError as err:
+        return f"The bottom screen didn't turn off: {err}"
+    log("screen off")
+    return None
+
+
 class Quick:
     def __init__(self) -> None:
         self.apps = AppsVolume()
@@ -399,10 +425,11 @@ class Quick:
             "bluetooth": bluetooth(),
             "volume": {"system": vol[0], "muted": vol[1], "apps": self.apps.pct} if vol else None,
             "capture": self.recorder.state(),
+            "screenOff": {} if screen_off_here() else None,
         }
 
     def set(self, body: dict) -> tuple[int, dict]:
-        known = {"wifi", "bluetooth", "volume", "screenshot", "record"}
+        known = {"wifi", "bluetooth", "volume", "screenshot", "record", "screenOff"}
         if not body or set(body) - known:
             return 400, {"error": f"known: {sorted(known)}"}
         error, saved = None, None
@@ -426,6 +453,8 @@ class Quick:
         if body.get("screenshot") is True:
             saved, err = screenshot()
             error = err or error
+        if body.get("screenOff") is True:
+            error = screen_off() or error
         if "record" in body:
             if not isinstance(body["record"], bool):
                 return 400, {"error": "record is true or false"}

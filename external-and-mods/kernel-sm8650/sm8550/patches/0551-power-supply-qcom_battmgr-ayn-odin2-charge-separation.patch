@@ -87,7 +87,7 @@ retroid_limit_capacity. Not yet tested on either.
 @@ -1926,6 +1953,15 @@
  	if (of_machine_is_compatible("retroidpocket,rp6") ||
  	    of_machine_is_compatible("retroidpocket,rpnova") ||
- 	    of_machine_is_compatible("ayn,thor")) {
+ 	    of_machine_is_compatible("ayn,thor") || of_machine_is_compatible("retroidpocket,rpduo")) {
 +		battmgr->retroid_charge_now_prop = RETROID_USB_CHARGE_NOW;
 +		battmgr->retroid_limit_capacity_prop = RETROID_USB_LIMIT_CAPACITY;
 +	} else if (of_machine_is_compatible("ayn,odin2")) {

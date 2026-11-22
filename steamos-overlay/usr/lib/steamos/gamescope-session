@@ -187,14 +187,20 @@ if [[ -z "${GAMESCOPE_BACKLIGHT_PATH:-}" ]]; then
   fi
 fi
 
-# AYN Thor: Game Mode drives the top panel (DSI-2) and lends the bottom one
-# (DSI-1) to a companion started with sm8550-run-bottom, which also gets the
-# bottom touchscreen (Armada's dual-screen design). Without the lease the
-# bottom touchscreen is silenced instead, or taps on the dark panel would land
-# on the top one.
+# Two panels: Game Mode drives the top panel and lends the bottom one to a
+# companion started with sm8550-run-bottom, which also gets the bottom
+# touchscreen (Armada's dual-screen design). AYN Thor: top DSI-2, bottom
+# DSI-1. Retroid Pocket Duo: top DSI-1 (vtdr6130, mdss_dsi0), bottom DSI-2
+# (il97680a, mdss_dsi1). Without the lease the bottom touchscreen is silenced
+# instead, or taps on the dark panel would land on the top one.
 BOTTOM_LEASE=0
-if [[ "$OUTPUT" == DSI-2 && -e /sys/class/drm/card0-DSI-1 ]] \
-  && grep -qa 'ayn,thor' /sys/firmware/devicetree/base/compatible 2>/dev/null \
+BOTTOM_OUTPUT=
+if grep -qa 'ayn,thor' /sys/firmware/devicetree/base/compatible 2>/dev/null; then
+  [[ "$OUTPUT" == DSI-2 ]] && BOTTOM_OUTPUT=DSI-1
+elif grep -qa 'retroidpocket,rpduo' /sys/firmware/devicetree/base/compatible 2>/dev/null; then
+  [[ "$OUTPUT" == DSI-1 ]] && BOTTOM_OUTPUT=DSI-2
+fi
+if [[ -n "$BOTTOM_OUTPUT" && -e "/sys/class/drm/card0-$BOTTOM_OUTPUT" ]] \
   && [[ -x /usr/lib/steamos-sm8550/sm8550-run-bottom ]]; then
   BOTTOM_LEASE=1
 fi
@@ -284,7 +290,7 @@ GAMESCOPE_ARGS=(
 )
 
 if (( BOTTOM_LEASE )); then
-  GAMESCOPE_ARGS+=(--lease-connector DSI-1 --ignore-touch-device bottom_touchscreen)
+  GAMESCOPE_ARGS+=(--lease-connector "$BOTTOM_OUTPUT" --ignore-touch-device bottom_touchscreen)
 fi
 if [[ "$KMS_ROTATION" != 1 ]]; then
   # Shader rotation composites anyway; say so explicitly (MSM default).

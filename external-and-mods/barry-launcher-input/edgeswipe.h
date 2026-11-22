@@ -19,7 +19,18 @@
 //     started: cancelled().
 // side: 1 from the left (the dashboard), -1 from the right (the quick
 // settings), as Shell.qml's PageSwipe pages.
+//
+// While bottomArmed (a device without a Barry button, the Retroid Pocket
+// Duo: Shell.qml arms it over an app and while Barry is open over the game
+// art), one finger coming down at the bottom edge and lifted far enough up,
+// quickly enough (touchrules.h's bottomSwipe), is swipedUp(x, y): where it
+// lifted, screen pixels. On the AYN Thor shelld watches that swipe itself.
+//
+// Screen pixels are the bottom screen's (bottompanel.h: the device's size
+// and how its touchscreen is turned).
 #pragma once
+
+#include "bottompanel.h"
 
 #include <QObject>
 #include <QtQml/qqmlregistration.h>
@@ -35,6 +46,7 @@ class EdgeSwipe : public QObject {
     Q_PROPERTY(bool active READ active NOTIFY activeChanged)
     Q_PROPERTY(int side READ side NOTIFY activeChanged)
     Q_PROPERTY(qreal progress READ progress NOTIFY progressChanged)
+    Q_PROPERTY(bool bottomArmed READ bottomArmed WRITE setBottomArmed NOTIFY bottomArmedChanged)
 
 public:
     explicit EdgeSwipe(QObject *parent = nullptr);
@@ -45,6 +57,8 @@ public:
     bool active() const { return m_active; }
     int side() const { return m_side; }
     qreal progress() const { return m_progress; }
+    bool bottomArmed() const { return m_bottomArmed; }
+    void setBottomArmed(bool armed);
 
 signals:
     void armedChanged();
@@ -56,6 +70,8 @@ signals:
     void started(int side);
     void released(int side, qreal progress, qreal velocity);
     void cancelled();
+    void bottomArmedChanged();
+    void swipedUp(qreal x, qreal y);
 
 private:
     void read(int fd);
@@ -65,9 +81,13 @@ private:
     void postProgress(double progress);
     void postReleased(int side, double progress, double velocity);
     void postCancelled();
+    void postSwipedUp(double x, double y);
 
     bool m_armed = false;
     std::atomic<bool> m_armedNow{false};
+    bool m_bottomArmed = false;
+    std::atomic<bool> m_bottomArmedNow{false};
+    barry::BottomPanel m_panel = barry::BottomPanel::fromEnv();
     std::atomic<double> m_edgeNow{45}, m_thresholdNow{24};
     qreal m_edge = 45, m_threshold = 24;
     bool m_active = false;

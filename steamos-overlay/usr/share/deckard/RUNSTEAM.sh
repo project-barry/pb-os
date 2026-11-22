@@ -84,6 +84,28 @@ fi
 if [[ -x /usr/lib/steamos/sm8550-patch-steamui ]]; then
   /usr/lib/steamos/sm8550-patch-steamui "${STEAMROOT}/steamui" >/dev/null 2>&1 || true
 fi
+# The Steam UI draws through ANGLE's Vulkan backend on Turnip (the default,
+# ANGLE -> GL -> zink, made menus sluggish). A new client build brings its own
+# steamwebhelper.sh without the flags, and only the Pocket FIT has a daemon
+# (pbosd) that puts them back, so every start checks them, on every device.
+# The same edit as apply-overlays makes in the image.
+wh="${STEAMROOT}/steamrtarm64/steamwebhelper.sh"
+if [[ -f "$wh" ]] && ! grep -q PBOS_CEF_FLAGS "$wh"; then
+  wh_old="$(<"$wh")"
+  wh_exec='exec taskset 0x7c $(pwd)/steamwebhelper "$@" &> ~/.steam/steam/logs/steamwebhelper.log'
+  wh_new='PBOS_CEF_FLAGS="--use-gl=angle --use-angle=vulkan --enable-features=Vulkan,DefaultANGLEVulkan,VulkanFromANGLE"'$'\n''exec taskset 0x7c $(pwd)/steamwebhelper "$@" $PBOS_CEF_FLAGS &> ~/.steam/steam/logs/steamwebhelper.log'
+  wh_text="${wh_old//KONKR_CEF_FLAGS/PBOS_CEF_FLAGS}"  # patched before the PB-OS rename
+  [[ "$wh_text" == *PBOS_CEF_FLAGS* ]] || wh_text="${wh_text//"$wh_exec"/"$wh_new"}"
+  if [[ "$wh_text" != "$wh_old" ]]; then
+    printf '%s\n' "$wh_text" >"${wh}.pbos-new" \
+      && chmod --reference="$wh" "${wh}.pbos-new" \
+      && mv -f "${wh}.pbos-new" "$wh" \
+      && echo "RUNSTEAM: Steam UI on ANGLE-Vulkan again (steamwebhelper.sh)" \
+      || rm -f "${wh}.pbos-new"
+  fi
+  unset wh_old wh_exec wh_new wh_text
+fi
+unset wh
 # Frame tarball leaves linuxarm64/steamclient.so as 0 bytes. webhelper
 # dlmopens that path and Gamepad UI never creates the BPM window.
 if [[ -d "${STEAMROOT}/linuxarm64" && -d "${STEAMROOT}/steamrtarm64" ]]; then

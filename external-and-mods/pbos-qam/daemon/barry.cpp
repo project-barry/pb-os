@@ -1,5 +1,8 @@
-// The Barry Launcher section (AYN Thor): the backend of what was the Barry
-// Launcher Decky plugin (folder dual-screen), method for method.
+// The Barry Launcher section (AYN Thor, Retroid Pocket Duo): the backend of
+// what was the Barry Launcher Decky plugin (folder dual-screen), method for
+// method. On the Duo Steam's slider is the top screen's alone (thor-backlight's
+// DUO profile): get_state says so ("topSlider" false), and that the device has
+// no Barry button ("button" "").
 //
 // One switch for the bottom screen, and each screen's brightness, as on
 // AYN's Android: Steam's brightness slider sets both screens
@@ -1366,7 +1369,10 @@ bool bottom_screen_showing() {
 class Barry : public Section {
 public:
     std::string name() const override { return "barry"; }
-    bool here() const override { return dt_compatible().find("ayn,thor") != std::string::npos; }
+    bool here() const override {
+        return dt_compatible().find("ayn,thor") != std::string::npos || duo();
+    }
+    static bool duo() { return dt_compatible().find("retroidpocket,rpduo") != std::string::npos; }
 
     void start(Host& host) override {
         host_ = &host;
@@ -1390,6 +1396,10 @@ private:
             out["supported"] = exists(TOP + "/brightness") && exists(BOTTOM + "/brightness");
             out["on"] = is_on();
             out["brightness"] = brightness();
+            // The button that opens Barry ("" none), and whether the top
+            // screen has a slider here (else Steam's is the top screen's).
+            out["button"] = duo() ? "" : "AYN";
+            out["topSlider"] = !duo();
             Value req = Value::object();
             req["op"] = "get";
             out["rgbDimmer"] = rgb_dimmer(controlsd(req));

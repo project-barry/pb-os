@@ -10,7 +10,8 @@
 // curve interpolation quantized to pwm_quantum, ramp limits per 3 s tick, and
 // a safe duty on any error.
 //
-// Config: /usr/share/sm8550-fand/fan.conf, overridden by /etc/sm8550-fand.conf
+// Config: /usr/share/sm8550-fand/fan.conf, then the device's own file if it
+// has one (DEVICE_CONFS: the Retroid Pocket Duo), overridden by /etc/sm8550-fand.conf
 // (same keys), then by /var/lib/steamos-sm8550/fan-profile.conf, where the AYN
 // Thor's quick controls (sm8550-thor-controlsd) keep the chosen profile. The
 // files are read as Python's configparser read them (the Python daemon's
@@ -53,6 +54,14 @@ namespace pp {
 namespace {
 
 const char* const FACTORY_CONF = "/usr/share/sm8550-fand/fan.conf";
+// A device's own factory settings, read over fan.conf (same keys).
+struct DeviceConf {
+    const char* compatible;
+    const char* file;
+};
+const DeviceConf DEVICE_CONFS[] = {
+    {"retroidpocket,rpduo", "/usr/share/sm8550-fand/fan-rpduo.conf"},
+};
 const char* const USER_CONF = "/etc/sm8550-fand.conf";
 const char* const QUICK_CONF = "/var/lib/steamos-sm8550/fan-profile.conf";
 constexpr double TICK_S = 3;
@@ -400,9 +409,18 @@ std::vector<std::pair<long long, long long>> parse_curve(const std::string& valu
     return curve;
 }
 
+// The device's own factory file, if it has one ("" otherwise).
+std::string device_conf() {
+    auto compat = pq::read_file("/sys/firmware/devicetree/base/compatible");
+    if (!compat) return "";
+    for (const auto& d : DEVICE_CONFS)
+        if (compat->find(d.compatible) != std::string::npos) return d.file;
+    return "";
+}
+
 Conf load_conf() {
     Ini ini;
-    ini.read({FACTORY_CONF, USER_CONF, QUICK_CONF});
+    ini.read({FACTORY_CONF, device_conf(), USER_CONF, QUICK_CONF});
     Conf c;
     c.profile = pq::lower(py_strip(ini.get("general", "profile", "balanced")));
     c.curve_name = pq::lower(py_strip(ini.get("profile." + c.profile, "fan_curve", "")));
@@ -647,5 +665,7 @@ private:
 }  // namespace
 
 std::unique_ptr<Module> make_fan() { return std::make_unique<Fan>(); }
+
+std::string fan_device_conf() { return device_conf(); }
 
 }  // namespace pp

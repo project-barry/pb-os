@@ -6,13 +6,19 @@
 # run steam once (-steamdeck -exitsteam) until it says it will restart, then
 # it just exits. That tree has steamui.so + package/*.installed.
 #
+# Whichever way the client got there (already in the build root, seeded or
+# freshly built), update-steam-client.py then brings it to Valve's latest
+# build of the channel, so every image ships the current Steam. Without it
+# the client kept in the build root went out unchanged in every release
+# (09-22 public beta through 0.5.4.33). The build stops if that fails.
+#
 # Usage:
 #   install-complete-steam-client.sh <STEAM_HOME>
 #
 # Env:
 #   STEAM_ARM_SCRIPT   override path to install-steam-arm
 #   STEAM_ARM_SEED     complete client to copy (default: host ~/.local/share/Steam)
-#   STEAM_ARM_CHANNEL  default steamdeck_publicbeta
+#   STEAM_ARM_CHANNEL  default steamdeck_stable
 #   STEAM_ARM_SKIP_BOOTSTRAP_RUN=1  download/copy only
 #
 # Always strips login/account data after copy so the image first-boots
@@ -22,11 +28,17 @@ set -euo pipefail
 STEAM_HOME="${1:?STEAM_HOME}"
 HERE="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd -- "${HERE}/.." && pwd)"
-CHANNEL="${STEAM_ARM_CHANNEL:-steamdeck_publicbeta}"
+CHANNEL="${STEAM_ARM_CHANNEL:-steamdeck_stable}"
 SEED="${STEAM_ARM_SEED:-/home/steam/.local/share/Steam}"
 UBUNTU_ARM="${STEAM_ARM_SCRIPT:-/home/steam/Desktop/SteamOS-Ubuntu/vendor/SteamARM/install-steam-arm}"
 
 log() { printf '==> [steam-complete] %s\n' "$*"; }
+
+# Valve's latest build of $CHANNEL, verified package by package.
+latest_client() {
+  python3 "${HERE}/update-steam-client.py" "$1" --channel "$CHANNEL" \
+    || { log "ERROR: could not bring the Steam client to the latest ${CHANNEL} build"; exit 1; }
+}
 
 is_complete() {
   local d="$1"
@@ -98,6 +110,7 @@ mkdir -p "$STEAM_HOME"
 
 if is_complete "$STEAM_HOME"; then
   log "already complete: $STEAM_HOME"
+  latest_client "$STEAM_HOME"
   sanitize_steam_user_data "$STEAM_HOME"
   touch "${STEAM_HOME}/.install-complete" "${STEAM_HOME}/.odin-complete-client"
   exit 0
@@ -128,6 +141,7 @@ if [[ -n "${SEED}" && -d "${SEED}" && "$SEED" != /dev/null ]] && is_complete "$S
     --exclude '.crash' \
     --exclude 'steam.pid' \
     "$SEED/" "$STEAM_HOME/"
+  latest_client "$STEAM_HOME"
   sanitize_steam_user_data "$STEAM_HOME"
   touch "${STEAM_HOME}/.install-complete" "${STEAM_HOME}/.odin-complete-client"
   log "seeded $(du -sh "$STEAM_HOME" | awk '{print $1}')"
@@ -165,6 +179,7 @@ if ! is_complete "$STEAM_HOME"; then
   log "WARN: client still incomplete after SteamARM (need a DISPLAY bootstrap run)"
   exit 1
 fi
+latest_client "$STEAM_HOME"
 sanitize_steam_user_data "$STEAM_HOME"
 touch "${STEAM_HOME}/.install-complete" "${STEAM_HOME}/.odin-complete-client"
 log "SteamARM client complete"

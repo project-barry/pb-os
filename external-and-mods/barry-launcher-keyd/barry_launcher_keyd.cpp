@@ -1,4 +1,5 @@
-// barry_launcher_keyd: when Barry Launcher's keyboards come up (AYN Thor).
+// barry_launcher_keyd: when Barry Launcher's keyboards come up (AYN Thor,
+// Retroid Pocket Duo).
 //
 // It watches what the user does and where text goes, and tells
 // barry_launcher_shelld (which shows the keyboard windows) what to show:
@@ -34,6 +35,8 @@
 #include <gudev/gudev.h>
 #include <json-glib/json-glib.h>
 #include <linux/input.h>
+
+#include "bottompanel.h"
 
 #include <fcntl.h>
 #include <unistd.h>
@@ -72,7 +75,9 @@ std::string env(const char *name, const char *fallback)
 
 const bool DESKTOP = env("BARRY_DESKTOP", "") == "1";
 const int PORT = std::atoi(env("BARRY_PORT", "47824").c_str());
-const int SCREEN_H = std::atoi(env("THOR_BOTTOM_HEIGHT", "1080").c_str());
+// The bottom screen's height (barry_device's BARRY_BOTTOM_H; THOR_BOTTOM_HEIGHT
+// as before, for tests).
+const int SCREEN_H = std::atoi(env("THOR_BOTTOM_HEIGHT", env("BARRY_BOTTOM_H", "1080").c_str()).c_str());
 const bool TIMING = env("BARRY_TIMING", "") == "1";
 
 const char TOUCH_NAME[] = "bottom_touchscreen";
@@ -194,11 +199,21 @@ struct Touch {
     std::optional<double> lastTopClick;     // trackpad click or top-screen touch
 } T;
 
-// The panel is portrait and turned right: its y runs left to right on
-// screen, its x bottom to top.
+// Where a raw touch is on the bottom screen (bottompanel.h: on the AYN Thor
+// the panel is portrait and turned right, its y running left to right on
+// screen, its x bottom to top; on the Retroid Pocket Duo its own landscape,
+// scaled from the axes' range once the touchscreen is open).
+barry::BottomPanel bottomPanel()
+{
+    barry::BottomPanel p = barry::BottomPanel::fromEnv();
+    p.height = SCREEN_H;
+    return p;
+}
+barry::BottomPanel PANEL = bottomPanel();
+
 std::pair<int, int> rawToScreen(int rawX, int rawY)
 {
-    return {rawY, SCREEN_H - 1 - rawX};
+    return {int(PANEL.x(rawX, rawY)), int(PANEL.y(rawX, rawY))};
 }
 
 void onTap(int rawX, int rawY);
@@ -338,6 +353,7 @@ void watchDevice(GUdevDevice *dev)
     w->source = g_unix_fd_add(fd, GIOCondition(G_IO_IN | G_IO_ERR | G_IO_HUP), onDeviceReadable, w);
     watching[node] = w;
     if (n == TOUCH_NAME) {
+        PANEL.readAxes(fd);
         if (!T.last)
             T.last = 0.0;  // a touchscreen is there: touches count from now
         log(std::string("watching touches on ") + node);

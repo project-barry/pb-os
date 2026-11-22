@@ -25,11 +25,13 @@ keyboard (shell/Keyboard.qml), which call it on 127.0.0.1:PORT:
                   lifted where (screen pixels) the swipe up from the bottom
                   edge that opened it lifted, for no tap there just after
   POST /home      open Barry
-  POST /barry     {"open": bool, "why": str, "page": n, "back": bool}: open
-                  or close Barry (the shell: a tap on the game art, its
-                  standby timeout, a side swipe over an app with its page);
-                  closing goes back to the app Barry opened over only from a
-                  side page (or with "back": true), else to the art
+  POST /barry     {"open": bool, "why": str, "page": n, "back": bool,
+                  "lifted": [x, y]}: open or close Barry (the shell: a tap on
+                  the game art, its standby timeout, a side swipe over an app
+                  with its page, on a device without a Barry button the swipe
+                  up from the bottom edge and where it lifted); closing goes
+                  back to the app Barry opened over only from a side page (or
+                  with "back": true), else to the art
   POST /side-prepare {}: a finger came down at a side edge over an app:
                   take the app's picture now, for the side page it may pull
   POST /apps/install {"path": archive}: install or update a user app
@@ -154,6 +156,7 @@ install (install_app) only on the user's tap.
 """
 from __future__ import annotations
 
+import fcntl
 import gc
 import glob
 import json
@@ -425,10 +428,23 @@ KEYD_SOCKET = os.path.join(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.get
                            "barry_launcher_keyd.sock")
 # Swipe up from the bottom edge: Home, as a long press on the AYN button.
 # One finger, starting this close to the bottom, at least this far up,
-# within this time (screen pixels and seconds).
+# within this time (screen pixels and seconds; Barry.Input's touchrules.h
+# has the same for a device without a Barry button).
 HOME_SWIPE_EDGE = 45
 HOME_SWIPE_MIN = 150
 HOME_SWIPE_S = 0.8
+# The device (barry_launcher_session sources /usr/lib/barry_launcher/
+# barry_device; unset, the AYN Thor's): the button that opens and closes
+# Barry ("" none: in Game Mode Barry.Input's EdgeSwipe watches the swipe up
+# from the bottom edge, opening Barry over an app and closing it to the game
+# art), the bottom screen's size and how its touchscreen is turned
+# (Barry.Input's bottompanel.h).
+BARRY_BUTTON = os.environ.get("BARRY_BUTTON", "AYN")
+BOTTOM_W = int(os.environ.get("BARRY_BOTTOM_W", "1240"))
+BOTTOM_H = int(os.environ.get("THOR_BOTTOM_HEIGHT", os.environ.get("BARRY_BOTTOM_H", "1080")))
+TOUCH_TURNED = os.environ.get("BARRY_TOUCH_TURN", "right") != "normal"
+TOUCH_AXES = [0, 0]  # the touchscreen's highest raw x and y (EVIOCGABS; 0: not known)
+EVIOCGABS = 0x80184540  # _IOR('E', 0x40 + axis, struct input_absinfo)
 PAGE_DASHBOARD, PAGE_QUICK = 1, -1  # Shell.qml's PageSwipe pages
 # The app as it showed, taken just before a side swipe brings Barry forward:
 # only one window shows on the bottom screen, so the side page slides in over
@@ -664,8 +680,9 @@ def on_barry_flag(_monitor, _file, _other, event) -> None:
     if DESKTOP or want is None or want == STATE.barry_open:
         return
     # Closing goes to the art, the app Barry opened over in the background.
+    why = f"{BARRY_BUTTON} button" if BARRY_BUTTON else "bottom screen off"
     threading.Thread(target=open_barry if want else close_barry,
-                     args=("AYN button",) if want else ("AYN button", False), daemon=True).start()
+                     args=(why,) if want else (why, False), daemon=True).start()
 
 
 def set_keyboard_prop(prop: str, value: str, quiet: bool = False) -> bool:
@@ -1887,10 +1904,17 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(409, {"error": "Game Mode only"})
             else:
                 page = body.get("page")
+                # Where a swipe up from the bottom edge lifted (Barry.Input's
+                # EdgeSwipe on a device without a Barry button), as GET /home's.
+                lifted = body.get("lifted")
+                if not (isinstance(lifted, list) and len(lifted) == 2
+                        and all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in lifted)):
+                    lifted = None
                 if body.get("open") and page in (PAGE_DASHBOARD, PAGE_QUICK):
                     threading.Thread(target=open_side, args=(page, why), daemon=True).start()
                 elif body.get("open"):
-                    threading.Thread(target=open_barry, args=(why,), daemon=True).start()
+                    threading.Thread(target=open_barry, args=(why, 0, tuple(int(v) for v in lifted) if lifted else None),
+                                     daemon=True).start()
                 else:
                     back = body.get("back") if isinstance(body.get("back"), bool) else None
                     threading.Thread(target=close_barry, args=(why, back), daemon=True).start()
@@ -1956,6 +1980,8 @@ def watch_touches() -> None:
         except OSError as err:
             log(f"cannot read {dev} ({TOUCH_NAME}): {err}; no swipe up for home")
             return
+        if not TOUCH_TURNED:
+            read_axes(fd)
         log(f"watching swipes on {dev}")
         # Per slot, as the kernel keeps them: a new contact repeats no
         # coordinate that has not changed.
@@ -2000,11 +2026,26 @@ def watch_touches() -> None:
     log(f"no {TOUCH_NAME} input device; no swipe up for home")
 
 
+def read_axes(fd: int) -> None:
+    """The touchscreen's raw range (TOUCH_AXES), for raw_to_screen."""
+    for i, axis in enumerate((ABS_MT_POSITION_X, ABS_MT_POSITION_Y)):
+        try:
+            info = struct.unpack("6i", fcntl.ioctl(fd, EVIOCGABS + axis, bytes(24)))
+        except OSError:
+            continue
+        TOUCH_AXES[i] = max(0, info[2])  # value, minimum, maximum, ...
+
+
 def raw_to_screen(raw_x: int, raw_y: int) -> tuple[int, int]:
-    """The panel is portrait and turned right: its y runs left to right on
-    screen, its x bottom to top."""
-    screen_h = int(os.environ.get("THOR_BOTTOM_HEIGHT", "1080"))
-    return raw_y, screen_h - 1 - raw_x
+    """Barry.Input's bottompanel.h: on the AYN Thor the panel is portrait
+    and turned right, its y running left to right on screen, its x bottom to
+    top; on the Retroid Pocket Duo its own landscape, scaled from the axes'
+    range."""
+    if TOUCH_TURNED:
+        return raw_y, BOTTOM_H - 1 - raw_x
+    max_x, max_y = TOUCH_AXES
+    return (raw_x * BOTTOM_W // (max_x + 1) if max_x else raw_x,
+            raw_y * BOTTOM_H // (max_y + 1) if max_y else raw_y)
 
 
 def touch_ended(start: tuple, end: tuple, seconds: float) -> None:
@@ -2013,11 +2054,10 @@ def touch_ended(start: tuple, end: tuple, seconds: float) -> None:
     taps are barry_launcher_keyd's.)"""
     if abs(end[0] - start[0]) + abs(end[1] - start[1]) < TAP_SLOP:
         return
-    # Raw x runs bottom to top on screen (raw_to_screen).
-    screen_h = int(os.environ.get("THOR_BOTTOM_HEIGHT", "1080"))
-    start_y, end_y = screen_h - 1 - start[0], screen_h - 1 - end[0]
-    if start_y >= screen_h - HOME_SWIPE_EDGE and start_y - end_y >= HOME_SWIPE_MIN and seconds <= HOME_SWIPE_S:
-        GLib.idle_add(on_home_swipe, raw_to_screen(*end))
+    start_y = raw_to_screen(*start)[1]
+    lifted = raw_to_screen(*end)
+    if start_y >= BOTTOM_H - HOME_SWIPE_EDGE and start_y - lifted[1] >= HOME_SWIPE_MIN and seconds <= HOME_SWIPE_S:
+        GLib.idle_add(on_home_swipe, lifted)
 
 
 def on_home_swipe(lifted: tuple[int, int]) -> bool:
@@ -2921,7 +2961,13 @@ def main() -> None:
     publish("apps")  # Dino's place moved
     check_updates()  # after the bundled apps: those are never offered
     Atspi.init()  # page_shown reads Firefox's page; text focus is barry_launcher_keyd's
-    threading.Thread(target=watch_touches, daemon=True).start()
+    # The swipe up from the bottom edge: here on a device with a Barry button
+    # (and in Desktop Mode); in Game Mode without one, Barry.Input's EdgeSwipe
+    # (Shell.qml) also closes Barry with it.
+    if BARRY_BUTTON or DESKTOP:
+        threading.Thread(target=watch_touches, daemon=True).start()
+    else:
+        log("no Barry button: the swipe up from the bottom edge is the shell's (Barry.Input)")
     if DESKTOP:
         start_desktop()
     apply_inset()  # no inset left over from before a restart

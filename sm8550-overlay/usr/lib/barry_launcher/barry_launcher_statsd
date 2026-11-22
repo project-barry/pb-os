@@ -52,12 +52,14 @@ Python of its own:
                   {"wifi": {"enabled"} or null, "bluetooth": {"enabled"}
                    or null, "volume": {"system": 0-100, "muted", "apps":
                    0-100} or null, "capture": {"recording", "seconds",
-                   "last": what became of the last recording}}
+                   "last": what became of the last recording},
+                   "screenOff": {} or null (a device without a Barry button)}
                   (null: the device has none, or its service is down)
   POST /quick     {"wifi": bool}, {"bluetooth": bool}, {"volume":
                   {"system"/"apps": 0-100}}, {"screenshot": true} (the top
-                  screen to ~/Pictures/Screenshots) or {"record": bool} (the
-                  top screen to ~/Videos); replies as GET, with "saved": the
+                  screen to ~/Pictures/Screenshots), {"record": bool} (the
+                  top screen to ~/Videos) or {"screenOff": true} (the bottom
+                  screen asleep until a touch); replies as GET, with "saved": the
                   screenshot's file and "error": what went wrong
 
 A POST needs a JSON body, a Host of 127.0.0.1 or localhost and no Origin,
@@ -125,6 +127,11 @@ BARRY_WIDGETS = [
     ("lights", "Lights", 2, 2), ("fan", "Fan", 2, 2), ("standby", "Back to the game art", 2, 4),
     ("battery", "Charging", 2, 2), ("game", "Game profile", 2, 2),
 ]
+# A device without a Barry button (barry_device's BARRY_BUTTON empty: the
+# Retroid Pocket Duo): the bottom screen's Screen off too.
+NO_BARRY_BUTTON = os.environ.get("BARRY_BUTTON", "AYN") == ""
+if NO_BARRY_BUTTON:
+    BARRY_WIDGETS.append(("screenoff", "Screen off", 1, 2))
 # As QuickSettings.qml's defaultLayout (that page reads settings.json
 # itself): what quickLayout null means.
 DEFAULT_QUICK_LAYOUT = [
@@ -133,6 +140,8 @@ DEFAULT_QUICK_LAYOUT = [
     {"id": "lights", "span": 2}, {"id": "fan", "span": 2}, {"id": "battery", "span": 2},
     {"id": "game", "span": 2}, {"id": "standby", "span": 4},
 ]
+if NO_BARRY_BUTTON:
+    DEFAULT_QUICK_LAYOUT.insert(DEFAULT_QUICK_LAYOUT.index({"id": "fan", "span": 2}) + 1, {"id": "screenoff", "span": 2})
 SETTINGS = os.path.join(os.environ.get("XDG_CONFIG_HOME", f"{HOME}/.config"), "barry_launcher/settings.json")
 DEFAULTS = {"skin": "ayn", "idleSeconds": 0, "standbySeconds": 15, "heroArt": True,
             "bottomSleepSeconds": 0, "skinVariants": {}, "quickLayout": None}

@@ -161,6 +161,7 @@ TouchScroll's child, with property aliases for what callers set on it.
 | Home's apps (`shell/Home.qml`, skins `steamos`, `cloud`, `sage`) | TouchScroll |
 | Quick settings' edit bar, the hidden widgets row (`shell/QuickSettings.qml`) | TouchScroll |
 | Page swipe (`Shell.qml`, PageSwipe) | its own (pages, not a view); shares the tap-cancel rule and knows a TouchScroll at work |
+| Side swipes over an app, and the swipe up from the bottom edge on a device without a Barry button (`Shell.qml`, EdgeSwipe) | the bottom touchscreen read here (`bottompanel.h`: the device's screen size and how its touchscreen is turned); the swipe up is `touchrules.h`'s `bottomSwipe` (on the AYN Thor shelld watches it) |
 | Quick settings' widget move while editing (DragHandler) | unchanged: a drag-and-drop, not a pan or scroll |
 | Quick settings' sliders and color picker (MouseArea) | unchanged: a value under the finger, not a pan or scroll |
 | Keyboards (GridPanel's MultiPointTouchArea, KeyPanel's glide), trackpads | their own controllers in this module |
@@ -192,7 +193,8 @@ looked at (mostly taps, sliders and drag and drop).
 Only in `touchrules.h`: `SLOP`, `TAP_S`, `TAP_MAX_S`, `LONG_PRESS_S`,
 `DOUBLE_TAP_SLOP`, `VELOCITY_WINDOW_S`, `STOPPED_S`, `FLING_MIN`, `FLING_MAX`,
 `FLING_FRICTION`, `DESIGN_PPI`, `PINCH_STILL`, `WHEEL_PX`, `WHEEL_ZOOM`,
-`WHEEL_ANIM_S`, `DOUBLE_TAP_ZOOM`, `ZOOM_ANIM_S`. Design pixels: an item multiplies them by
+`WHEEL_ANIM_S`, `DOUBLE_TAP_ZOOM`, `ZOOM_ANIM_S`, `BOTTOM_SWIPE_EDGE`,
+`BOTTOM_SWIPE_MIN`, `BOTTOM_SWIPE_S` (screen pixels). Design pixels: an item multiplies them by
 its window's scale as the Launcher's layout (`min(w / 1240, h / 1080)`).
 A longer or shorter glide: `FLING_FRICTION` (Android's 0.015) or
 `DESIGN_PPI`.
@@ -203,7 +205,9 @@ A longer or shorter glide: `FLING_FRICTION` (Android's 0.015) or
 and runs `pan-zoom-test` (the core on frames: slop, pan, pinch, pinch to pan,
 lift and land, quick pinch release, tap and long press, fling and catch,
 clamps, list bounds and axes, wheel (eased, adding up, stopped by a touch),
-double tap, Fill bounds through pan, pinch, fling, eased zoom and wheel) and
+double tap, Fill bounds through pan, pinch, fling, eased zoom and wheel),
+`bottom-panel-test` (where a raw touch lands on the AYN Thor's and the
+Retroid Pocket Duo's bottom screens; the swipe up from the bottom edge) and
 `touch-surfaces-test` (TouchScroll in a PageSwipe and PanZoomArea under Qt's
 touch and wheel events, a Fill view as set, zoomed and resized, offscreen). The rootfs needs `/t` (`/work/rootfs-stable` has it).
 

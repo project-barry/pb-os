@@ -1,5 +1,5 @@
 // Barry Launcher in PB-OS's Quick Access tab (was the Barry Launcher Decky
-// plugin, dual-screen; AYN Thor only): each former tab is a plugin in the
+// plugin, dual-screen; AYN Thor and Retroid Pocket Duo): each former tab is a plugin in the
 // PB-OS list, its component unchanged. pbos-qamd's barry section is the
 // backend. The loader (src/loader.js) gives P: @decky/ui as DFL, Steam's
 // React and JSX, callable(), openFilePicker() and plugin().
@@ -1044,6 +1044,7 @@ const slider = (label, value, min, onChange, extra) => row(jsx(DFL.SliderField, 
 
 // Barry Launcher's bottom screen: the game art (on: the art is standby, a
 // tap wakes Barry; off: Barry's apps always shown) and the sleep timer.
+// button: the device's Barry button ("AYN"; "" on a device without one).
 const SLEEP_CHOICES = [
     { data: 0, label: "Never" },
     { data: 30, label: "30 seconds" },
@@ -1053,7 +1054,7 @@ const SLEEP_CHOICES = [
     { data: 600, label: "10 minutes" },
 ];
 
-function BottomSettings({ on }) {
+function BottomSettings({ on, button }) {
     const [bs, setBs] = useState(null);
     useEffect(() => { getBottomSettings().then(setBs).catch(() => setBs(false)); }, []);
     if (bs === false) return note("Barry Launcher isn't answering (is the bottom screen's session running?).");
@@ -1068,7 +1069,8 @@ function BottomSettings({ on }) {
         row(jsx(DFL.ToggleField, {
             label: "Game art",
             description: bs.heroArt
-                ? "The bottom screen shows the selected game's art; a tap or the AYN button opens Barry Launcher over it."
+                ? (button ? `The bottom screen shows the selected game's art; a tap or the ${button} button opens Barry Launcher over it.`
+                    : "The bottom screen shows the selected game's art; a tap opens Barry Launcher over it.")
                 : "Off: Barry Launcher's apps stay on the bottom screen.",
             checked: !!bs.heroArt,
             onChange: (v) => change({ heroArt: v }),
@@ -1076,7 +1078,8 @@ function BottomSettings({ on }) {
         jsx(ArtRows, {}),
         row(jsx(DFL.DropdownItem, {
             label: "Sleep after",
-            description: "No touch on the bottom screen this long turns it dark; a touch or the AYN button wakes it.",
+            description: button ? `No touch on the bottom screen this long turns it dark; a touch or the ${button} button wakes it.`
+                : "No touch on the bottom screen this long turns it dark; a touch wakes it.",
             rgOptions: SLEEP_CHOICES,
             selectedOption: sleep,
             disabled: !on,
@@ -1088,11 +1091,15 @@ function BottomSettings({ on }) {
 function ScreensPage() {
     const { st, setSt, refresh, bright } = useBarryState();
     if (!st) return jsx(DFL.PanelSection, { children: note("Loading…") });
-    if (!st.supported) return jsx(DFL.PanelSection, { children: note("This is for the AYN Thor (two screens).") });
+    if (!st.supported) return jsx(DFL.PanelSection, { children: note("This is for two-screen devices.") });
+    // An older pbos-qamd says neither: the AYN Thor's.
+    const button = st.button === undefined ? "AYN" : st.button;
+    const topSlider = st.topSlider !== false;
     return jsxs(DFL.PanelSection, { title: "Dual Screen", children: [
         row(jsx(DFL.ToggleField, {
             label: "Bottom screen",
-            description: st.on ? undefined : "Off: dark and ignoring touch until you turn it back on.",
+            description: st.on ? undefined : button ? "Off: dark and ignoring touch until you turn it back on."
+                : "Off: dark and ignoring touch until you turn it back on here.",
             checked: !!st.on,
             onChange: (v) => {
                 setSt((s) => ({ ...s, on: v }));
@@ -1100,11 +1107,12 @@ function ScreensPage() {
             },
         })),
         ...(st.brightness ? [
-            slider("Top screen brightness", st.brightness.top, 0, (v) => bright("top", v), { step: 1 }),
+            // Without it, Steam's slider is the top screen's (the Retroid Pocket Duo).
+            ...(topSlider ? [slider("Top screen brightness", st.brightness.top, 0, (v) => bright("top", v), { step: 1 })] : []),
             slider("Bottom screen brightness", st.brightness.bottom, 0, (v) => bright("bottom", v), { step: 1, disabled: !st.on }),
         ] : []),
-        note("Steam's brightness slider sets both screens."),
-        jsx(BottomSettings, { on: !!st.on }),
+        note(topSlider ? "Steam's brightness slider sets both screens." : "Steam's brightness slider sets the top screen."),
+        jsx(BottomSettings, { on: !!st.on, button }),
     ] });
 }
 

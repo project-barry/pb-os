@@ -4,7 +4,7 @@
 // the keyboard keys, and the apps' logos as line
 // art in the same style: firefox, discord, signal (outlines from Tabler
 // Icons, MIT), and dino; the quick settings' wifi, bluetooth, camera,
-// record, square, sun and volume (Tabler too); all drawn on a 24-unit grid and scaled.
+// record, square, sun, moon and volume (Tabler too); all drawn on a 24-unit grid and scaled.
 import QtQuick
 import QtQuick.Shapes
 
@@ -58,6 +58,7 @@ Shape {
         record: "M5 12a7 7 0 1 0 14 0a7 7 0 1 0 -14 0M9.5 12a2.5 2.5 0 1 0 5 0a2.5 2.5 0 1 0 -5 0",
         sun: "M8 12a4 4 0 1 0 8 0a4 4 0 1 0 -8 0M3 12h1m8 -9v1m8 8h1m-9 8v1"
            + "m-6.4 -15.4l.7 .7m12.1 -.7l-.7 .7m0 11.4l.7 .7m-12.1 -.7l-.7 .7",
+        moon: "M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454z",
         volume: "M15 8a5 5 0 0 1 0 8M17.7 5a9 9 0 0 1 0 14M6 15h-2a1 1 0 0 1 -1 -1v-4a1 1 0 0 1 1 -1h2"
               + "l3.5 -4.5a.8 .8 0 0 1 1.5 .5v14a.8 .8 0 0 1 -1.5 .5l-3.5 -4.5",
         // Head with an open jaw, back, tail, belly; legs, arm and eye apart.

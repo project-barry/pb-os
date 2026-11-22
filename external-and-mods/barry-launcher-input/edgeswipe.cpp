@@ -22,9 +22,6 @@
 namespace {
 
 const char TOUCH_NAME[] = "bottom_touchscreen";
-// As TouchTrackpad: the panel is portrait and turned right; screen x is raw
-// y, screen y runs along raw x, bottom to top. Design pixels (s = 1).
-constexpr double SCREEN_W = 1240, SCREEN_H = 1080;
 // The finger's last moments, for its speed at release (the touch rules').
 constexpr double VELOCITY_WINDOW_S = barry::touch::VELOCITY_WINDOW_S;
 
@@ -62,6 +59,8 @@ EdgeSwipe::EdgeSwipe(QObject *parent) : QObject(parent)
                              << "- no side swipes over apps";
         return;
     }
+    // Screen pixels (bottompanel.h), from the touchscreen's own range.
+    m_panel.readAxes(fd);
     m_stopFd = eventfd(0, EFD_CLOEXEC);
     m_reader = std::thread(&EdgeSwipe::read, this, fd);
 }
@@ -85,6 +84,20 @@ void EdgeSwipe::setArmed(bool armed)
     m_armed = armed;
     m_armedNow = armed;
     emit armedChanged();
+}
+
+void EdgeSwipe::setBottomArmed(bool armed)
+{
+    if (armed == m_bottomArmed)
+        return;
+    m_bottomArmed = armed;
+    m_bottomArmedNow = armed;
+    emit bottomArmedChanged();
+}
+
+void EdgeSwipe::postSwipedUp(double x, double y)
+{
+    QMetaObject::invokeMethod(this, [this, x, y] { emit swipedUp(x, y); }, Qt::QueuedConnection);
 }
 
 void EdgeSwipe::postTouched(int side)
@@ -149,9 +162,14 @@ void EdgeSwipe::read(int fd)
     bool started = false;   // past the threshold: the page follows it
     double startX = 0, startY = 0;  // screen position where it came down
     std::deque<std::pair<double, double>> recent;  // (time, screen x)
+    // The swipe up from the bottom edge: the lead finger came down there
+    // while bottomArmed, alone so far, at this time and height.
+    bool bottom = false;
+    double bottomAt = 0, bottomY = 0;
+    const double screenW = m_panel.width, screenH = m_panel.height;
 
-    auto screenX = [&](int s) { return double(raw[s].second); };
-    auto screenY = [&](int s) { return SCREEN_H - 1 - double(raw[s].first); };
+    auto screenX = [&](int s) { return m_panel.x(raw[s].first, raw[s].second); };
+    auto screenY = [&](int s) { return m_panel.y(raw[s].first, raw[s].second); };
     auto inward = [&](double x) { return side > 0 ? x - startX : startX - x; };
     auto endTouch = [&](bool cancel) {
         if (started) {
@@ -165,7 +183,7 @@ void EdgeSwipe::read(int fd)
                         v = (side > 0 ? b.second - a.second : a.second - b.second) / (b.first - a.first);
                 }
                 const double x = recent.empty() ? startX : recent.back().second;
-                postReleased(side, std::clamp(inward(x) / SCREEN_W, 0.0, 1.0), v);
+                postReleased(side, std::clamp(inward(x) / screenW, 0.0, 1.0), v);
             }
         }
         side = 0;
@@ -201,12 +219,20 @@ void EdgeSwipe::read(int fd)
                         if (first) {
                             lead = slot;
                             fresh = true;
-                        } else if (side) {
-                            endTouch(true);  // a second finger: no side swipe
+                        } else {
+                            bottom = false;  // a second finger: no swipe up either
+                            if (side)
+                                endTouch(true);  // a second finger: no side swipe
                         }
                     } else {
                         down[slot] = false;
                         if (slot == lead) {
+                            if (bottom) {
+                                bottom = false;
+                                const double x = screenX(lead), y = screenY(lead);
+                                if (m_bottomArmedNow && barry::touch::bottomSwipe(bottomY, y, monotonic() - bottomAt, screenH))
+                                    postSwipedUp(x, y);
+                            }
                             endTouch(false);
                             lead = -1;
                         }
@@ -224,12 +250,17 @@ void EdgeSwipe::read(int fd)
             if (fresh) {
                 fresh = false;
                 side = 0;
+                bottom = m_bottomArmedNow && screenY(lead) >= screenH - barry::touch::BOTTOM_SWIPE_EDGE;
+                if (bottom) {
+                    bottomAt = now;
+                    bottomY = screenY(lead);
+                }
                 if (!m_armedNow)
                     continue;
                 const double edge = m_edgeNow;
                 if (x <= edge)
                     side = 1;
-                else if (x >= SCREEN_W - 1 - edge)
+                else if (x >= screenW - 1 - edge)
                     side = -1;
                 if (side) {
                     startX = x;
@@ -258,11 +289,12 @@ void EdgeSwipe::read(int fd)
                         continue;
                     }
                     started = true;
+                    bottom = false;  // a side page follows it: no swipe up
                     postStarted(side);
                 }
                 continue;
             }
-            postProgress(std::clamp(inward(x) / SCREEN_W, 0.0, 1.0));
+            postProgress(std::clamp(inward(x) / screenW, 0.0, 1.0));
         }
     }
     close(fd);

@@ -10,8 +10,9 @@ instead, sent with BATTMGR_USB_PROPERTY_SET:
   0x10  firmware capacity limit off/on
 
 Expose them as retroid_charge_now and retroid_limit_capacity on the
-battery manager device, only on the Retroid Pocket 6, the Nova and the
-AYN Thor (other firmware may give these numbers another meaning), and
+battery manager device, only on the Retroid Pocket 6, the Nova, the
+AYN Thor and the Retroid Pocket Duo (its stock qti_battery_charger uses the
+same two; other firmware may give these numbers another meaning), and
 acknowledge the USB property-set reply instead of logging it as an
 unknown message.
 
@@ -150,7 +151,7 @@ sm8550-charge-control (userspace) applies the user's choice.
  
 +	if (of_machine_is_compatible("retroidpocket,rp6") ||
 +	    of_machine_is_compatible("retroidpocket,rpnova") ||
-+	    of_machine_is_compatible("ayn,thor")) {
++	    of_machine_is_compatible("ayn,thor") || of_machine_is_compatible("retroidpocket,rpduo")) {
 +		battmgr->retroid_charge_now = -1;
 +		battmgr->retroid_limit_capacity = -1;
 +		dev_set_drvdata(dev, battmgr);

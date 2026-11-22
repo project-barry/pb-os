@@ -45,8 +45,10 @@ build_cmdline() {
   case "${CMDLINE_DEVICE:-}" in
     # Retroid Pocket Duo (KERNEL-rpduo): its signed firmware is copied from
     # its own Android partitions at boot (rpduo-firmware) into a writable
-    # place the kernel also searches.
-    rpduo) parts+=(firmware_class.path=/var/lib/pbos-firmware) ;;
+    # place the kernel also searches. Its controller MCU gets the frame
+    # parameters stock Android sends it (librsinput: 10,4; ROCKNIX's 40,7
+    # is the other models' value).
+    rpduo) parts+=(firmware_class.path=/var/lib/pbos-firmware rsinput.mcu_frame=10,4) ;;
   esac
   if [[ -n "${KERNEL_CMDLINE_EXTRA:-}" ]]; then
     local -a extra

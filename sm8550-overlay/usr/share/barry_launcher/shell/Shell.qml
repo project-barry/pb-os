@@ -40,6 +40,12 @@
 // Desktop Mode ("desktop" argument, barry_launcher_desktop) it is always
 // off: the art is Game Mode's, for the game selected in Steam.
 //
+// On a device without a Barry button (Device.barryButton "", the Retroid
+// Pocket Duo) the swipe up from the bottom edge is Barry.Input's (EdgeSwipe,
+// here; shelld watches it on the AYN Thor): over an app it opens Barry, and
+// while Barry is open over the game art it closes it to the art, as the AYN
+// button would.
+//
 // New versions of Project Barry's apps (shelld's updates topic, the first
 // start after a PB-OS update found some) show as a card over Barry's pages
 // (AppUpdates.qml), whenever Barry shows, until the user answers it.
@@ -177,6 +183,15 @@ Window {
             } else {
                 win.edgeResult = "cancel"
             }
+        }
+        // No Barry button: the swipe up from the bottom edge (see the top).
+        bottomArmed: Device.barryButton === "" && !win.desktop
+                     && ((win.appFront && !win.barryOpen) || (win.barryOpen && win.heroOn && !win.sidePanel))
+        onSwipedUp: function (x, y) {
+            if (win.barryOpen)
+                win.post("/barry", { open: false, back: false, why: "swipe up from the bottom edge" })
+            else if (win.appFront)
+                win.post("/barry", { open: true, why: "swipe up from the bottom edge", lifted: [Math.round(x), Math.round(y)] })
         }
     }
     Binding {

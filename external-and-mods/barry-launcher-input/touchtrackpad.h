@@ -19,6 +19,7 @@
 // it back; should KWin refuse, it is asked again every few seconds.
 #pragma once
 
+#include "bottompanel.h"
 #include "virtualmouse.h"
 
 #include <QObject>
@@ -114,6 +115,7 @@ private:
     Rect m_regions[RegionCount];
     double m_speed = 2.0;
 
+    barry::BottomPanel m_panel;  // where its touches are on screen (set as it starts)
     QString m_event;    // the touchscreen's event node (event3), while reading
     QString m_owed;     // a touchscreen KWin has not taken back yet
     QTimer m_owedRetry;

@@ -31,6 +31,8 @@ qt_add_qml_module(barryinput
     virtualmouse.cpp virtualmouse.h
     virtualkeyboard.cpp virtualkeyboard.h
     touchrules.h
+    bottompanel.h
+    device.cpp device.h
     gesture.cpp gesture.h
     panzoom.cpp panzoom.h
     panzoomarea.cpp panzoomarea.h
@@ -73,10 +75,12 @@ endif()
 
 # The touch rules' tests (tests/gestures): PanZoomGesture alone (no Qt), and
 # TouchScroll / PanZoomArea under Qt's touch events, offscreen.
-option(BARRY_INPUT_GESTURE_TEST "Build tests/gestures' pan-zoom-test and touch-surfaces-test" OFF)
+option(BARRY_INPUT_GESTURE_TEST "Build tests/gestures' pan-zoom-test, bottom-panel-test and touch-surfaces-test" OFF)
 if(BARRY_INPUT_GESTURE_TEST)
   add_executable(pan-zoom-test tests/gestures/pan_zoom_test.cpp panzoom.cpp panzoom.h touchrules.h)
   target_compile_options(pan-zoom-test PRIVATE -Wall -Wextra -Werror)
+  add_executable(bottom-panel-test tests/gestures/bottom_panel_test.cpp bottompanel.h touchrules.h)
+  target_compile_options(bottom-panel-test PRIVATE -Wall -Wextra -Werror)
   find_package(Qt6 REQUIRED COMPONENTS Test)
   qt_add_executable(touch-surfaces-test
     tests/gestures/touch_surfaces_test.cpp

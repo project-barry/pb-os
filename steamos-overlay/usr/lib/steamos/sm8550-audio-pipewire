@@ -13,7 +13,9 @@ export PATH="/usr/sbin:/usr/bin:/sbin:/bin${PATH:+:$PATH}"
 # pro-audio choice (persist() below); the card is alsa_card.platform-sound on
 # both SoCs, so WirePlumber restores it here and the speakers go silent. Drop
 # that state and switch back to HiFi.
-if grep -qaE "KONKR Pocket FIT|AYANEO Pocket S2" /sys/firmware/devicetree/base/model 2>/dev/null; then
+# The Retroid Pocket Duo (card ELIZA-RetroidPocket-I2S) likewise runs
+# Retroid's UCM HiFi profile (53-rpduo-audio.conf).
+if grep -qaE "KONKR Pocket FIT|AYANEO Pocket S2|RetroidPocket Duo" /sys/firmware/devicetree/base/model 2>/dev/null; then
   state="${XDG_STATE_HOME:-$HOME/.local/state}/wireplumber"
   if grep -qs '=pro-audio$' "$state/default-profile"; then
     echo "sm8550-audio-pipewire: SM8650 with saved pro-audio state → HiFi" >&2

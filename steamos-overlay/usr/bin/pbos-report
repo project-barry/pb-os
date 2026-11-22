@@ -559,6 +559,8 @@ sleep_area() {
   section "suspend stats"
   for f in /sys/power/suspend_stats/*; do [[ -r $f ]] && printf '%s: %s\n' "${f##*/}" "$(cat "$f")"; done
   cat /sys/power/mem_sleep 2>&1
+  section "each sleep and wake: battery, low-power states, wake cause (pbos-sleep-log)"
+  tail -n 100 /var/log/pbos-sleep.log 2>&1
   section "wake sources (most events)"
   sort -t$'\t' -k3 -n -r /sys/kernel/debug/wakeup_sources 2>/dev/null | head -n 25
   section "sleep log (this boot)"

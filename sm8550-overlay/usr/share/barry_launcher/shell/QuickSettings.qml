@@ -11,8 +11,11 @@ pragma ComponentBehavior: Bound
 // pbos-qamd (Barry.Input's PbosQam); fan and lights are the dashboard's
 // (barry_launcher_statsd's /controls); Wi-Fi, Bluetooth, volume and capture
 // are statsd's /quick; how soon Barry goes back to the game art is Barry's
-// own setting (statsd's /settings standbySeconds). A setting this device
-// lacks is left out. While the page shows, it reads them again every few
+// own setting (statsd's /settings standbySeconds). On a device without a
+// Barry button (the Retroid Pocket Duo) Steam's slider is the top screen's,
+// so Brightness has the bottom screen's alone, and Screen off puts the
+// bottom screen to sleep (statsd's /quick; a touch wakes it). A setting this
+// device lacks is left out. While the page shows, it reads them again every few
 // seconds (the charger may come or go). Colors are the skin's; a skin can
 // also replace this file (SkinView.qml).
 import QtQuick
@@ -38,6 +41,7 @@ Rectangle {
 
     readonly property string statsd: "http://127.0.0.1:47823"
     property var screens: null      // { top, bottom } 0-100
+    property bool topSlider: true   // the top screen's brightness is set here (pbos-qamd's get_state)
     // Where the "Both screens" slider was last put (-1: never, it starts at
     // the two screens' average): moving one screen's slider leaves it be.
     property int both: -1
@@ -74,6 +78,8 @@ Rectangle {
         PbosQam.call("barry", "get_state", [], function (ok, v) {
             if (ok && v && v.brightness && qs.settled())
                 qs.screens = v.brightness
+            if (ok && v)
+                qs.topSlider = v.topSlider !== false
         })
         PbosQam.call("tools", "get_charge_control", [], function (ok, v) {
             if (ok && qs.settled())
@@ -309,14 +315,16 @@ Rectangle {
         standby: { title: "Back to the game art", min: 2 },
         battery: { title: "Charging", min: 2 },
         game: { title: "Game profile", min: 2 },
+        screenoff: { title: "Screen off", min: 1 },
     })
     readonly property var defaultLayout: [
         { id: "wifi", span: 1 }, { id: "bluetooth", span: 1 }, { id: "screenshot", span: 1 }, { id: "record", span: 1 },
         { id: "brightness", span: 2 }, { id: "volume", span: 2 },
         { id: "lights", span: 2 }, { id: "fan", span: 2 },
+    ].concat(Device.barryButton === "" ? [{ id: "screenoff", span: 2 }] : []).concat([
         { id: "battery", span: 2 }, { id: "game", span: 2 },
         { id: "standby", span: 4 },
-    ]
+    ])
     // The saved layout, else the default. Ids not known (yet: the packs
     // come a moment later; or a pack removed) stay in it, undrawn.
     property var layout: {
@@ -344,6 +352,9 @@ Rectangle {
         case "standby": return Skin.settings.heroArt !== false && Qt.application.arguments.indexOf("desktop") < 0
         case "battery": return !!charge
         case "game": return !!profiles
+        // No Barry button: the bottom screen to sleep (Game Mode's).
+        case "screenoff": return Device.barryButton === "" && !!quick.screenOff
+                                 && Qt.application.arguments.indexOf("desktop") < 0
         }
         return packs[id] !== undefined
     }
@@ -356,9 +367,9 @@ Rectangle {
     function natural(id, span) {
         const box = 2 * pad, t = titleHeight + spacing, r = rowHeight
         switch (id) {
-        case "wifi": case "bluetooth": case "screenshot": case "record":
+        case "wifi": case "bluetooth": case "screenshot": case "record": case "screenoff":
             return 120 * s
-        case "brightness": return box + 3 * r + 2 * spacing
+        case "brightness": return topSlider ? box + 3 * r + 2 * spacing : box + r
         case "volume": return box + 2 * r + spacing
         case "lights": return box + t + 46 * s + spacing + r
         case "fan": case "standby": return box + t + r
@@ -772,13 +783,16 @@ Rectangle {
     Component {
         id: brightnessWidget
         Panel {
+            // Without a top slider (Steam's is the top screen's): the bottom's alone.
             Slider {
+                visible: qs.topSlider
                 icon: "sun"
                 label: "Both screens"
                 value: qs.both >= 0 ? qs.both : qs.screens ? Math.round((qs.screens.top + qs.screens.bottom) / 2) : 0
                 onMoved: function (v) { qs.setBoth(v) }
             }
             Slider {
+                visible: qs.topSlider
                 icon: "sun"
                 label: "Top screen"
                 value: qs.screens ? qs.screens.top : 0
@@ -790,6 +804,15 @@ Rectangle {
                 value: qs.screens ? qs.screens.bottom : 0
                 onMoved: function (v) { qs.setBrightness("bottom", v) }
             }
+        }
+    }
+    Component {
+        id: screenoffWidget
+        Toggle {
+            label: "Screen off"
+            icon: "moon"
+            state_: "Touch wakes it"
+            onTapped: qs.setQuick({ screenOff: true })
         }
     }
     Component {
@@ -1033,7 +1056,7 @@ Rectangle {
     readonly property var widgets: ({
         wifi: wifiWidget, bluetooth: bluetoothWidget, screenshot: screenshotWidget, record: recordWidget,
         brightness: brightnessWidget, volume: volumeWidget, lights: lightsWidget, fan: fanWidget,
-        standby: standbyWidget, battery: batteryWidget, game: gameWidget,
+        standby: standbyWidget, battery: batteryWidget, game: gameWidget, screenoff: screenoffWidget,
     })
 
     // ---- Customizing: like a phone's home screen ----

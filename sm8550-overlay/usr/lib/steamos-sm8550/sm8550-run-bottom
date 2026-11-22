@@ -1,7 +1,8 @@
 #!/bin/bash
 # sm8550-run-bottom -- <command> [args...]
-# Run <command> on the AYN Thor's bottom panel while Game Mode drives the top
-# one (after Armada's armada-run-bottom). Game Mode's gamescope lends DSI-1
+# Run <command> on the bottom panel (AYN Thor, Retroid Pocket Duo) while Game
+# Mode drives the top one (after Armada's armada-run-bottom). Game Mode's
+# gamescope lends the bottom connector
 # over its lease socket (--lease-connector) and forwards the bottom
 # touchscreen (--ignore-touch-device); this nested gamescope takes that lease.
 set -euo pipefail
@@ -18,6 +19,12 @@ shift
 sock="${GAMESCOPE_LEASE_SOCK:-/tmp/gamescope-lease.sock}"
 [[ -S "$sock" ]] || fail "no lease socket at $sock (is Game Mode running?)"
 
+# The Thor's bottom panel is portrait-native and turned right; the Retroid
+# Pocket Duo's (il97680a, 1280x960) is landscape-native (barry_device's
+# BARRY_TOUCH_TURN).
+. /usr/lib/barry_launcher/barry_device
+orientation="$BARRY_TOUCH_TURN"
+
 # The top screen's X server, for Barry's top-screen keyboard (letters off
 # the US layout go there through XTest).
 export BARRY_TOP_DISPLAY="${DISPLAY:-}"
@@ -30,6 +37,6 @@ exec gamescope \
   --force-windows-fullscreen \
   --xwayland-count 1 \
   --default-touch-mode 4 \
-  --force-orientation right \
+  --force-orientation "$orientation" \
   --force-composition-rotation \
   -- "$@"

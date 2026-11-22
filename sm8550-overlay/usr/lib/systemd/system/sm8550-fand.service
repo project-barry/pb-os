@@ -1,10 +1,10 @@
 [Unit]
-Description=SM8550 fan curve (Retroid Pocket 6)
+Description=SM8550 fan curve (Retroid Pocket 6, Retroid Pocket Duo)
 ConditionPathExists=/sys/firmware/devicetree/base/compatible
 
 [Service]
 Type=simple
-ExecCondition=/bin/sh -c 'grep -qa "qcom,sm8550" /sys/firmware/devicetree/base/compatible'
+ExecCondition=/bin/sh -c 'grep -qaE "qcom,sm8550|retroidpocket,rpduo" /sys/firmware/devicetree/base/compatible'
 ExecStart=/usr/lib/pbos-platformd/pbos-platformd --system --only fan
 ExecReload=/bin/kill -HUP $MAINPID
 # Never leave the fan low if the daemon goes away (Armada's safe duty).

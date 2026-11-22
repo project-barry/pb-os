@@ -33,10 +33,8 @@ extern char **environ;
 namespace {
 
 const char TOUCH_NAME[] = "bottom_touchscreen";
-// The panel is portrait and turned right (calibrated on the Thor): screen x
-// is raw y; screen y runs along raw x, bottom to top. Design pixels, the
-// 1240 x 1080 TopInput.qml lays out at s = 1.
-constexpr double SCREEN_W = 1240, SCREEN_H = 1080;
+// Touches in screen pixels: bottompanel.h (on the Thor, the 1240 x 1080
+// TopInput.qml lays out at s = 1; its panel is portrait and turned right).
 constexpr int OWED_RETRY_MS = 5000;
 constexpr int START_RETRY_MS = 2000;
 const char *const REGION_NAMES[] = {"pad", "left", "right", "dismiss"};
@@ -183,7 +181,7 @@ QVariantMap TouchTrackpad::presses() const
 
 TouchTrackpad::Region TouchTrackpad::region(double x, double y)
 {
-    const double fx = x / SCREEN_W, fy = y / SCREEN_H;
+    const double fx = x / m_panel.width, fy = y / m_panel.height;
     std::lock_guard<std::mutex> hold(m_lock);
     for (Region r : {Left, Right, Dismiss, Pad}) {
         const Rect &b = m_regions[r];
@@ -225,6 +223,9 @@ void TouchTrackpad::start()
     m_event = event;
     m_owed.clear();
     m_owedRetry.stop();
+    // Set before the reader starts, which then reads it alone.
+    m_panel = barry::BottomPanel::fromEnv();
+    m_panel.readAxes(fd);
     m_stopFd = eventfd(0, EFD_CLOEXEC);
     m_reader = std::thread(&TouchTrackpad::read, this, fd, m_mouse->core());
     m_reading = true;
@@ -407,7 +408,7 @@ void TouchTrackpad::read(int fd, std::shared_ptr<barry::MouseCore> mouse)
                 std::map<int, barry::TrackpadGesture::Point> live;
                 for (const auto &[s, id] : tracking) {
                     const auto r = raw[s];
-                    live[id] = {double(r.second), SCREEN_H - 1 - double(r.first)};
+                    live[id] = {m_panel.x(r.first, r.second), m_panel.y(r.first, r.second)};
                 }
                 g.frame(live, monotonic(), stamp);
             }

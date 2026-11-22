@@ -1,0 +1,129 @@
+#!/bin/bash
+# pbos-sleep-log pre|post: systemd-sleep runs it around every system sleep
+# (/usr/lib/systemd/system-sleep). It writes one line to
+# /var/log/pbos-sleep.log when the device goes to sleep and one when it wakes:
+#
+#   sleep: the battery (percent, charge, status), the sleep mode, and the
+#          sound streams still open on the hardware (an open one keeps a
+#          Qualcomm SoC out of its low-power state).
+#   wake:  the battery again, how long the sleep was, what it used (mAh,
+#          average mA, percent per hour; negative on the charger), how much
+#          of the sleep the SoC and each of its subsystems spent in their
+#          low-power state (Qualcomm: /sys/kernel/debug/qcom_stats; "aosd 1x
+#          98%" = entered once, in it for 98 % of the sleep), and what woke
+#          it (the wake interrupt, and the wakeup sources that counted an
+#          event).
+#
+# A sleep line with no wake line after it: the device never woke from that
+# sleep (battery flat, or powered off). `pbos-report sleep` shows the log.
+#
+# It only reads the system's state. The log keeps its last 2000 lines.
+# Tests: PBOS_SLEEP_LOG and PBOS_SLEEP_LOG_RUN move the log and the state.
+set -u
+export LC_ALL=C
+
+LOG=${PBOS_SLEEP_LOG:-/var/log/pbos-sleep.log}
+RUN=${PBOS_SLEEP_LOG_RUN:-/run/pbos-sleep-log}
+STATS=/sys/kernel/debug/qcom_stats
+# qcom_stats durations are arch timer ticks: 19.2 MHz on Qualcomm SoCs.
+TICK_HZ=19200000
+
+rd() { cat "$1" 2>/dev/null; }
+
+# The device's own battery (not a controller's).
+bat=
+for b in /sys/class/power_supply/*; do
+  [[ $(rd "$b/type") == Battery && $(rd "$b/scope") != Device && -r $b/capacity ]] && { bat=$b; break; }
+done
+
+# "percent uAh status"; "-" for what the battery does not report.
+battery() {
+  local pct uah status
+  pct=$(rd "$bat/capacity"); uah=$(rd "$bat/charge_now"); status=$(rd "$bat/status")
+  [[ -n $uah ]] || uah=$(rd "$bat/charge_counter")
+  echo "${pct:--} ${uah:--} ${status:--}"
+}
+
+mah() { [[ $1 == - ]] && echo "- mAh" || echo "$(($1 / 1000)) mAh"; }
+
+# "name count ticks" for each low-power counter.
+soc_stats() {
+  local f
+  for f in "$STATS"/*; do
+    [[ -f $f ]] || continue
+    awk -v n="${f##*/}" '/^Count:/ { c = $2 } /^Accumulated Duration:/ { d = $3 }
+      END { if (c != "" && d != "") print n, c, d }' "$f" 2>/dev/null
+  done
+}
+
+# "name events" for each wakeup source.
+wake_sources() {
+  local w
+  for w in /sys/class/wakeup/*; do
+    [[ -r $w/name ]] && echo "$(tr ' ' _ < "$w/name") $(rd "$w/event_count")"
+  done
+}
+
+# The hardware sound streams that are not closed, as "card0/pcm0p/sub0".
+sound_open() {
+  local f open=
+  for f in /proc/asound/card*/pcm*/sub*/status; do
+    [[ -r $f ]] || continue
+    [[ $(head -n 1 "$f") == closed ]] || { f=${f#/proc/asound/}; open="$open ${f%/status}"; }
+  done
+  echo "${open:- none}"
+}
+
+line() {
+  echo "pbos-sleep-log: $1"
+  printf '%s %s\n' "$(date '+%F %T')" "$1" >> "$LOG" || return
+  if (($(wc -l < "$LOG") > 4000)); then
+    tail -n 2000 "$LOG" > "$LOG.tmp" && mv "$LOG.tmp" "$LOG"
+  fi
+}
+
+case "${1:-}" in
+pre)
+  mkdir -p "$RUN"
+  read -r up _ < /proc/uptime   # counts the time asleep too
+  read -r pct uah status <<< "$(battery)"
+  echo "$up $pct $uah" > "$RUN/pre"
+  soc_stats > "$RUN/soc"
+  wake_sources > "$RUN/wake"
+  mode=$(sed -n 's/.*\[\(.*\)\].*/\1/p' /sys/power/mem_sleep 2>/dev/null)
+  line "sleep  battery $pct% $(mah "$uah") $status  mode ${2:-suspend}${mode:+ ($mode)}  sound open:$(sound_open)"
+  ;;
+post)
+  [[ -r $RUN/pre ]] || exit 0
+  read -r up0 pct0 uah0 < "$RUN/pre"
+  read -r up _ < /proc/uptime
+  read -r pct uah status <<< "$(battery)"
+  slept=$(awk -v a="$up0" -v b="$up" 'BEGIN { printf "%d", b - a }')
+  ((slept > 0)) || slept=1
+  used=$(awk -v s="$slept" -v p0="$pct0" -v p="$pct" -v u0="$uah0" -v u="$uah" 'BEGIN {
+    h = s / 3600
+    if (u0 != "-" && u != "-") printf "%.0f mAh, %.0f mA average, ", (u0 - u) / 1000, (u0 - u) / 1000 / h
+    if (p0 != "-" && p != "-") printf "%.2f %%/h", (p0 - p) / h
+  }')
+  # The SoC's own states first (aosd, cxsd, ddr), then each subsystem.
+  low=$(soc_stats | awk -v s="$slept" -v hz="$TICK_HZ" '
+    NR == FNR { c[$1] = $2; d[$1] = $3; next }
+    $1 in c {
+      t = sprintf("%s %dx %.0f%%", $1, $2 - c[$1], ($3 - d[$1]) / hz / s * 100)
+      if ($1 ~ /^(aosd|cxsd|ddr)$/) soc = soc " " t; else sub_ = sub_ " " t
+    }
+    END { if (soc != "" || sub_ != "") printf "  low-power:%s |%s", soc, sub_ }' "$RUN/soc" -)
+  irq=$(rd /sys/power/pm_wakeup_irq)
+  if [[ -n $irq ]]; then
+    # /proc/interrupts: "205:", one count per CPU, then the chip and the name.
+    name=$(awk -v n="$irq:" 'NR == 1 { first = NF + 2 }
+      $1 == n { for (i = first; i <= NF; i++) printf "%s%s", (i > first ? " " : ""), $i }' /proc/interrupts)
+    irq="irq $irq${name:+ ($name)}"
+  fi
+  src=$(wake_sources | awk 'NR == FNR { e[$1] += $2; next } { n[$1] += $2 }
+    END { for (k in n) if (k in e && n[k] > e[k]) printf " %s +%d", k, n[k] - e[k] }' "$RUN/wake" -)
+  line "wake   battery $pct% $(mah "$uah") $status  slept $((slept / 3600))h$(((slept % 3600) / 60))m$((slept % 60))s  used $used$low  woke by: ${irq:-irq unknown};${src:- no wakeup source}"
+  rm -f "$RUN/pre" "$RUN/soc" "$RUN/wake"
+  ;;
+esac
+exit 0

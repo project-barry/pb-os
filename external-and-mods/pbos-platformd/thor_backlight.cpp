@@ -1,6 +1,7 @@
 // thor-backlight (was sm8550-thor-backlightd): the AYN Thor's bottom screen.
 // One brightness for both panels, the Barry Launcher plugin's bottom-screen
-// switch, and the AYN button.
+// switch, and the AYN button. The Retroid Pocket Duo's bottom screen too, as
+// a profile of its own (Profile, DUO; below).
 //
 // Brightness: Steam's Game Mode slider adjusts the first backlight it finds,
 // the bottom panel's (ae94000.dsi.0), and writes it directly (the video group
@@ -69,6 +70,17 @@
 // retry, Desktop Mode's 10 s hold). Root window properties go through xprop,
 // as before, but only when they change.
 //
+// Retroid Pocket Duo (DUO): the panels are the other way round (top
+// ae94000, bottom ae96000) and Steam's slider finds the top panel first, so
+// it is the top screen's own and nothing goes over it; the top panel is
+// never written here. The bottom panel follows SCREENS' "bottom" alone (the
+// PB-OS tab's and Barry's bottom sliders), on a straight line
+// (linear_bottom). No AYN button: Barry's quick settings put the bottom
+// screen to sleep through SLEEP (dark, its touchscreen on: a touch wakes it;
+// Barry closes, as the AYN button's hold closes it); the switch (STATE),
+// Barry's flags, the yield to Barry, the sleep timer, touch wake and the
+// idle-dim nudge are as on the Thor. Desktop Mode changes nothing here yet.
+//
 // Two departures from the Python, for a smooth slider: a new brightness is
 // followed continuously rather than glided to from scratch on every new
 // value (thor_backlight.h's follow), and each panel is written by a thread
@@ -116,8 +128,21 @@ namespace {
 
 using namespace thor_bl;
 
-const char* const BOTTOM = "/sys/class/backlight/ae94000.dsi.0";
-const char* const TOP = "/sys/class/backlight/ae96000.dsi.0";
+// The device's panels and what this does with them.
+struct Profile {
+    const char* bottom;  // the bottom panel's backlight
+    const char* top;     // the top panel's
+    // Steam's slider writes the bottom panel's file (STEAM_BOTTOM goes over
+    // it) and sets both screens; the top panel is written here too (TOP_CAP),
+    // and Desktop Mode shares SCREENS through Plasma's sliders.
+    bool steam_both;
+    bool ayn_button;  // gpio-keys-ayn's KEY_F24
+    bool sleep_flag;  // SLEEP: Barry's Screen off
+};
+const Profile THOR{"/sys/class/backlight/ae94000.dsi.0", "/sys/class/backlight/ae96000.dsi.0", true, true, false};
+const Profile DUO{"/sys/class/backlight/ae96000.dsi.0", "/sys/class/backlight/ae94000.dsi.0", false, false, true};
+// This device's (make_thor_backlight).
+const Profile* P = &THOR;
 const char* const VAR_DIR = "/var/lib/steamos-sm8550";
 const char* const STATE_NAME = "thor-bottom-screen";
 const char* const STATE = "/var/lib/steamos-sm8550/thor-bottom-screen";
@@ -143,6 +168,12 @@ const char* const FIRMWARE_TYPE = "/run/sm8550-thor/bottom-backlight-type";
 const char* const DESKTOP_MAX = "/run/sm8550-thor/bottom-backlight-max";
 const char* const OVERLAY = "/run/sm8550-thor/overlay";  // "1": Barry Launcher is open
 const char* const TOP_INPUT = "/run/sm8550-thor/top-input";
+// "1": put the bottom screen to sleep now (Barry's Screen off; DUO only).
+// Read back as "0" once taken.
+const char* const SLEEP = "/run/sm8550-thor/sleep";
+// A touch this soon after Screen off is that tap's own finger leaving: it
+// does not wake the screen.
+constexpr double SLEEP_GRACE_S = 0.5;
 // Desktop Mode shares SCREENS with Game Mode, through
 // sm8550-thor-desktop-brightness in the Plasma session: on entering it this
 // leaves DESKTOP_START (SCREENS as they were) and holds both panels there
@@ -156,7 +187,7 @@ const char* const DESKTOP_READY = "/run/sm8550-thor/desktop-ready";
 const char* const DESKTOP_TOP = "/run/sm8550-thor/desktop-top";
 // The /run/sm8550-thor entries a pass looks at (Steam's file has a watch
 // of its own, on the file, as Steam writes it through the bind mount).
-const char* const RUN_NAMES[] = {"overlay", "top-input", "desktop-ready", "desktop-top"};
+const char* const RUN_NAMES[] = {"overlay", "top-input", "desktop-ready", "desktop-top", "sleep"};
 constexpr double DESKTOP_READY_S = 10;
 constexpr double LONG_PRESS_S = 0.6;
 // Barry Launcher on or off in Desktop Mode (as its menu entry and the PB-OS
@@ -596,10 +627,11 @@ public:
     void start(pq::Loop& loop) override {
         loop_ = &loop;
         test_sysfs_ = env_set("PBOS_PLATFORMD_TEST_THOR_SYSFS");
+        if (!P->steam_both) return start_duo(loop);
         // A copy left over a panel's attributes by a run that died goes first.
-        for (const char* name : {"type", "max_brightness"}) unshadow(pq::realpath(std::string(BOTTOM) + "/" + name));
-        bottom_max_ = static_cast<int>(to_int(pq::rd(std::string(BOTTOM) + "/max_brightness", "0")));
-        top_max_ = static_cast<int>(std::min<long long>(TOP_CAP, to_int(pq::rd(std::string(TOP) + "/max_brightness", "0"))));
+        for (const char* name : {"type", "max_brightness"}) unshadow(pq::realpath(std::string(P->bottom) + "/" + name));
+        bottom_max_ = static_cast<int>(to_int(pq::rd(std::string(P->bottom) + "/max_brightness", "0")));
+        top_max_ = static_cast<int>(std::min<long long>(TOP_CAP, to_int(pq::rd(std::string(P->top) + "/max_brightness", "0"))));
         if (bottom_max_ <= 0 || top_max_ <= 0) fail("no usable backlights");
         setup_overlay();
         clear_desktop();
@@ -607,9 +639,9 @@ public:
             if (unlink(path) == 0) pq::log("thor-backlight: removed %s: both screens follow Steam's slider", path);
 
         // The real bottom panel, opened before Steam's file goes over it.
-        bottom_path_ = pq::realpath(std::string(BOTTOM) + "/brightness");
-        type_path_ = pq::realpath(std::string(BOTTOM) + "/type");
-        max_path_ = pq::realpath(std::string(BOTTOM) + "/max_brightness");
+        bottom_path_ = pq::realpath(std::string(P->bottom) + "/brightness");
+        type_path_ = pq::realpath(std::string(P->bottom) + "/type");
+        max_path_ = pq::realpath(std::string(P->bottom) + "/max_brightness");
         unshadow(bottom_path_);
         if (mounted(bottom_path_)) fail("Steam's file is still over the bottom panel; cannot reach the panel");
         bl_fd_ = open(bottom_path_.c_str(), O_RDWR | O_CLOEXEC);
@@ -653,14 +685,52 @@ public:
             loop,
             [](int value) {
                 std::string v = std::to_string(value);
-                int fd = open((std::string(TOP) + "/brightness").c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0666);
+                int fd = open((std::string(P->top) + "/brightness").c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0666);
                 if (fd < 0) return errno;
                 int err = ::write(fd, v.data(), v.size()) == static_cast<ssize_t>(v.size()) ? 0 : (errno ? errno : EIO);
                 close(fd);
                 return err;
             },
             [this](uint64_t seq, int value, int err, double took) { written(true, seq, value, err, took); });
+        watch_all(loop);
+        pq::log("thor-backlight: following %s (max %d) -> %s (max %d)", P->bottom, bottom_max_, P->top, top_max_);
+        tick();
+    }
 
+    // The Retroid Pocket Duo (DUO): the bottom panel alone, from SCREENS
+    // (see the top); Steam keeps the top panel.
+    void start_duo(pq::Loop& loop) {
+        bottom_max_ = static_cast<int>(to_int(pq::rd(std::string(P->bottom) + "/max_brightness", "0")));
+        top_max_ = static_cast<int>(to_int(pq::rd(std::string(P->top) + "/max_brightness", "0")));
+        if (bottom_max_ <= 0) fail("no usable bottom backlight");
+        setup_overlay();
+        bottom_path_ = pq::realpath(std::string(P->bottom) + "/brightness");
+        bl_fd_ = open(bottom_path_.c_str(), O_RDWR | O_CLOEXEC);
+        if (bl_fd_ < 0) fail(("cannot open " + bottom_path_ + ": " + os_error(errno)).c_str());
+        open_touch();
+        // First start: both sliders where the bottom panel is now.
+        if (auto screens = read_screens()) {
+            screens_ = *screens;
+        } else {
+            double f = level_of(bottom_set(), bottom_max_);
+            screens_ = {f, f, 0};
+            save_screens();
+        }
+        bottom_.shown = bottom_set();
+        bottom_.writer.start(
+            loop,
+            [this](int value) {
+                std::string v = std::to_string(value);
+                return pwrite(bl_fd_, v.data(), v.size(), 0) >= 0 ? 0 : errno;
+            },
+            [this](uint64_t seq, int value, int err, double took) { written(false, seq, value, err, took); });
+        watch_all(loop);
+        pq::log("thor-backlight: following SCREENS on %s (max %d); %s is Steam's", P->bottom, bottom_max_, P->top);
+        tick();
+    }
+
+    // What brings a pass, both profiles.
+    void watch_all(pq::Loop& loop) {
         loop.watch(RUN_DIR, IN_CLOSE_WRITE | IN_MOVED_TO | IN_CREATE | IN_DELETE | IN_MOVED_FROM | IN_Q_OVERFLOW,
                    [this](uint32_t mask, const std::string& name) {
                        if (mask & IN_Q_OVERFLOW) return tick();
@@ -686,7 +756,7 @@ public:
         if (test_sysfs_) {
             // Test only (tests/thor_backlight): a fake sysfs sends no uevents;
             // its files' writes stand in for them.
-            for (std::string f : {std::string(TOP) + "/brightness", std::string(BOTTOM) + "/bl_power"})
+            for (std::string f : {std::string(P->top) + "/brightness", std::string(P->bottom) + "/bl_power"})
                 loop.watch(f, IN_MODIFY | IN_CLOSE_WRITE, [this](uint32_t, const std::string&) { backlight_changed(); });
         }
         if (!env_set("PBOS_PLATFORMD_TEST_THOR_SCAN")) {
@@ -697,8 +767,6 @@ public:
         }
         scan_procs();
         if (cn_ >= 0) loop.on_readable(cn_, [this] { drain_procs(); });
-        pq::log("thor-backlight: following %s (max %d) -> %s (max %d)", BOTTOM, bottom_max_, TOP, top_max_);
-        tick();
     }
 
     void stop() override {
@@ -735,7 +803,8 @@ private:
         gid_t gid = group_id("input");
         if (chown(RUN_DIR, static_cast<uid_t>(-1), gid) != 0 || chmod(RUN_DIR, 02775) != 0)
             pq::log("thor-backlight: cannot set up %s: %s", RUN_DIR, std::strerror(errno));
-        for (const char* flag : {OVERLAY, TOP_INPUT}) {
+        for (const char* flag : {OVERLAY, TOP_INPUT, SLEEP}) {
+            if (flag == SLEEP && !P->sleep_flag) continue;
             write(flag, "0");
             if (chown(flag, static_cast<uid_t>(-1), gid) != 0 || chmod(flag, 0664) != 0)
                 pq::log("thor-backlight: cannot set up %s: %s", flag, std::strerror(errno));
@@ -1000,6 +1069,7 @@ private:
         }
         touched = touched || touch_queued_;
         touch_queued_ = false;
+        if (touched && slept_by_hand_ && monotonic() - slept_at_ < SLEEP_GRACE_S) touched = false;
         if (touched) {
             last_active_ = monotonic();
             if (asleep_) {
@@ -1024,7 +1094,7 @@ private:
         if (env.empty() || sub == "input") {
             // Empty: some were dropped; look anyway.
             if (env.empty() || action == "add" || action == "remove") {
-                if (key_fd_ < 0) open_ayn_key();
+                if (key_fd_ < 0 && P->ayn_button) open_ayn_key();
                 open_touch();
             }
             if (env.empty() || action == "add") tick();
@@ -1046,10 +1116,11 @@ private:
     // level, read first, wins as it did there. Taken at once, the top
     // level and Steam's took turns and the panels jumped.
     void backlight_changed() {
-        if (!on_ && pq::rd(std::string(BOTTOM) + "/bl_power") != BL_OFF) {
+        if (!on_ && pq::rd(std::string(P->bottom) + "/bl_power") != BL_OFF) {
             tick();
             return;
         }
+        if (!P->steam_both) return;  // the top panel is Steam's alone
         int top_now = top_set();
         if (top_now != wrote_top_ && !top_.sending(top_now) && !top_settle_)
             top_settle_ = loop_->after(GLIDE_MS / 1000.0, [this] {
@@ -1251,7 +1322,7 @@ private:
                      p.sent.end());
         bool refused = err != 0;
         bool& was = top ? top_refused_ : bottom_refused_;
-        std::string path = top ? std::string(TOP) + "/brightness" : bottom_path_;
+        std::string path = top ? std::string(P->top) + "/brightness" : bottom_path_;
         if (refused && !was)
             pq::log("thor-backlight: cannot write %d to %s: %s", value, path.c_str(), os_error(err).c_str());
         if (top) {
@@ -1275,7 +1346,7 @@ private:
                 // Back on: at its level, then power up and allow touch.
                 power_on_seq_ = 0;
                 if (on_) {
-                    write(std::string(BOTTOM) + "/bl_power", BL_ON);
+                    write(std::string(P->bottom) + "/bl_power", BL_ON);
                     set_touch_inhibited(false, false);
                 }
             }
@@ -1287,14 +1358,20 @@ private:
         if (took >= GLIDE_MS / 1000.0 && !p.busy() && p.way && !charge_rest() && (top || !desktop_ || on_)) {
             int want = top ? (desktop_ ? (ready_ ? top_max_ : stock_top(screens_.top, top_max_))
                                        : stock_top(screens_.top, top_max_))
-                           : stock_bottom(screens_.bottom, bottom_max_);
+                           : bottom_target();
             int step = follow(p.way, want, p.shown, monotonic());
             if (step != p.shown) submit(p, step);
         }
         arm();
     }
 
-    static int top_set() { return static_cast<int>(to_int(pq::rd(std::string(TOP) + "/brightness", "0"))); }
+    // Where the bottom panel goes for its slider: AYN's curve on the Thor, a
+    // straight line on the Duo.
+    int bottom_target() const {
+        return P->steam_both ? stock_bottom(screens_.bottom, bottom_max_) : linear_bottom(screens_.bottom, bottom_max_);
+    }
+
+    static int top_set() { return static_cast<int>(to_int(pq::rd(std::string(P->top) + "/brightness", "0"))); }
 
     void set_touch_inhibited(bool on, bool only_if_differs) {
         for (const auto& d : touch_dirs_) {
@@ -1358,7 +1435,19 @@ private:
         // Sleep: untouched for bottomSleepSeconds (not in Desktop Mode, nor
         // while a game draws on the bottom screen).
         limit_ = sleep_seconds();
-        if (asleep_ && limit_ == 0) {
+        // Barry's Screen off (DUO): asleep now, Barry closed (as the AYN
+        // button's hold closes it); a touch wakes it, whatever the timer.
+        if (P->sleep_flag && pq::rd(SLEEP, "0") == "1") {
+            write(SLEEP, "0");
+            if (switch_on_ && !desktop_ && !asleep_) {
+                asleep_ = true;
+                slept_by_hand_ = true;
+                slept_at_ = monotonic();
+                if (overlay) write(OVERLAY, "0");
+                pq::log("thor-backlight: Screen off: bottom screen asleep until a touch");
+            }
+        }
+        if (asleep_ && limit_ == 0 && !slept_by_hand_) {
             asleep_ = false;  // the timer was turned off: awake at once
             last_active_ = monotonic();
             pq::log("thor-backlight: bottom screen wakes: sleep turned off");
@@ -1377,8 +1466,9 @@ private:
             asleep_ = false;
             last_active_ = monotonic();  // turned on again: a fresh start
         }
+        if (!asleep_) slept_by_hand_ = false;
         on_ = switch_on_ && !asleep_;
-        std::string bl_power = std::string(BOTTOM) + "/bl_power";
+        std::string bl_power = std::string(P->bottom) + "/bl_power";
         if (!switch_on_) {
             power_on_seq_ = 0;
             if (pq::rd(bl_power) != BL_OFF) write(bl_power, BL_OFF);
@@ -1391,12 +1481,16 @@ private:
             // Back on: at its level, then (once written, written()) power up
             // and allow touch.
             bottom_.way.reset();
-            power_on_seq_ = submit(bottom_, stock_bottom(screens_.bottom, bottom_max_));
+            power_on_seq_ = submit(bottom_, bottom_target());
         }
         if (!was_on_ || *was_on_ != on_) pq::log("thor-backlight: bottom screen %s", on_ ? "on" : "off");
         was_on_ = on_;
 
-        if (desktop_mode() != desktop_) {
+        bool desktop_now = desktop_mode();
+        if (desktop_now != desktop_ && !P->steam_both) {
+            desktop_ = !desktop_;
+            pq::log(desktop_ ? "thor-backlight: Desktop Mode" : "thor-backlight: Game Mode");
+        } else if (desktop_now != desktop_) {
             desktop_ = !desktop_;
             bottom_alone(desktop_);
             if (desktop_) {
@@ -1418,7 +1512,8 @@ private:
             pq::log(desktop_ ? "thor-backlight: Desktop Mode: Plasma's sliders, sharing Game Mode's brightness"
                              : "thor-backlight: Game Mode: Steam's level on both, as on Android");
         }
-        if (desktop_) desktop_pass();
+        if (!P->steam_both) duo_pass();
+        else if (desktop_) desktop_pass();
         else game_pass();
         arm();
     }
@@ -1452,7 +1547,7 @@ private:
         // The bottom panel follows only while lit (once lit again, it is
         // written at its level at once).
         if (on_) {
-            int want_bottom = follow(bottom_.way, stock_bottom(screens_.bottom, bottom_max_), bottom_.shown, monotonic());
+            int want_bottom = follow(bottom_.way, bottom_target(), bottom_.shown, monotonic());
             if (want_bottom != bottom_.shown || (bottom_refused_ && monotonic() >= panel_retry_at_))
                 submit(bottom_, want_bottom);
         } else {
@@ -1513,13 +1608,23 @@ private:
         bool retry = (top_refused_ || bottom_refused_) && monotonic() >= panel_retry_at_;
         // Each panel's writes go to its writer; their outcomes (refused or
         // taken, and wrote_top_) come back in written().
-        int want_bottom = follow(bottom_.way, stock_bottom(screens_.bottom, bottom_max_), bottom_.shown, monotonic());
+        int want_bottom = follow(bottom_.way, bottom_target(), bottom_.shown, monotonic());
         if (want_bottom != bottom_.shown || (bottom_refused_ && retry)) submit(bottom_, want_bottom);
         if (!top_.busy()) resync_top(top_now);
         int want_top = follow(top_.way, stock_top(screens_.top, top_max_), top_.shown, monotonic());
         if (want_top != top_.shown || (top_refused_ && retry)) submit(top_, want_top);
         if ((top_refused_ || bottom_refused_) && monotonic() >= panel_retry_at_)
             panel_retry_at_ = monotonic() + PANEL_RETRY_S;
+    }
+
+    // DUO, both modes: the bottom panel follows SCREENS' bottom (dark
+    // underneath while off, as game_pass); the top is Steam's.
+    void duo_pass() {
+        if (auto s = read_screens()) screens_ = *s;
+        bool retry = bottom_refused_ && monotonic() >= panel_retry_at_;
+        int want_bottom = follow(bottom_.way, bottom_target(), bottom_.shown, monotonic());
+        if (want_bottom != bottom_.shown || retry) submit(bottom_, want_bottom);
+        if (retry) panel_retry_at_ = monotonic() + PANEL_RETRY_S;
     }
 
     // The next pass, when the soonest thing is due (nothing due: none).
@@ -1584,6 +1689,8 @@ private:
     uint64_t power_on_seq_ = 0;  // the bottom panel powers up once this is written
     std::optional<bool> was_on_;
     bool on_ = true, switch_on_ = true, asleep_ = false, ready_ = false;
+    bool slept_by_hand_ = false;  // asleep from SLEEP (Barry's Screen off), not the timer
+    double slept_at_ = 0;
     double last_active_ = monotonic();  // a bottom touch or an AYN press
     double game_checked_ = 0;
     std::optional<double> overlay_since_;
@@ -1600,8 +1707,11 @@ private:
 
 }  // namespace
 
-bool thor_backlight_here() { return dt_has("ayn,thor"); }
+bool thor_backlight_here() { return dt_has("ayn,thor") || dt_has("retroidpocket,rpduo"); }
 
-std::unique_ptr<Module> make_thor_backlight() { return std::make_unique<ThorBacklight>(); }
+std::unique_ptr<Module> make_thor_backlight() {
+    P = dt_has("retroidpocket,rpduo") ? &DUO : &THOR;
+    return std::make_unique<ThorBacklight>();
+}
 
 }  // namespace pp

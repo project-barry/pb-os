@@ -25,12 +25,16 @@ bool dt_has(const char* s) { return pq::dt_compatible().find(s) != std::string::
 
 const std::vector<ModuleInfo>& modules() {
     static const std::vector<ModuleInfo> all = {
-        {"fan", Instance::System, [] { return dt_has("qcom,sm8550"); }, make_fan},
-        {"power-button", Instance::System, [] { return dt_has("qcom,sm8550"); }, make_power_button},
+        // The Retroid Pocket Duo (SM7750, qcom,eliza) has the same pwm-fan and
+        // pmic power key as the SM8550 handhelds.
+        {"fan", Instance::System, [] { return dt_has("qcom,sm8550") || dt_has("retroidpocket,rpduo"); }, make_fan},
+        {"power-button", Instance::System, [] { return dt_has("qcom,sm8550") || dt_has("retroidpocket,rpduo"); },
+         make_power_button},
         {"charge-control", Instance::System, charge_control_here, make_charge_control},
         {"pbosd", Instance::System, pbosd_here, make_pbosd},
         {"thor-backlight", Instance::System, thor_backlight_here, make_thor_backlight},
-        {"thor-controls", Instance::System, [] { return dt_has("ayn,thor"); }, make_thor_controls},
+        {"thor-controls", Instance::System, [] { return dt_has("ayn,thor") || dt_has("retroidpocket,rpduo"); },
+         make_thor_controls},
         // Every device: memory pressure is the same everywhere.
         {"memguard", Instance::System, [] { return true; }, make_memguard},
         {"volume-keeper", Instance::User, [] { return dt_has("qcom,sm8550"); }, make_volume_keeper},

@@ -8,6 +8,9 @@
 # page of the shell, left of home. X11 clients, so gamescope's stacking and
 # overlays apply.
 export QT_QPA_PLATFORM=xcb QT_XCB_GL_INTEGRATION=xcb_egl
+# The device's facts (its Barry button, the bottom screen's size and
+# touchscreen), for everything started here.
+. /usr/lib/barry_launcher/barry_device
 # No wait for vblank in the swap: gamescope composites the windows on the
 # screen's own vblank anyway. With it, Qt's GUI thread sat blocked behind the
 # render thread's swap (15-27 ms a frame), so touches arrived two at a time

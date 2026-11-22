@@ -1,11 +1,11 @@
 [Unit]
-Description=Barry Launcher: AYN Thor bottom-screen home, apps and dashboard
+Description=Barry Launcher: bottom-screen home, apps and dashboard (AYN Thor, Retroid Pocket Duo)
 PartOf=gamescope-session.target
 After=gamescope-session.service
 
 [Service]
 Type=simple
-ExecCondition=/bin/sh -c 'grep -qa "ayn,thor" /sys/firmware/devicetree/base/compatible'
+ExecCondition=/bin/sh -c 'grep -qaE "ayn,thor|retroidpocket,rpduo" /sys/firmware/devicetree/base/compatible'
 # Game Mode's gamescope creates the lease socket once it is up.
 ExecStartPre=/bin/sh -c 'for i in $(seq 1 60); do [ -S /tmp/gamescope-lease.sock ] && exit 0; sleep 1; done; exit 1'
 ExecStart=/usr/lib/steamos-sm8550/sm8550-run-bottom -- /usr/lib/barry_launcher/barry_launcher_session

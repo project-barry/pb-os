@@ -52,4 +52,20 @@ constexpr double WHEEL_ANIM_S = 0.15;
 constexpr double DOUBLE_TAP_ZOOM = 2;
 constexpr double ZOOM_ANIM_S = 0.25;
 
+// A swipe up from the bottom edge (EdgeSwipe, on a device without a Barry
+// button): one finger, coming down this close to the bottom, lifted at
+// least this far up, within this time (shelld's numbers on the Thor).
+// Screen pixels.
+constexpr double BOTTOM_SWIPE_EDGE = 45;
+constexpr double BOTTOM_SWIPE_MIN = 150;
+constexpr double BOTTOM_SWIPE_S = 0.8;
+
+// Whether one finger from startY to endY (screen pixels down from the top)
+// in this many seconds, on a screen this high, was a swipe up from the
+// bottom edge.
+constexpr bool bottomSwipe(double startY, double endY, double seconds, double height)
+{
+    return startY >= height - BOTTOM_SWIPE_EDGE && startY - endY >= BOTTOM_SWIPE_MIN && seconds <= BOTTOM_SWIPE_S;
+}
+
 }  // namespace barry::touch

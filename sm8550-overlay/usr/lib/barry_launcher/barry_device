@@ -1,0 +1,41 @@
+# barry_device: the device Barry Launcher runs on, sourced (sh) by
+# barry_launcher_session and sm8550-run-bottom; the one place these facts
+# live. Exported, so the shell, shelld, statsd, keyd and Barry.Input
+# (its Device singleton and bottompanel.h) read them from the environment.
+#
+#   BARRY_DEVICE         thor, rpduo
+#   BARRY_BUTTON         the button that opens and closes Barry (AYN); empty
+#                        when the device has none: a swipe up from the bottom
+#                        edge closes Barry, the quick settings have Screen off
+#   BARRY_TOP_OUTPUT     the top screen's connector
+#   BARRY_BOTTOM_OUTPUT  the bottom screen's connector
+#   BARRY_BOTTOM_W/H     the bottom screen in pixels, as Barry draws it
+#   BARRY_TOUCH_TURN     how the bottom panel is turned (gamescope's
+#                        --force-orientation; also how its touchscreen's raw
+#                        axes lie): right (portrait panel turned right),
+#                        normal (the panel's own landscape)
+#   BARRY_REFRESH        the bottom panel's refresh rates (Hz)
+if grep -qa 'retroidpocket,rpduo' /sys/firmware/devicetree/base/compatible 2>/dev/null; then
+  # Retroid Pocket Duo: top DSI-1 1080x1920 portrait, bottom DSI-2 1280x960
+  # landscape-native; no Barry button.
+  BARRY_DEVICE=rpduo
+  BARRY_BUTTON=
+  BARRY_TOP_OUTPUT=DSI-1
+  BARRY_BOTTOM_OUTPUT=DSI-2
+  BARRY_BOTTOM_W=1280
+  BARRY_BOTTOM_H=960
+  BARRY_TOUCH_TURN=normal
+  BARRY_REFRESH="60"
+else
+  # AYN Thor: the bottom panel is portrait-native and turned right.
+  BARRY_DEVICE=thor
+  BARRY_BUTTON=AYN
+  BARRY_TOP_OUTPUT=DSI-2
+  BARRY_BOTTOM_OUTPUT=DSI-1
+  BARRY_BOTTOM_W=1240
+  BARRY_BOTTOM_H=1080
+  BARRY_TOUCH_TURN=right
+  BARRY_REFRESH="60 120"
+fi
+export BARRY_DEVICE BARRY_BUTTON BARRY_TOP_OUTPUT BARRY_BOTTOM_OUTPUT BARRY_BOTTOM_W BARRY_BOTTOM_H \
+  BARRY_TOUCH_TURN BARRY_REFRESH

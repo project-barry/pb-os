@@ -68,6 +68,11 @@ inline int stock_bottom(double f, int bottom_max) {
     return panel_value((pct < 100.0 ? pct : 100.0) / 100, bottom_max);
 }
 
+// The Retroid Pocket Duo's bottom panel (thor-backlight's DUO profile): its
+// slider position on a straight line over the panel's range, in Android's
+// STEPS and never under PANEL_MIN (Retroid's own curve not dug yet).
+inline int linear_bottom(double f, int bottom_max) { return panel_value(f, bottom_max); }
+
 // Where Steam's slider sits (0-1, from its lowest to full), from the level
 // it put out.
 inline double steam_position(double level) {

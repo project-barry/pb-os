@@ -1,6 +1,6 @@
 // thor-controls (was sm8550-thor-controlsd): the root half of Barry
-// Launcher's quick controls on the AYN Thor: the fan profile and the stick
-// lighting.
+// Launcher's quick controls on the AYN Thor (and the Retroid Pocket Duo,
+// which has no stick LEDs): the fan profile and the stick lighting.
 //
 // Barry Launcher's dashboard runs as the user; its stats service
 // (barry_launcher_statsd) and pbos-qamd's Barry section ask this over SOCKET,
@@ -385,6 +385,9 @@ struct Fan {
 Fan fan_state() {
     Ini ini;
     std::vector<std::string> files = FAN_CONFS;
+    // The device's own profiles (the Retroid Pocket Duo's), between the
+    // factory file and the user's, as the fan module reads them.
+    if (std::string dev = fan_device_conf(); !dev.empty()) files.insert(files.begin() + 1, dev);
     files.push_back(FAN_QUICK);
     ini.read(files);
     Fan f;

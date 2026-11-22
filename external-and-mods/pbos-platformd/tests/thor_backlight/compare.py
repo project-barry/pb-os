@@ -27,6 +27,23 @@ def wlog(case, impl):
 
 
 for case in cases:
+    if case.startswith("duo-"):
+        # The Duo's profile: its own checks (scenario.py), no Python.
+        try:
+            cpp = json.load(open(f"{out}/{case}.cpp.json"))
+        except OSError as err:
+            print(f"{case}: MISSING ({err})")
+            rc = 1
+            continue
+        failed = [f"  [{s['label']}] {what}" for s in cpp for what, ok in s.get("expect", []) if not ok]
+        n = sum(len(s.get("expect", [])) for s in cpp)
+        if failed:
+            rc = 1
+            print(f"{case}: FAIL ({len(failed)} of {n} checks)")
+            print("\n".join(failed))
+        else:
+            print(f"{case}: PASS ({n} checks)")
+        continue
     try:
         py = json.load(open(f"{out}/{case}.py.json"))
         cpp = json.load(open(f"{out}/{case}.cpp.json"))

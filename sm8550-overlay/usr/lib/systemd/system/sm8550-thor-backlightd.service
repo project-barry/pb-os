@@ -1,5 +1,5 @@
 [Unit]
-Description=AYN Thor: one brightness for both panels, bottom-screen switch
+Description=AYN Thor, Retroid Pocket Duo: bottom-screen brightness, switch and sleep
 ConditionPathExists=/sys/class/backlight/ae96000.dsi.0
 # Before Game Mode: Steam must open the bottom panel's brightness after this
 # has put its own file over it.
@@ -7,7 +7,7 @@ Before=display-manager.service
 
 [Service]
 Type=simple
-ExecCondition=/bin/sh -c 'grep -qa "ayn,thor" /sys/firmware/devicetree/base/compatible'
+ExecCondition=/bin/sh -c 'grep -qaE "ayn,thor|retroidpocket,rpduo" /sys/firmware/devicetree/base/compatible'
 ExecStart=/usr/lib/pbos-platformd/pbos-platformd --system --only thor-backlight
 Restart=always
 RestartSec=2

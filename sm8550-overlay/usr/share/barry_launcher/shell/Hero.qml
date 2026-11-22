@@ -230,7 +230,10 @@ Rectangle {
         }
         Text {
             anchors.horizontalCenter: parent.horizontalCenter
-            text: "press AYN to open  ·  hold AYN: screen off"
+            // The device's Barry button; without one, a tap on the art.
+            text: Device.barryButton !== ""
+                  ? "press " + Device.barryButton + " to open  ·  hold " + Device.barryButton + ": screen off"
+                  : "tap to open"
             color: Skin.colors.text
             opacity: 0.55
             font { family: Skin.font || "Noto Sans"; pixelSize: 30 * hero.s }

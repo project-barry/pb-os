@@ -562,7 +562,8 @@ private:
 
 // The unit's ExecCondition: the devices with charge controls.
 bool charge_control_here() {
-    for (const char* c : {"retroidpocket,rp6", "retroidpocket,rpnova", "ayn,thor", "ayn,odin2", "konkr,pocket-fit"})
+    for (const char* c : {"retroidpocket,rp6", "retroidpocket,rpnova", "retroidpocket,rpduo", "ayn,thor", "ayn,odin2",
+                          "konkr,pocket-fit"})
         if (dt_has(c)) return true;
     return false;
 }

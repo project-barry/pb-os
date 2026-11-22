@@ -39,11 +39,19 @@ bwrap --ro-bind "$R" / --dev /dev --proc /proc --tmpfs /tmp --bind "$b" /tmp/b -
 cp "$b/fakeproc" "$b/gamescope"
 mv "$b/fakeproc" "$b/kwin_wayland"
 printf 'ayn,thor\0qcom,sm8550\0' >"$b/compat"
+printf 'retroidpocket,rpduo\0qcom,eliza\0' >"$b/compat-duo"
 modprobe uinput 2>/dev/null || true
 cases=("$@")
 [[ ${#cases[@]} -gt 0 ]] || read -ra cases <<<"$(python3 "$b/scenario.py" --list)"
 for c in "${cases[@]}"; do
-  for impl in py cpp; do
+  # duo-*: the Retroid Pocket Duo's profile, the module alone (no Python).
+  impls=(py cpp)
+  compat=compat
+  if [[ "$c" == duo-* ]]; then
+    impls=(cpp)
+    compat=compat-duo
+  fi
+  for impl in "${impls[@]}"; do
     t="$(mktemp -d -p /var/tmp)"
     mkdir -p "$t"/{upper/usr/bin,upper/usr/lib/barry_launcher,work,root,bl,run,varlib,home,ctl}
     cp "$HERE/runuser" "$t/upper/usr/bin/runuser"
@@ -56,11 +64,11 @@ for c in "${cases[@]}"; do
       exec bwrap --bind "$2/root" / --dev-bind /dev /dev --proc /proc --ro-bind /sys /sys \
         --bind /sys/devices/virtual/input /sys/devices/virtual/input \
         --tmpfs /sys/firmware --dir /sys/firmware/devicetree/base \
-        --ro-bind "$3/compat" /sys/firmware/devicetree/base/compatible \
+        --ro-bind "$3/$7" /sys/firmware/devicetree/base/compatible \
         --bind "$2/bl" /sys/class/backlight --bind "$2/run" /run --bind "$2/varlib" /var/lib --bind "$2/home" /home \
         --tmpfs /tmp --bind "$2/bl" /tmp/bl --bind "$2/ctl" /tmp/ctl --bind "$3" /tmp/t --bind "$4" /tmp/out \
         --cap-add ALL --die-with-parent --chdir /tmp/t --setenv PATH /usr/bin \
-        python3 /tmp/t/scenario.py "$5" "$6"' _ "$R" "$t" "$b" "$OUT" "$impl" "$c" \
+        python3 /tmp/t/scenario.py "$5" "$6"' _ "$R" "$t" "$b" "$OUT" "$impl" "$c" "$compat" \
       || echo "!! $c ($impl) failed"
     [[ -n "${KEEP:-}" ]] && echo "kept $t" || rm -rf "$t"
   done

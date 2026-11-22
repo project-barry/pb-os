@@ -3,16 +3,18 @@
 own Android partitions (read-only) to /var/lib/pbos-firmware, which the Duo's
 kernel searches (firmware_class.path, kernel-sm8650/cmdline.sh).
 
-The DSP, Wi-Fi and GPU zap images are signed for the device and are not
-redistributable, so pb-os ships none of them for the Duo. Qualcomm's Android
-keeps them split (name.mdt + name.bNN); the kernel loads one merged .mbn,
-so they are squashed here as pil-squasher does. Sources, by Qualcomm's usual
-layout, first found wins: the vendor partition inside super (dynamic
-partitions, read through its LP metadata), whose /firmware holds the OEM's
-own builds (on the Retroid Pocket Nova its ADSP, which the charge controls
-need, is there and not in modem), then the modem partition (FAT, image/).
+The DSP, Wi-Fi, Bluetooth and GPU zap images are signed for the device or
+are Retroid's own, so pb-os ships none of them for the Duo. Qualcomm's
+Android keeps the DSP images split (name.mdt + name.bNN); the kernel loads
+one merged .mbn, so they are squashed here as pil-squasher does. Sources,
+first found wins: the vendor partition inside super (dynamic partitions,
+read through the active slot's LP metadata), whose /firmware holds the
+OEM's own builds (Retroid's ADSP, with its battery profile, is there and
+not in modem), then persist (the unit's own Wi-Fi board data), the modem
+partition and the bluetooth partition (FAT, image/).
 
-Untested: no Duo in hand. Every file found on those partitions is listed in
+Tested on a Duo 2026-11-20: DSPs, GPU, Wi-Fi and Bluetooth come up. Every
+file found on those partitions is listed in
 /var/lib/pbos-firmware/rpduo-sources.txt for a later look.
 
   rpduo-firmware          copy what is missing, start offline remoteprocs
@@ -24,30 +26,74 @@ import struct
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
-DEST = Path("/var/lib/pbos-firmware/qcom/eliza/retroidpocket/rpduo")
-LIST = Path("/var/lib/pbos-firmware/rpduo-sources.txt")
-# The Duo DTS's firmware-name values (retroid/patches/0071) and the source
-# names to look for, first found wins.
+FWROOT = Path("/var/lib/pbos-firmware")
+LIST = FWROOT / "rpduo-sources.txt"
+RP = "qcom/eliza/retroidpocket/rpduo/"
+# Paths under FWROOT the kernel asks for (the Duo DTS's firmware-name values,
+# retroid/patches/0071; ath12k's and btqca's own names for the WCN7750) and
+# the source names to look for, first found wins. A name with a "/" must match the end
+# of the file's path: the Duo's modem partition holds two wpss images,
+# image/qca6750/ and image/wcn7750/, and the Duo's Wi-Fi is the WCN7750.
+# The A722's zap is gen70e00_zap (stock msm_kgsl.ko's gen7_17_0 entry
+# loads gen70e00_sqe.fw, gen71700_gmu.bin and gen70e00_zap.mbn).
+# Wi-Fi board data: ath12k takes an ELF BDF as board.bin; the unit's own
+# persist/bdwlan.elf (persist is searched before modem) matches none of the
+# 30 generic variants in modem image/wcn7750/, so it is preferred.
+# Bluetooth: btqca asks for qca/ornbtfw<rom>.tlv and qca/ornnv<rom>.bin
+# (rom 0x10 on the Duo); they are on the bluetooth partition.
 WANTED = {
-    "adsp.mbn": ["adsp.mbn", "adsp.mdt"],
-    "adsp_dtb.mbn": ["adsp_dtb.mbn", "adsp_dtb.mdt"],
-    "cdsp.mbn": ["cdsp.mbn", "cdsp.mdt"],
-    "cdsp_dtb.mbn": ["cdsp_dtb.mbn", "cdsp_dtb.mdt"],
-    "wpss.mbn": ["wpss.mbn", "wpss.mdt"],
-    "gen71700_zap.mbn": ["gen71700_zap.mbn", "gen71700_zap.mdt",
-                         "a722_zap.mbn", "a722_zap.mdt"],
-    "aw883xx_acf.bin": ["aw883xx_acf.bin"],
+    RP + "adsp.mbn": ["adsp.mbn", "adsp.mdt"],
+    RP + "adsp_dtb.mbn": ["adsp_dtb.mbn", "adsp_dtb.mdt"],
+    RP + "cdsp.mbn": ["cdsp.mbn", "cdsp.mdt"],
+    RP + "cdsp_dtb.mbn": ["cdsp_dtb.mbn", "cdsp_dtb.mdt"],
+    RP + "wpss.mbn": ["wcn7750/wpss.mbn", "wcn7750/wpss.mdt"],
+    RP + "gen71700_zap.mbn": ["gen70e00_zap.mbn", "gen70e00_zap.mdt",
+                              "gen71700_zap.mbn", "gen71700_zap.mdt"],
+    RP + "aw883xx_acf.bin": ["aw883xx_acf.bin"],
+    "ath12k/WCN7750/hw1.0/board.bin": ["bdwlan.elf"],
+    "ath12k/WCN7750/hw1.0/regdb.bin": ["wcn7750/regdb.bin"],
+    # The WLAN Q6 pulls these over QMI (ath12k: "icnss_load_phy_ucode() /
+    # icnss_load_aux()"); stock keeps them as phy_ucode.elf / aux_ucode.elf.
+    "ath12k/WCN7750/hw1.0/m3.bin": ["wcn7750/phy_ucode.elf"],
+    "ath12k/WCN7750/hw1.0/aux_ucode.bin": ["wcn7750/aux_ucode.elf"],
+    # ath12k sends a QDSS trace config before the WLAN firmware starts and
+    # fails without one; stock has a debug and a perf variant, perf is lighter.
+    "ath12k/WCN7750/hw1.0/qdss.cfg": ["wcn7750/qdss_trace_config_perf_v1.cfg"],
+    "qca/ornbtfw10.tlv": ["ornbtfw10.tlv"],
+    "qca/ornnv10.bin": ["ornnv10.bin"],
+    # Video codec (iris): the kernel asks for vpu30_p2, stock's is vpu30_2v.
+    "qcom/vpu/vpu30_p2.mbn": ["vpu30_2v.mbn", "vpu30_2v.mdt"],
+    # The unit's own addresses (persist): without them Wi-Fi and Bluetooth
+    # use Qualcomm's default 00:03:7f:..., the same on every Duo.
+    "rpduo-persist/wlan_mac.bin": ["wlan_mac.bin"],
+    "rpduo-persist/quec_bt_mac": ["quec_bt_mac"],
+    # The unit's factory stick calibration (FactoryTest writes it).
+    "rpduo-persist/joys": ["retrostation/joys"],
 }
+# Bumped when WANTED or the sources change: everything is copied again once
+# (2: vendor_b read whole through device-mapper; the video firmware; MACs;
+# the stick calibration).
+VERSION = "2"
+STAMP = FWROOT / "rpduo-version"
+WLAN_LINK = Path("/etc/systemd/network/10-rpduo-wlan.link")
 
 
 def log(msg):
     print(f"rpduo-firmware: {msg}", flush=True)
 
 
-def run(*cmd, check=True):
-    return subprocess.run(cmd, check=check, capture_output=True, text=True)
+def run(*cmd, check=True, timeout=30):
+    """A tool that hangs must never hold up the boot (this unit runs before
+    the display manager): give up after `timeout` seconds."""
+    try:
+        return subprocess.run(cmd, check=check, capture_output=True, text=True,
+                              stdin=subprocess.DEVNULL, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        log(f"{cmd[0]}: no answer in {timeout} s, skipped")
+        return subprocess.CompletedProcess(cmd, 124, "", "")
 
 
 def partitions():
@@ -63,10 +109,39 @@ def partitions():
     return parts
 
 
-def slot_suffixes():
-    """Active slot first (the stock ABL passes androidboot.slot_suffix)."""
+def gpt_active_suffix(parts):
+    """The A/B slot whose boot partition has Qualcomm's ACTIVE attribute
+    (GPT entry attribute bit 50). `fastboot boot` of our image through the
+    Duo's stock ABL passes no androidboot.slot_suffix."""
+    for sfx in ("_a", "_b"):
+        dev = parts.get(f"boot{sfx}")
+        if not dev:
+            return None
+        node = Path("/sys/class/block") / Path(dev).name
+        try:
+            num = int((node / "partition").read_text())
+            disk = node.resolve().parent.name
+            lbs = int(Path(f"/sys/block/{disk}/queue/logical_block_size").read_text())
+            with open(f"/dev/{disk}", "rb") as f:
+                f.seek(lbs)
+                hdr = f.read(92)
+                if hdr[:8] != b"EFI PART":
+                    return None
+                entries_lba, = struct.unpack_from("<Q", hdr, 72)
+                entry_size, = struct.unpack_from("<I", hdr, 84)
+                f.seek(entries_lba * lbs + (num - 1) * entry_size)
+                attrs, = struct.unpack_from("<Q", f.read(entry_size), 48)
+        except (OSError, ValueError, struct.error):
+            return None
+        if attrs >> 50 & 1:
+            return sfx
+    return None
+
+
+def slot_suffixes(parts=None):
+    """Active slot first: androidboot.slot_suffix, else the GPT flags."""
     m = re.search(r"androidboot\.slot_suffix=(_[ab])", Path("/proc/cmdline").read_text())
-    first = m.group(1) if m else "_a"
+    first = m.group(1) if m else (gpt_active_suffix(parts or {}) or "_a")
     return [first, "_b" if first == "_a" else "_a", ""]
 
 
@@ -109,10 +184,11 @@ def squash(mdt: Path, out: Path):
     tmp.replace(out)
 
 
-def super_extents(dev, name):
+def super_extents(dev, name, slot=0):
     """(byte offset, byte length) list of logical partition `name` in super,
-    from the primary LP metadata (AOSP liblp: geometry at 4096, metadata slot
-    0 after the geometry and its backup)."""
+    from the primary LP metadata (AOSP liblp: geometry at 4096, then the
+    geometry backup, then one metadata copy per slot: _a = 0, _b = 1; after an
+    update each slot's copy describes its own suffix)."""
     with open(dev, "rb") as f:
         f.seek(4096)
         geo = f.read(52)
@@ -120,7 +196,7 @@ def super_extents(dev, name):
         if magic != 0x616C4467:
             return None
         md_max, = struct.unpack_from("<I", geo, 40)
-        f.seek(4096 + 2 * 4096)
+        f.seek(4096 + 2 * 4096 + slot * md_max)
         hdr = f.read(256)
         if struct.unpack_from("<I", hdr, 0)[0] != 0x414C5030:
             return None
@@ -128,7 +204,7 @@ def super_extents(dev, name):
         tables_size, = struct.unpack_from("<I", hdr, 44)
         # partitions, extents, groups, block devices: (offset, count, size)
         descs = [struct.unpack_from("<III", hdr, 80 + 12 * i) for i in range(4)]
-        f.seek(4096 + 2 * 4096 + header_size)
+        f.seek(4096 + 2 * 4096 + slot * md_max + header_size)
         tables = f.read(min(tables_size, md_max))
     (p_off, p_num, p_size), (e_off, _, e_size) = descs[0], descs[1]
     for i in range(p_num):
@@ -148,24 +224,45 @@ def super_extents(dev, name):
     return None
 
 
-class Mounted:
-    """Read-only mount of a block device range; cleans up after itself."""
+def device_mapper():
+    """True when read-only linear tables can be set up (dm-mod + dmsetup)."""
+    run("modprobe", "dm_mod", check=False)
+    return Path("/dev/mapper/control").exists() and \
+        run("sh", "-c", "command -v dmsetup", check=False).returncode == 0
 
-    def __init__(self, dev, offset=0, size=0):
-        self.dev, self.offset, self.size = dev, offset, size
-        self.loop = self.dir = None
+
+class Mounted:
+    """Read-only mount of a block device range, or of several extents of one
+    device joined by a device-mapper linear table; cleans up after itself."""
+
+    def __init__(self, dev, offset=0, size=0, extents=None):
+        self.dev, self.offset, self.size, self.extents = dev, offset, size, extents
+        self.loop = self.dir = self.dm = None
 
     def __enter__(self):
-        args = ["losetup", "-r", "-f", "--show"]
-        if self.offset or self.size:
-            args += ["-o", str(self.offset), "--sizelimit", str(self.size)]
-        r = run(*args, self.dev, check=False)
-        if r.returncode != 0:
-            return None
-        self.loop = r.stdout.strip()
+        if self.extents:
+            name = f"rpduo-fw-{os.getpid()}"
+            table, start = [], 0
+            for off, length in self.extents:
+                table.append(f"{start} {length // 512} linear {self.dev} {off // 512}")
+                start += length // 512
+            if run("dmsetup", "create", "--readonly", name, "--table",
+                   "\n".join(table), check=False).returncode != 0:
+                return None
+            self.dm = name
+            run("udevadm", "settle", check=False)
+            src = f"/dev/mapper/{name}"
+        else:
+            args = ["losetup", "-r", "-f", "--show"]
+            if self.offset or self.size:
+                args += ["-o", str(self.offset), "--sizelimit", str(self.size)]
+            r = run(*args, self.dev, check=False)
+            if r.returncode != 0:
+                return None
+            self.loop = src = r.stdout.strip()
         self.dir = tempfile.mkdtemp(prefix="rpduo-fw.")
         for fstype in ("erofs", "ext4", "vfat"):
-            if run("mount", "-r", "-t", fstype, self.loop, self.dir, check=False).returncode == 0:
+            if run("mount", "-r", "-t", fstype, src, self.dir, check=False).returncode == 0:
                 return Path(self.dir)
         self.__exit__()
         return None
@@ -174,8 +271,11 @@ class Mounted:
         if self.dir:
             run("umount", self.dir, check=False)
             os.rmdir(self.dir)
+            self.dir = None
         if self.loop:
             run("losetup", "-d", self.loop, check=False)
+        if self.dm:
+            run("dmsetup", "remove", self.dm, check=False)
 
 
 def sources(parts):
@@ -183,27 +283,41 @@ def sources(parts):
     first."""
     run("modprobe", "erofs", check=False)
     sup = parts.get("super")
-    for sfx in slot_suffixes():
+    order = slot_suffixes(parts)
+    log(f"active slot {order[0]}")
+    for sfx in order:
         name = f"vendor{sfx}"
         if name in parts:
             yield name, Mounted(parts[name])
             break
-        ext = super_extents(sup, name) if sup else None
+        ext = super_extents(sup, name, 1 if sfx == "_b" else 0) if sup else None
         if ext and len(ext) == 1:
             yield f"super/{name}", Mounted(sup, *ext[0])
             break
-        if ext:
-            # No device-mapper in the kernel to join the extents.
-            log(f"{name} has {len(ext)} extents in super; not supported yet")
-    for sfx in slot_suffixes():
-        if f"modem{sfx}" in parts:
-            yield f"modem{sfx}", Mounted(parts[f"modem{sfx}"])
+        if ext and device_mapper():
+            # After an Android update vendor can be split over several
+            # extents of super (the Duo's vendor_b: two).
+            yield f"super/{name}", Mounted(sup, extents=ext)
             break
+        if ext:
+            log(f"{name} has {len(ext)} extents in super and there is no device-mapper to join them")
+    if "persist" in parts:
+        yield "persist", Mounted(parts["persist"])
+    for base in ("modem", "bluetooth"):
+        for sfx in order:
+            if f"{base}{sfx}" in parts:
+                yield f"{base}{sfx}", Mounted(parts[f"{base}{sfx}"])
+                break
 
 
 def collect(force):
-    DEST.mkdir(parents=True, exist_ok=True)
-    missing = {k: v for k, v in WANTED.items() if force or not (DEST / k).exists()}
+    if not force and STAMP.exists() and STAMP.read_text().strip() != VERSION:
+        log(f"extractor version changed ({STAMP.read_text().strip()} -> {VERSION}): copying everything again")
+        force = True
+    elif not force and not STAMP.exists() and any((FWROOT / k).exists() for k in WANTED):
+        log("files from an older extractor: copying everything again")
+        force = True
+    missing = {k: v for k, v in WANTED.items() if force or not (FWROOT / k).exists()}
     if not missing:
         return []
     parts = partitions()
@@ -213,23 +327,35 @@ def collect(force):
             if root is None:
                 log(f"{label}: could not mount")
                 continue
-            files = {}
+            files, paths = {}, []
             for p in root.rglob("*"):
                 if p.is_file():
-                    listing.append(f"{label}\t{p.relative_to(root)}\t{p.stat().st_size}")
+                    rel = str(p.relative_to(root))
+                    listing.append(f"{label}\t{rel}\t{p.stat().st_size}")
                     files.setdefault(p.name.lower(), p)
+                    paths.append((rel.lower(), p))
             for want, names in list(missing.items()):
                 for n in names:
-                    src = files.get(n)
+                    if "/" in n:
+                        src = next((p for r, p in sorted(paths)
+                                    if r == n or r.endswith("/" + n)), None)
+                    else:
+                        src = files.get(n)
                     if not src:
                         continue
+                    dst = FWROOT / want
                     try:
+                        dst.parent.mkdir(parents=True, exist_ok=True)
+                        old = dst.read_bytes() if dst.exists() else None
                         if src.suffix == ".mdt":
-                            squash(src, DEST / want)
+                            squash(src, dst)
                         else:
-                            tmp = DEST / (want + ".tmp")
+                            tmp = dst.with_name(dst.name + ".tmp")
                             tmp.write_bytes(src.read_bytes())
-                            tmp.replace(DEST / want)
+                            tmp.replace(dst)
+                        if old is not None and dst.read_bytes() == old:
+                            del missing[want]  # unchanged: nothing to restart
+                            break
                     except (OSError, ValueError) as e:
                         log(f"{want}: {label}/{src.name}: {e}")
                         continue
@@ -239,9 +365,115 @@ def collect(force):
                     break
     LIST.parent.mkdir(parents=True, exist_ok=True)
     LIST.write_text("\n".join(sorted(listing)) + "\n")
+    STAMP.write_text(VERSION + "\n")
     for want in missing:
         log(f"{want}: not found (see {LIST})")
     return copied
+
+
+# Speaker tuning (AW88166 ACF, Retroid project A1901). Stock Android runs the
+# Duo's speaker port at 32-bit / 64fs and its ACF programs the amps for that
+# (I2SCTRL1, register 0x06, in the "Music" profile: 0x04e8 / 0x08e8). PB-OS's
+# Primary MI2S back end sends 16-bit / 32fs (as on the Retroid Pocket 6 and
+# Nova, whose ACF has 0x0408 / 0x0808): the amps' boost never comes up
+# ("sysst check failed") and the speakers stay silent. Set those two values
+# to the 16-bit ones and redo the bin checksums and the CRC8 the driver
+# checks (sound/soc/codecs/aw88395/aw88395_lib.c). Tested on a Duo
+# 2026-11-20. Any other register or file is left alone.
+ACF_I2SCTRL1 = {0: (0x04E8, 0x0408), 1: (0x08E8, 0x0808)}  # dev: (stock, 16-bit)
+
+
+def _crc8(data, table=[]):
+    if not table:
+        t = [0] * 256
+        v, i = 1, 128
+        while i:
+            v = (v >> 1) ^ (0x8C if v & 1 else 0)
+            for j in range(0, 256, 2 * i):
+                t[i + j] = t[j] ^ v
+            i >>= 1
+        table.extend(t)
+    c = 0
+    for x in data:
+        c = table[(c ^ x) & 0xFF]
+    return c
+
+
+def _acf_sections(d):
+    n, off = struct.unpack_from("<II", d, 0x38)
+    for i in range(n):
+        o = off + i * 64
+        _, _, idx, _, _, prof, dt, size, doff, crc = struct.unpack_from("<I16sHHHHIIII", d, o)
+        yield dict(at=o, idx=idx, prof=prof, dt=dt, size=size, off=doff, crc=crc)
+
+
+def _acf_bins(d, s):
+    """(header offset, type, length) of the checksummed bins in a section."""
+    out = []
+    for h in range(s["off"], s["off"] + s["size"] - 60, 4):
+        cs, hv, bt, _, bl = struct.unpack_from("<IIIII", d, h)
+        if hv == 0x01000000 and bl and h + 60 + bl <= s["off"] + s["size"] \
+                and cs == sum(d[h + 4:h + 60 + bl]):
+            out.append((h, bt, bl))
+    return out
+
+
+def _acf_ok(d):
+    return all(_crc8(d[s["off"]:s["off"] + s["size"]]) == s["crc"] for s in _acf_sections(d))
+
+
+def fix_speaker_acf(path):
+    """Patch the Duo ACF for 16-bit I2S; True when the file was changed."""
+    try:
+        d = bytearray(path.read_bytes())
+        if not _acf_ok(d):
+            log(f"{path.name}: checksum mismatch, left alone")
+            return False
+        changed = False
+        for s in _acf_sections(d):
+            if s["prof"] != 0 or s["dt"] != 7 or s["idx"] not in ACF_I2SCTRL1:
+                continue
+            stock, want = ACF_I2SCTRL1[s["idx"]]
+            bins = _acf_bins(d, s)
+            pos = None
+            for h, bt, bl in bins:
+                if bt != 0:
+                    continue
+                for p in range(h + 60, h + 60 + bl - 3, 2):
+                    a, v = struct.unpack_from("<HH", d, p)
+                    if a == 0x06 and struct.unpack_from("<H", d, p - 4)[0] == 0x05 \
+                            and struct.unpack_from("<H", d, p + 4)[0] == 0x07:
+                        pos, val = p + 2, v
+                        break
+                if pos:
+                    break
+            if pos is None or val == want:
+                continue
+            if val != stock:
+                log(f"{path.name}: dev {s['idx']} I2SCTRL1 {val:#06x} is not the known stock value, left alone")
+                return False
+            struct.pack_into("<H", d, pos, want)
+            for h, _, bl in sorted((b for b in bins if b[0] + 4 <= pos < b[0] + 60 + b[2]),
+                                   key=lambda b: b[2]):
+                struct.pack_into("<I", d, h, sum(d[h + 4:h + 60 + bl]))
+            struct.pack_into("<I", d, s["at"] + 0x28, _crc8(d[s["off"]:s["off"] + s["size"]]))
+            if len(_acf_bins(d, s)) != len(bins):
+                log(f"{path.name}: bin checksums wrong after patching, left alone")
+                return False
+            changed = True
+        if not changed:
+            return False
+        if not _acf_ok(d):
+            log(f"{path.name}: CRC wrong after patching, left alone")
+            return False
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_bytes(bytes(d))
+        tmp.replace(path)
+        log(f"{path.name}: speaker profile set to 16-bit I2S (takes effect at the next boot)")
+        return True
+    except (OSError, ValueError, struct.error) as e:
+        log(f"{path.name}: {e}")
+        return False
 
 
 def start_remoteprocs():
@@ -255,12 +487,166 @@ def start_remoteprocs():
             log(f"{rp.name}: {e}")
 
 
+def read_mac(path, pattern):
+    """The address in a persist file (six colon-separated hex pairs), or None."""
+    try:
+        m = re.search(pattern, path.read_text(errors="replace"))
+    except OSError:
+        return None
+    if not m:
+        return None
+    h = re.sub(r"[^0-9A-Fa-f]", "", m.group(1)).lower()
+    if len(h) != 12 or h in ("000000000000", "ffffffffffff") or int(h[:2], 16) & 1:
+        return None
+    return ":".join(h[i:i + 2] for i in range(0, 12, 2))
+
+
+def wlan_link():
+    """Wi-Fi: a .link file udev applies when the WCN7750 interface appears
+    (before NetworkManager takes it, so nothing reconnects)."""
+    mac = read_mac(FWROOT / "rpduo-persist/wlan_mac.bin", r"Intf0MacAddress=([0-9A-Fa-f]{12})")
+    if not mac:
+        return
+    text = ("# rpduo-firmware: the Retroid Pocket Duo's own Wi-Fi address (persist).\n"
+            "[Match]\nPath=platform-17110040.wifi\n\n"
+            f"[Link]\nNamePolicy=keep kernel database onboard slot path\nMACAddress={mac}\n")
+    try:
+        if WLAN_LINK.exists() and WLAN_LINK.read_text() == text:
+            return
+        WLAN_LINK.parent.mkdir(parents=True, exist_ok=True)
+        WLAN_LINK.write_text(text)
+        run("udevadm", "control", "--reload", check=False)
+        log("Wi-Fi address set from persist (takes effect when the interface appears)")
+    except OSError as e:
+        log(f"Wi-Fi address: {e}")
+
+
+def bt_address():
+    """Bluetooth: the controller forgets it, so set it on every boot."""
+    mac = read_mac(FWROOT / "rpduo-persist/quec_bt_mac", r"((?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2})")
+    if not mac or not Path("/sys/class/bluetooth/hci0").exists():
+        return
+    info = run("btmgmt", "-i", "hci0", "info", check=False, timeout=5).stdout.lower()
+    if f"addr {mac}" in info:
+        return
+    current = next((ln for ln in info.splitlines() if "current settings:" in ln), "")
+    powered = "powered" in current.split()
+    run("btmgmt", "-i", "hci0", "power", "off", check=False, timeout=5)
+    r = run("btmgmt", "-i", "hci0", "public-addr", mac, check=False, timeout=5)
+    if powered:
+        run("btmgmt", "-i", "hci0", "power", "on", check=False, timeout=5)
+    log("Bluetooth address set from persist" if r.returncode == 0 else "Bluetooth address: btmgmt failed")
+
+
+STICK_PARAMS = Path("/sys/module/rsinput/parameters")
+STICKS = (("left_x", "leftx"), ("left_y", "lefty"), ("right_x", "rightx"), ("right_y", "righty"))
+
+
+def stick_calibration():
+    """The Duo's controller MCU sends raw 12-bit stick readings (resting near
+    2048, about +-1400 of travel); Retroid's Android (librsinput) centers and
+    scales them with the unit's factory calibration, persist
+    retrostation/joys (left_x_center, left_x_min, left_x_max, ...). rsinput
+    reports -raw + axis_*_center: set each axis's center and a symmetric
+    range from that file (the shorter side, so both directions reach full
+    scale). Without a usable file, center 2048 and the driver's +-1408.
+    A user calibration (sm8550-stickcal) wins."""
+    if not STICK_PARAMS.is_dir() or Path("/run/sm8550-stickcal/active").exists():
+        return
+    cal = {}
+    try:
+        for line in (FWROOT / "rpduo-persist/joys").read_text(errors="replace").splitlines():
+            k, sep, v = line.partition("=")
+            if not sep:
+                continue
+            try:
+                cal[k.strip()] = round(float(v.strip()))  # stored as decimals
+            except ValueError:
+                pass
+    except OSError:
+        pass
+    vals, source = {}, "factory calibration"
+    for key, par in STICKS:
+        c, lo, hi = cal.get(f"{key}_center"), cal.get(f"{key}_min"), cal.get(f"{key}_max")
+        if None in (c, lo, hi) or not (1000 <= c <= 3100 and 300 <= min(hi - c, c - lo) <= 2047):
+            vals, source = {}, "default center 2048 (no usable persist calibration)"
+            break
+        vals[par] = (c, min(hi - c, c - lo))
+    if not vals:
+        vals = {par: (2048, 1408) for _, par in STICKS}
+    try:
+        for par, (c, r) in vals.items():
+            (STICK_PARAMS / f"axis_{par}_center").write_text(str(c))
+            (STICK_PARAMS / f"axis_{par}_min").write_text(str(-r))
+            (STICK_PARAMS / f"axis_{par}_max").write_text(str(r))
+        (STICK_PARAMS / "update_params").write_text("1")
+        log(f"sticks: {source}")
+    except OSError as e:
+        log(f"sticks: {e}")
+
+
+def bind_wifi(force=False):
+    """ath12k probes the Duo's WCN7750 (an AHB device) at boot. Without the
+    WPSS firmware it gives up for good (-ENOENT is not retried); without the
+    board data it stays bound with no interface. Bind it (again) once the
+    files are in place: when unbound, or, when its files were just copied,
+    when it is bound without a network interface. Never unbind a working
+    one: ath12k's remove path oopses on a running device
+    (ath12k_dp_rx_reo_cmd_list_cleanup, 2026-11-20)."""
+    drv = Path("/sys/bus/platform/drivers/ath12k_wifi7_ahb")
+    if not drv.is_dir():
+        return
+    for dev in Path("/sys/bus/platform/devices").glob("*.wifi"):
+        bound = (dev / "driver").exists()
+        has_netdev = any((dev / "net").glob("*")) or any(
+            (n / "device").resolve() == dev.resolve()
+            for n in Path("/sys/class/net").glob("*") if (n / "device").exists())
+        if bound and (not force or has_netdev):
+            continue
+        try:
+            if bound:
+                (drv / "unbind").write_text(dev.name)
+            (drv / "bind").write_text(dev.name)
+            log(f"bound {dev.name} to {drv.name}")
+        except OSError as e:
+            log(f"{dev.name}: bind: {e}")
+
+
+def rebind_bluetooth():
+    """hci_qca set the WCN7750 up at boot without its firmware and leaves
+    hci0 unusable; bind the serdev again so setup runs with the files."""
+    drv = Path("/sys/bus/serial/drivers/hci_uart_qca")
+    for dev in drv.glob("serial*"):
+        try:
+            (drv / "unbind").write_text(dev.name)
+            (drv / "bind").write_text(dev.name)
+            log(f"rebound {dev.name} to {drv.name}")
+        except OSError as e:
+            log(f"{dev.name}: rebind: {e}")
+
+
 def main():
     if b"retroidpocket,rpduo" not in Path("/proc/device-tree/compatible").read_bytes():
         return 0
+    if "--bt-address" in sys.argv[1:]:
+        bt_address()
+        return 0
     copied = collect("--force" in sys.argv[1:])
+    acf = FWROOT / RP / "aw883xx_acf.bin"
+    if acf.exists():
+        fix_speaker_acf(acf)
+    wlan_link()
+    stick_calibration()
     if copied:
         start_remoteprocs()
+    bind_wifi(force=any(c.startswith("ath12k/") for c in copied))
+    if any(c.startswith("qca/") for c in copied):
+        rebind_bluetooth()
+        time.sleep(3)  # hci0 sets up again
+    # btmgmt can wait on the controller for a long time: set the Bluetooth
+    # address in a job of its own, off the boot's critical path.
+    run("systemd-run", "--no-block", "--collect", "--unit=rpduo-bt-address",
+        str(Path(sys.argv[0]).resolve()), "--bt-address", check=False, timeout=10)
     return 0
 
 

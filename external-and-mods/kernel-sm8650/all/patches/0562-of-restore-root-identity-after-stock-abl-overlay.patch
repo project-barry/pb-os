@@ -1,0 +1,71 @@
+From: lavachemist <48248311+lavachemist@users.noreply.github.com>
+Subject: [PATCH] of: put back the root model and compatible a stock ABL replaced
+
+The Retroid Pocket Duo boots through its stock Qualcomm ABL. That ABL always
+applies the device's own dtbo (and the hypervisor's overlays) onto the DTB it
+is given; our DTB carries an empty /abl-dtbo-sink node and a /__symbols__ node
+that points every stock label at it, so every fragment is skipped and the
+overlay succeeds. The overlay still merges its root properties, though: model
+becomes "Qualcomm Technologies, Inc. Kera MTP + WCN7750 + UFS2" and compatible
+"qcom,kera-mtp", ... Drivers that match the machine compatible then fail; the
+display does not probe ("Couldn't find UBWC config data for this platform!"),
+and userspace no longer sees "retroidpocket,rpduo".
+
+The DTB keeps the real values in /abl-dtbo-sink (pbos,model and
+pbos,compatible). Copy them back to the root right after unflattening, before
+anything matches on them. DTBs without that node are not touched.
+
+---
+diff --git a/drivers/of/fdt.c b/drivers/of/fdt.c
+--- a/drivers/of/fdt.c
++++ b/drivers/of/fdt.c
+@@ -1269,6 +1269,40 @@
+ 		memcpy(dt, fdt, size);
+ 
+ 	return dt;
++}
++
++/*
++ * A stock Qualcomm ABL overlays its own dtbo onto our DTB and replaces the root
++ * model and compatible on the way. /abl-dtbo-sink holds the real ones. Runs
++ * before of_core_init(), so the node kobjects are not set up yet: walk the
++ * children directly instead of using the refcounting helpers.
++ */
++static void __init of_restore_abl_root_identity(void)
++{
++	static const char * const props[][2] = {
++		{ "pbos,compatible", "compatible" },
++		{ "pbos,model", "model" },
++	};
++	struct device_node *np;
++	int i;
++
++	if (!of_root)
++		return;
++	for (np = of_root->child; np; np = np->sibling)
++		if (of_node_name_eq(np, "abl-dtbo-sink"))
++			break;
++	if (!np)
++		return;
++	for (i = 0; i < ARRAY_SIZE(props); i++) {
++		struct property *src = of_find_property(np, props[i][0], NULL);
++		struct property *dst = of_find_property(of_root, props[i][1], NULL);
++
++		if (!src || !dst)
++			continue;
++		dst->value = src->value;
++		dst->length = src->length;
++	}
++	pr_info("OF: root model and compatible restored from /abl-dtbo-sink\n");
+ }
+ 
+ /**
+@@ -1302,6 +1336,8 @@
+ 	__unflatten_device_tree(fdt, NULL, &of_root,
+ 				early_init_dt_alloc_memory_arch, false);
+ 
++	of_restore_abl_root_identity();
++
+ 	/* Get pointer to "/chosen" and "/aliases" nodes for use everywhere */
+ 	of_alias_scan(early_init_dt_alloc_memory_arch);
+ 

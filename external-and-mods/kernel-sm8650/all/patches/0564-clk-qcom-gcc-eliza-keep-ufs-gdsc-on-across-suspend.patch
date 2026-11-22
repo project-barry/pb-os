@@ -1,0 +1,35 @@
+From: lavachemist <48248311+lavachemist@users.noreply.github.com>
+Subject: [PATCH] clk: qcom: gcc-eliza: keep the UFS PHY GDSC on across system suspend
+
+On the Retroid Pocket Duo (Eliza) the first system suspend powers
+gcc_ufs_phy_gdsc off in genpd_suspend_noirq; on resume genpd_resume_noirq
+cannot power it back on ("gcc_ufs_phy_gdsc status stuck at 'off'"), the
+UFS clocks and the PHY ref_aux clock then refuse to enable (-EBUSY),
+ufshcd_reset_and_restore() fails and leaves the host in
+UFSHCD_STATE_ERROR. From then on __ufshcd_wl_suspend() returns -EBUSY
+(link off, error handler refuses to run in ERROR state), so every later
+suspend aborts on ufs_device_wlun.
+
+Keep the GDSC in PWRSTS_RET_ON so software never collapses it; the
+hardware moves it to retention when CX drops in system sleep.
+
+
+---
+--- a/drivers/clk/qcom/gcc-eliza.c
++++ b/drivers/clk/qcom/gcc-eliza.c
+@@ -2781,7 +2781,14 @@
+ 	.pd = {
+ 		.name = "gcc_ufs_phy_gdsc",
+ 	},
+-	.pwrsts = PWRSTS_OFF_ON,
++	/*
++	 * Never collapse from software: after a system sleep the GDSC does not
++	 * power back up in resume_noirq ("status stuck at 'off'"), the UFS host
++	 * fails to resume and is left in UFSHCD_STATE_ERROR, which aborts every
++	 * later suspend with -EBUSY. The hardware still drops it to retention
++	 * when CX goes down, as for the USB GDSCs on Milos.
++	 */
++	.pwrsts = PWRSTS_RET_ON,
+ 	.flags = POLL_CFG_GDSCR | RETAIN_FF_ENABLE,
+ };
+ 
