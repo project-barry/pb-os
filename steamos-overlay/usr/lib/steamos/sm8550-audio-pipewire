@@ -15,7 +15,7 @@ export PATH="/usr/sbin:/usr/bin:/sbin:/bin${PATH:+:$PATH}"
 # that state and switch back to HiFi.
 # The Retroid Pocket Duo (card ELIZA-RetroidPocket-I2S) likewise runs
 # Retroid's UCM HiFi profile (53-rpduo-audio.conf).
-if grep -qaE "KONKR Pocket FIT|AYANEO Pocket S2|RetroidPocket Duo" /sys/firmware/devicetree/base/model 2>/dev/null; then
+if grep -qaE "KONKR Pocket FIT|AYANEO Pocket S2|Retroid ?Pocket Duo" /sys/firmware/devicetree/base/model 2>/dev/null; then
   state="${XDG_STATE_HOME:-$HOME/.local/state}/wireplumber"
   if grep -qs '=pro-audio$' "$state/default-profile"; then
     echo "sm8550-audio-pipewire: SM8650 with saved pro-audio state → HiFi" >&2

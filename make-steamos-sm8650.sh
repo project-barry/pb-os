@@ -282,8 +282,7 @@ prepare_runtime() {
 }
 
 repack_kernel_partuuid() {
-  # $4: CMDLINE_DEVICE for a device's own boot image (cmdline.sh), e.g. rpduo.
-  local src="$1" dest="$2" partuuid="$3" device="${4:-}"
+  local src="$1" dest="$2" partuuid="$3"
   local cmdline
   # shellcheck source=external-and-mods/kernel-sm8650/cmdline.sh
   source "${MOD}/kernel-sm8650/cmdline.sh"
@@ -297,7 +296,7 @@ repack_kernel_partuuid() {
       *) soc=all ;;
     esac
   fi
-  cmdline="$(SOC="$soc" CMDLINE_DEVICE="$device" build_cmdline "${partuuid}")"
+  cmdline="$(SOC="$soc" build_cmdline "${partuuid}")"
   # Patch the ANDROID! header cmdline in place; kernel + DTB chain untouched.
   python3 - "${src}" "${dest}" "${cmdline}" <<'PY'
 import sys
@@ -601,18 +600,16 @@ EOF
   # Retroid Pocket Duo: no OpenABL for its SoC, so it boots its own image
   # through the stock ABL (`fastboot boot KERNEL-rpduo`, see README.txt).
   if [[ -f "${KOUT}/boot/KERNEL-rpduo" ]]; then
-    repack_kernel_partuuid "${KOUT}/boot/KERNEL-rpduo" "${ktmp}" "${disk_id}-02" rpduo
+    repack_kernel_partuuid "${KOUT}/boot/KERNEL-rpduo" "${ktmp}" "${disk_id}-02"
     sudo_run install -m0644 "${ktmp}" "${MNT}/boot/KERNEL-rpduo"
   fi
   rm -f "${ktmp}"
-  # Test only (EFI_BOOT_ENTRY=1): the same kernel, initrd, cmdline and DTBs as
-  # an EFI-stub boot entry, for OpenABL newer than 1.2 (no \KERNEL support).
-  # Off for releases: Software Update replaces only KERNEL, so this entry
-  # would keep booting the old kernel after an update.
-  if [[ "${EFI_BOOT_ENTRY:-0}" == 1 ]]; then
-    log "Adding the EFI-stub boot entry (loader/entries/pbos.conf)"
-    sudo_run python3 -I "${SCRIPTS}/bls-from-bootimg.py" "${MNT}/boot/KERNEL" "${MNT}/boot"
-  fi
+  # OpenABL boot entry: the same kernel, initrd, cmdline and DTBs as KERNEL,
+  # started through the EFI stub (OpenABL newer than 1.2 boots nothing else;
+  # 1.2 reads entries before \KERNEL). Software Update and the installers
+  # rewrite it with every KERNEL they install, with this same code.
+  log "Adding the OpenABL boot entry (loader/entries/pbos.conf)"
+  sudo_run python3 -I "${MOD}/pbos-update/pbos-update.py" boot-entry --boot "${MNT}/boot"
   stage_openabl
 
   sudo_run mkdir -p "${MNT}/root/opt/steamos-sm8650"
@@ -628,14 +625,16 @@ expand=steamos-sm8550-expand-home.service
 EOF
 
   sudo_run tee "${MNT}/boot/README.txt" >/dev/null <<EOF
-ABL reads KERNEL from this FAT partition.
-Do not rename KERNEL. After flashing to a bigger card, home grows on first boot.
+OpenABL boots loader/entries/pbos.conf (kernel and initrd in pbos/, device
+trees in dtbs/qcom/); OpenABL 1.2 can also boot KERNEL. Both are the same
+kernel. Do not rename or edit them: Software Update rewrites them together.
+After flashing to a bigger card, home grows on first boot.
 root=PARTUUID=${disk_id}-02
 OpenABL menu (hold Volume Down at power-on): Device model -> your exact
-model (e.g. "AYN Thor", "Retroid Pocket Nova", "KONKR Pocket FIT"),
-Boot mode -> Linux, Start.
+model (e.g. "AYN Thor", "Retroid Pocket Nova", "KONKR Pocket FIT",
+"Retroid Pocket Duo"), Boot mode -> Linux, Start.
 First time on this device? Flash OpenABL from Android: openabl/README.
-Retroid Pocket Duo (no OpenABL yet; untested): bootloader unlocked, card in,
+Retroid Pocket Duo with its stock bootloader: bootloader unlocked, card in,
 then from a computer in fastboot mode: fastboot boot KERNEL-rpduo
 EOF
 

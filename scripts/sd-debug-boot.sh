@@ -105,6 +105,8 @@ kern.write_bytes(data)
 print(cmdline)
 PY
 ( cd "${BOOT}" && md5sum KERNEL > KERNEL.md5 )
+# OpenABL boots the entry made from KERNEL (newer OpenABL boots nothing else).
+python3 -I "${PROJ}/external-and-mods/pbos-update/pbos-update.py" boot-entry --boot "${BOOT}"
 
 log "Done. Unmount the SD and boot again."
 log "After the blink/force-off, remount and read:"

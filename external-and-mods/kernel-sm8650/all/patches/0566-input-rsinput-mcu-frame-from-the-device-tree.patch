@@ -1,0 +1,52 @@
+From: lavachemist <48248311+lavachemist@users.noreply.github.com>
+Subject: [PATCH] input: rsinput: take the MCU joystick frame from the device tree
+
+The Retroid Pocket Duo's MCU wants joystick frame 10,4 (stock Android's
+librsinput); the RP6 and Nova keep the driver default 40,7. The Duo got
+it from rsinput.mcu_frame on a cmdline of its own, but OpenABL's boot
+entry is shared by every device now. Read an optional "mcu-frame"
+(two u32) from the gamepad node instead; a value set through the module
+parameter (cmdline or sysfs) still wins.
+
+
+---
+--- a/drivers/input/joystick/rsinput.c
++++ b/drivers/input/joystick/rsinput.c
+@@ -164,6 +164,8 @@
+  * A write is sent to the MCU at once and again on every MCU re-init.
+  */
+ static unsigned int mcu_frame[2] = { 0x28, 0x07 };
++/* Set through the parameter: a DT "mcu-frame" no longer applies. */
++static bool mcu_frame_from_param;
+ static struct rsinput_driver *rsinput_drv;
+ static DEFINE_MUTEX(rsinput_lock);
+ 
+@@ -270,6 +272,7 @@
+     mutex_lock(&rsinput_lock);
+     mcu_frame[0] = a;
+     mcu_frame[1] = b;
++    mcu_frame_from_param = true;
+     if (rsinput_drv && !rsinput_drv->uart_closed && !rsinput_drv->vdd_off)
+         error = rsinput_send_frame_par(rsinput_drv);
+     mutex_unlock(&rsinput_lock);
+@@ -556,6 +559,20 @@
+     drv->invert_rx = device_property_present(&serdev->dev, "invert-rx");
+     drv->invert_ry = device_property_present(&serdev->dev, "invert-ry");
+ 
++    /* The board's joystick frame (Retroid Pocket Duo: 10,4), unless the
++     * module parameter set one. */
++    {
++        u32 frame[2];
++
++        mutex_lock(&rsinput_lock);
++        if (!mcu_frame_from_param &&
++            !device_property_read_u32_array(&serdev->dev, "mcu-frame", frame, 2)) {
++            mcu_frame[0] = frame[0];
++            mcu_frame[1] = frame[1];
++        }
++        mutex_unlock(&rsinput_lock);
++    }
++
+     {
+         u32 range;
+         if (!device_property_read_u32(&serdev->dev, "axis-range", &range)) {

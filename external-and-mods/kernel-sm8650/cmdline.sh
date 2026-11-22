@@ -41,15 +41,13 @@ build_cmdline() {
     rootfstype=ext4
     errors=remount-ro
   )
-  # Per-device additions (CMDLINE_DEVICE; only boot images of their own).
-  case "${CMDLINE_DEVICE:-}" in
-    # Retroid Pocket Duo (KERNEL-rpduo): its signed firmware is copied from
-    # its own Android partitions at boot (rpduo-firmware) into a writable
-    # place the kernel also searches. Its controller MCU gets the frame
-    # parameters stock Android sends it (librsinput: 10,4; ROCKNIX's 40,7
-    # is the other models' value).
-    rpduo) parts+=(firmware_class.path=/var/lib/pbos-firmware rsinput.mcu_frame=10,4) ;;
-  esac
+  # One cmdline for every device: OpenABL's boot entry is shared by all of
+  # them. The Retroid Pocket Duo's signed firmware is copied from its own
+  # Android partitions at boot (rpduo-firmware) into a writable place the
+  # kernel also searches; elsewhere that directory doesn't exist and the
+  # kernel's own paths are used. (The Duo's controller frame, 10,4, comes
+  # from its DT: mcu-frame, all/patches/0566.)
+  parts+=(firmware_class.path=/var/lib/pbos-firmware)
   if [[ -n "${KERNEL_CMDLINE_EXTRA:-}" ]]; then
     local -a extra
     read -ra extra <<<"${KERNEL_CMDLINE_EXTRA}"

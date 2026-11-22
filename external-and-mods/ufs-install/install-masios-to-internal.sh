@@ -40,6 +40,10 @@ export PATH="/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"
 HERE="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 PART=(python3 "$HERE/ufs-partition.py")
 BOOTIMG=(python3 "$HERE/ufs-bootimg.py")
+# OpenABL's boot entry (loader/entries/pbos.conf, pbos/, dtbs/qcom/) is
+# written from each KERNEL by the updater's own code: newer OpenABL boots only
+# the entry, 1.2 tries it before KERNEL.
+BOOT_ENTRY=(python3 -I /usr/share/pbos-update/pbos-update.py boot-entry --boot)
 
 ANDROID_GB=""
 STORAGE_GB=20
@@ -302,6 +306,7 @@ fi
 log "installing KERNEL (root=PARTLABEL=STORAGE)"
 "${BOOTIMG[@]}" retarget /boot/KERNEL "$WORK/boot/KERNEL" --root PARTLABEL=STORAGE >/dev/null
 (cd "$WORK/boot" && md5sum KERNEL >KERNEL.md5)
+"${BOOT_ENTRY[@]}" "$WORK/boot" >/dev/null
 if compgen -G "$BACKUP_DIR/ufs-gpt-*" >/dev/null; then
   mkdir -p "$WORK/home/.ufs-backup"
   cp "$BACKUP_DIR"/ufs-gpt-* "$WORK/home/.ufs-backup/"
@@ -312,6 +317,7 @@ sync
 log "checking the result"
 info="$("${BOOTIMG[@]}" info "$WORK/boot/KERNEL")"
 grep -q 'root=PARTLABEL=STORAGE' <<<"$info" || die "KERNEL cmdline is wrong"
+grep -q 'root=PARTLABEL=STORAGE' "$WORK/boot/loader/entries/pbos.conf" || die "boot entry is wrong"
 grep -q '^ID_OK=yes' <<<"$info" || die "KERNEL header checksum is wrong"
 (cd "$WORK/boot" && md5sum -c --quiet KERNEL.md5) || die "KERNEL.md5 mismatch"
 [[ -e "$WORK/root/sbin/init" || -L "$WORK/root/sbin/init" ]] || die "system copy is incomplete (no /sbin/init)"
