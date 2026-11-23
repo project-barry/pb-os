@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: GPL-2.0
 # Writes OpenABL (abl_signed-%DEVICE%.elf) to both ABL slots, the inactive
 # slot first, and reads each slot back before going on. Refuses to start
-# on another chip, without both backups from backup_abl.sh, or when the file's
-# hash is wrong.
+# on another chip, without both backups from backup_abl.sh (complete, and what
+# the slots hold now), or when the file isn't the one it was made for.
 # After ROCKNIX's OpenABL scripts (https://github.com/ROCKNIX/distribution,
 # projects/ROCKNIX/packages/tools/openabl), (c) ROCKNIX contributors.
 
@@ -24,27 +24,58 @@ esac
 
 dir="/sdcard/openabl/%DEVICE%"
 elf="$dir/abl_signed-%DEVICE%.elf"
+# The payload this script was made for, from the image build.
+want=%SHA256%
+bytes=%SIZE%
 
+# Both slots must be partitions.
+part() { echo "/dev/block/by-name/abl_$1"; }
+part_size() { wc -c <"$(part "$1")" | tr -d ' '; }
 for s in a b; do
-  if [ ! -s "$dir/abl_$s.img" ]; then
-    echo "No abl_$s.img in $dir: run backup_abl.sh first. Nothing written." >&2
+  if [ ! -b "$(part $s)" ]; then
+    echo "The partition abl_$s wasn't found. Nothing written." >&2
     exit 1
   fi
 done
-want="$(cut -d' ' -f1 "$elf.sha256")"
-size="$(wc -c <"$elf" | tr -d ' ')"
-if [ -z "$want" ] || [ "$(sha256sum "$elf" | cut -d' ' -f1)" != "$want" ]; then
-  echo "abl_signed-%DEVICE%.elf does not match its .sha256: copy the folder again. Nothing written." >&2
+
+# A backup must be the whole partition.
+for s in a b; do
+  size="$(part_size $s)"
+  if [ ! -f "$dir/abl_$s.img" ] || [ -z "$size" ] || [ "$size" = 0 ] || [ "$(wc -c <"$dir/abl_$s.img" | tr -d ' ')" != "$size" ]; then
+    echo "No complete backup abl_$s.img in $dir: run backup_abl.sh first. Nothing written." >&2
+    exit 1
+  fi
+done
+
+# And of what is in the slot now, before the first write.
+for s in a b; do
+  if ! cmp -s "$dir/abl_$s.img" "$(part $s)"; then
+    echo "abl_$s.img is not what abl_$s holds now. After a failed flash: run restore_backup_abl.sh. Otherwise copy the old backups somewhere safe and run backup_abl.sh again. Nothing written." >&2
+    exit 1
+  fi
+done
+
+if [ "$(wc -c <"$elf" | tr -d ' ')" != "$bytes" ] || [ "$(sha256sum "$elf" | cut -d' ' -f1)" != "$want" ]; then
+  echo "abl_signed-%DEVICE%.elf is not the file this script is for: copy the folder again. Nothing written." >&2
   exit 1
 fi
+for s in a b; do
+  if ! [ "$(part_size $s)" -ge "$bytes" ]; then
+    echo "abl_$s is too small. Nothing written." >&2
+    exit 1
+  fi
+done
 
 case "$(getprop ro.boot.slot_suffix 2>/dev/null)" in
   _b) order="a b" ;;
   *) order="b a" ;;
 esac
 for s in $order; do
-  dd if="$elf" of="/dev/block/by-name/abl_$s" bs=1M || exit 1
-  if [ "$(head -c "$size" "/dev/block/by-name/abl_$s" | sha256sum | cut -d' ' -f1)" != "$want" ]; then
+  dd if="$elf" of="$(part $s)" bs=1M || {
+    echo "abl_$s couldn't be written. Do not reboot: run restore_backup_abl.sh." >&2
+    exit 1
+  }
+  if [ "$(head -c "$bytes" "$(part $s)" | sha256sum | cut -d' ' -f1)" != "$want" ]; then
     echo "abl_$s read back wrong. Do not reboot: run restore_backup_abl.sh." >&2
     exit 1
   fi

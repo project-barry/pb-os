@@ -79,9 +79,12 @@ Usage: $0 [options]
 
 Env: BOOT_MIB ROOT_MIB HOME_MIB STEAMOS_SM8650_IMG STEAMOS_ROOTFS KERNEL_OUT DEVICE
      PB_OS_VERSION PB_OS_BASE
-     ABL_TARBALL (local OpenABL tarball)  SKIP_ABL=1 (no openabl/ on BOOT)
-     ABL_TARBALL_SHA256 (test images only, with ABL_TARBALL, while
-     abl/release.env and releases.tsv are UNFILLED: the tarball's SHA-256)
+     ABL_TARBALL (local OpenABL tarball)
+     For test images only (PB_OS_VERSION dev-* or *test*):
+     SKIP_ABL=1 (no OpenABL in the image), or, while abl/release.env,
+     releases.tsv and payloads.pin are UNFILLED, a test tarball: ABL_TARBALL,
+     ABL_TARBALL_SHA256 (its SHA-256) and ABL_PAYLOADS (a file like
+     abl/payloads.pin, from the machine that built the payloads)
      empty ROOT_MIB/HOME_MIB = auto (tight pack; home grows on first boot)
      PB_OS_VERSION = the release tag (e.g. alpha-v0.3); the updater compares it
      with the releases. Default: dev-<date>
@@ -380,44 +383,92 @@ detach_img_loops() {
 ABL_SOCS=(SM8550 SM8650 SM7750)
 ABL_SRC=""
 
-# The release's payload for a SoC, from releases.tsv: "<size> <sha256>".
+# The release's payload for a SoC, from a releases.tsv: "<size> <sha256>" (a
+# line for each row: more than one is an error).
 openabl_row() {
-  awk -F'\t' -v v="${PBOS_ABL_NAME}" -v s="$1" '$1 "" == v "" && $2 == s { print $3, $4; exit }' "${ROOT}/abl/releases.tsv"
+  awk -F'\t' -v v="${PBOS_ABL_NAME}" -v s="$1" '$1 "" == v "" && $2 == s { print $3, $4 }' "$2"
+}
+
+# The same from a payloads.pin.
+openabl_pin() {
+  awk -v s="$1" '$1 == s { print $2, $3 }' "$2"
+}
+
+# "<size> <sha256>", filled in.
+openabl_filled() {
+  [[ "$1" =~ ^[1-9][0-9]{0,6}\ [0-9a-f]{64}$ && ! "$1" =~ \ 0{64}$ ]]
+}
+
+# Only a test image's version may go without OpenABL or with a test one:
+# everything else counts as a release.
+openabl_test_version() {
+  [[ "${PB_OS_VERSION}" == dev-* || ("${PB_OS_VERSION}" == *test* && "${PB_OS_VERSION}" != *latest*) ]]
+}
+
+# The release's tag: of OpenABL-PB (the fork's v1.2 is another build) and of
+# this version, and not a placeholder.
+openabl_tag_ok() {
+  local t version="${PBOS_ABL_NAME##* }"
+  t="$(tr 'A-Z' 'a-z' <<<"$1")"
+  [[ "$t" =~ ^[a-z0-9][a-z0-9._-]*$ && "$t" == *pb* && "$t" == *"${version}"* ]] || return 1
+  case "$t" in
+    *unfilled* | *todo* | *tbd* | *fixme* | *xxx* | *placeholder* | *test* | *example*) return 1 ;;
+  esac
 }
 
 # Dies before the long build when the release isn't filled in: ABL_TEST=1 for a
-# test tarball in its place (ABL_TARBALL, vouched for by ABL_TARBALL_SHA256),
-# never in a release image.
+# test tarball in its place, never in a release image. Nothing of an earlier
+# build's OpenABL stays in the root filesystem.
 check_openabl_config() {
-  [[ "${SKIP_ABL:-0}" == 1 ]] && return 0
-  local soc row size hash unfilled=0
+  local soc row pin unfilled=0 hash
+  ABL_TEST=0
+  sudo_run rm -rf "${R}/usr/share/pb-os/openabl"
+  if [[ "${SKIP_ABL:-0}" == 1 ]]; then
+    openabl_test_version \
+      || die "SKIP_ABL=1 is for test images (PB_OS_VERSION dev-* or *test*), not ${PB_OS_VERSION}"
+    return 0
+  fi
   # shellcheck source=abl/release.env
   source "${ROOT}/abl/release.env"
-  ABL_TEST=0
-  [[ "${PBOS_ABL_NAME}" =~ ^[A-Za-z0-9.\ -]+$ ]] || die "abl/release.env: bad PBOS_ABL_NAME"
-  [[ "${PBOS_ABL_TAG}" =~ ^[A-Za-z0-9._-]+$ && "${PBOS_ABL_TAG}" != UNFILLED ]] || unfilled=1
-  [[ "${PBOS_ABL_TARBALL_SHA256}" =~ ^[0-9a-f]{64}$ ]] || unfilled=1
+  [[ "${PBOS_ABL_NAME}" =~ ^OpenABL-PB\ [0-9][0-9.]*$ ]] || die "abl/release.env: bad PBOS_ABL_NAME"
+  openabl_tag_ok "${PBOS_ABL_TAG}" || unfilled=1
+  openabl_filled "1 ${PBOS_ABL_TARBALL_SHA256}" || unfilled=1
   for soc in "${ABL_SOCS[@]}"; do
-    row="$(openabl_row "${soc}")"
-    [[ -n "${row}" ]] || die "abl/releases.tsv has no ${PBOS_ABL_NAME} ${soc} row"
-    read -r size hash <<<"${row}"
-    [[ "${size}" =~ ^[0-9]+$ && "${hash}" =~ ^[0-9a-f]{64}$ ]] || unfilled=1
+    row="$(openabl_row "${soc}" "${ROOT}/abl/releases.tsv")"
+    pin="$(openabl_pin "${soc}" "${ROOT}/abl/payloads.pin")"
+    [[ -n "${row}" && "${row}" != *$'\n'* ]] || die "abl/releases.tsv needs one ${PBOS_ABL_NAME} ${soc} row"
+    [[ -n "${pin}" && "${pin}" != *$'\n'* ]] || die "abl/payloads.pin needs one ${soc} line"
+    if ! openabl_filled "${row}" || ! openabl_filled "${pin}"; then
+      unfilled=1
+    elif [[ "${row}" != "${pin}" ]]; then
+      die "${soc}: abl/releases.tsv and abl/payloads.pin differ"
+    fi
   done
+  # The PB-OS tab offers the release only over menus it knows, so the releases
+  # before it must be in its list.
+  while read -r hash; do
+    grep -q "${hash}" "${MOD}/pbos-qam/daemon/notices.cpp" \
+      || die "abl/releases.tsv: an older release's ${hash} is not in pbos-qam/daemon/notices.cpp MENUS"
+  done < <(awk -F'\t' -v v="${PBOS_ABL_NAME}" '$1 "" != v "" && $4 ~ /^[0-9a-f]+$/ && length($4) == 64 { print $4 }' "${ROOT}/abl/releases.tsv")
   if ((unfilled)); then
-    [[ -n "${ABL_TARBALL:-}" && "${ABL_TARBALL_SHA256:-}" =~ ^[0-9a-f]{64}$ ]] \
-      || die "${PBOS_ABL_NAME} is not filled in: PBOS_ABL_TAG and PBOS_ABL_TARBALL_SHA256 in abl/release.env and its rows in abl/releases.tsv. Test image: ABL_TARBALL and ABL_TARBALL_SHA256. No OpenABL: SKIP_ABL=1"
-    [[ ! "${PB_OS_VERSION}" =~ ^alpha-v[0-9.]+$ ]] \
-      || die "a test OpenABL (ABL_TARBALL_SHA256) can't go into the release ${PB_OS_VERSION}"
+    openabl_test_version \
+      || die "${PBOS_ABL_NAME} is not filled in: PBOS_ABL_TAG (of the OpenABL-PB release) and PBOS_ABL_TARBALL_SHA256 in abl/release.env, its rows in abl/releases.tsv, abl/payloads.pin. A test tarball or SKIP_ABL=1 can't go into ${PB_OS_VERSION}: only dev-* and *test* versions"
+    [[ -n "${ABL_TARBALL:-}" && -f "${ABL_PAYLOADS:-}" ]] && openabl_filled "1 ${ABL_TARBALL_SHA256:-}" \
+      || die "${PBOS_ABL_NAME} is not filled in (abl/release.env, releases.tsv, payloads.pin). Test image: ABL_TARBALL, ABL_TARBALL_SHA256 and ABL_PAYLOADS, or SKIP_ABL=1"
+    for soc in "${ABL_SOCS[@]}"; do
+      openabl_filled "$(openabl_pin "${soc}" "${ABL_PAYLOADS}")" || die "${ABL_PAYLOADS} needs one ${soc} line: ${soc} <size> <sha256>"
+    done
     ABL_TEST=1 PBOS_ABL_TAG=TEST-BUILD PBOS_ABL_TARBALL_SHA256="${ABL_TARBALL_SHA256}"
-  elif [[ -n "${ABL_TARBALL_SHA256:-}" ]]; then
-    die "ABL_TARBALL_SHA256 is only for test images while abl/release.env is UNFILLED"
+  elif [[ -n "${ABL_TARBALL_SHA256:-}${ABL_PAYLOADS:-}" ]]; then
+    die "ABL_TARBALL_SHA256 and ABL_PAYLOADS are only for test images while abl/release.env is UNFILLED"
   fi
 }
 
 fetch_openabl() {
   [[ "${SKIP_ABL:-0}" == 1 ]] && return 0
-  local tag cache tarball soc payload approved size hash f other
+  local tag cache tarball soc payload size hash f other pins="${ROOT}/abl/payloads.pin"
   check_openabl_config
+  ((ABL_TEST)) && pins="${ABL_PAYLOADS}"
   tag="${PBOS_ABL_TAG}"
   cache="${WORKDIR}/openabl"
   tarball="${ABL_TARBALL:-${cache}/openabl-${tag}.tar.gz}"
@@ -440,7 +491,7 @@ fetch_openabl() {
     [[ -e "${ABL_SRC}/${f}" ]] || die "OpenABL tarball has no ${f}"
   done
   # What the image gets: abl/releases.tsv, or for a test tarball that file with
-  # the release's rows made from it.
+  # the release's rows made from ABL_PAYLOADS.
   if ((ABL_TEST)); then
     log "TEST OpenABL tarball, not a release: ${tarball}"
     awk -F'\t' -v v="${PBOS_ABL_NAME}" '$1 "" != v ""' "${ROOT}/abl/releases.tsv" >"${ABL_SRC}/releases.tsv"
@@ -450,20 +501,18 @@ fetch_openabl() {
   for soc in "${ABL_SOCS[@]}"; do
     payload="${ABL_SRC}/${soc}/abl_signed-${soc}.elf"
     [[ -f "${payload}" ]] || die "OpenABL tarball has no ${soc}/abl_signed-${soc}.elf"
+    # The expected payload doesn't come from the tarball: payloads.pin, which
+    # check_openabl_config found equal to releases.tsv (a test: ABL_PAYLOADS).
+    read -r size hash <<<"$(openabl_pin "${soc}" "${pins}")"
     if ((ABL_TEST)); then
-      size="$(stat -c %s "${payload}")"
-      hash="$(sha256sum "${payload}" | cut -d' ' -f1)"
       printf '%s\t%s\t%s\t%s\n' "${PBOS_ABL_NAME}" "${soc}" "${size}" "${hash}" >>"${ABL_SRC}/releases.tsv"
-    else
-      approved="$(openabl_row "${soc}")"
-      read -r size hash <<<"${approved}"
     fi
     [[ "$(stat -c %s "${payload}")" == "${size}" ]] \
-      || die "${soc} ABL size does not match abl/releases.tsv"
+      || die "${soc} ABL size does not match ${pins}"
     [[ "$(sha256sum "${payload}" | cut -d' ' -f1)" == "${hash}" ]] \
-      || die "${soc} ABL hash does not match abl/releases.tsv"
+      || die "${soc} ABL hash does not match ${pins}"
     [[ "$(cut -d' ' -f1 "${payload}.sha256")" == "${hash}" ]] \
-      || die "${soc} ABL .sha256 in the tarball does not match $( ((ABL_TEST)) && echo its file || echo abl/releases.tsv)"
+      || die "${soc} ABL .sha256 in the tarball does not match ${pins}"
     other="$(awk -F'\t' -v h="${hash}" -v s="${soc}" '$4 == h && $2 != s { print $2; exit }' "${ABL_SRC}/releases.tsv")"
     [[ -z "${other}" ]] || die "${soc} and ${other} have the same OpenABL payload"
   done
@@ -491,10 +540,15 @@ install_openabl_rootfs() {
 
 stage_openabl() {
   [[ -n "${ABL_SRC}" ]] || return 0
-  local dst="${MNT}/boot/openabl" soc d s f
+  local dst="${MNT}/boot/openabl" soc d s f size hash source_at
+  source_at="openabl-${PBOS_ABL_TAG}-source.tar.xz on https://github.com/${PBOS_ABL_REPO}/releases/tag/${PBOS_ABL_TAG}"
+  if ((ABL_TEST)); then
+    openabl_test_version || die "a test OpenABL can't go into ${PB_OS_VERSION}"
+    source_at="TEST BUILD, not released: ask whoever gave you this image for its source"
+  fi
   # vfat cannot store Unix owner/mode, so install/tee rather than cp -a.
   sudo_run install -d "${dst}" "${dst}/LICENSES"
-  sed -e "s/%NAME%/${PBOS_ABL_NAME}/g" -e "s/%TAG%/${PBOS_ABL_TAG}/g" "${ROOT}/abl/README" \
+  sed -e "s|%NAME%|${PBOS_ABL_NAME}|g" -e "s|%SOURCE%|${source_at}|g" "${ROOT}/abl/README" \
     | sudo_run tee "${dst}/README" >/dev/null
   sudo_run install -m0644 "${ABL_SRC}/LICENSE" "${ABL_SRC}/LICENSES.md" "${dst}/"
   for f in "${ABL_SRC}"/LICENSES/*; do
@@ -505,8 +559,10 @@ stage_openabl() {
     sudo_run install -d "${d}"
     sudo_run install -m0644 "${ABL_SRC}/${soc}/abl_signed-${soc}.elf" \
       "${ABL_SRC}/${soc}/abl_signed-${soc}.elf.sha256" "${d}/"
+    # flash_abl.sh carries its payload's size and hash.
+    read -r size hash <<<"$(openabl_row "${soc}" "${ABL_SRC}/releases.tsv")"
     for s in flash_abl backup_abl restore_backup_abl; do
-      sed "s/%DEVICE%/${soc}/g" "${ROOT}/abl/${s}.sh.template" \
+      sed -e "s/%DEVICE%/${soc}/g" -e "s/%SIZE%/${size}/g" -e "s/%SHA256%/${hash}/g" "${ROOT}/abl/${s}.sh.template" \
         | sudo_run tee "${d}/${s}.sh" >/dev/null
     done
   done

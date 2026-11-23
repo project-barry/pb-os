@@ -1,8 +1,8 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-2.0
 # Saves both ABL slots (abl_a, abl_b) as abl_a.img and abl_b.img next to this
-# script, then reads each slot again and compares it with its copy. Refuses
-# on another chip.
+# script, once both copies are complete and match the slots, read again.
+# Refuses on another chip.
 # After ROCKNIX's OpenABL scripts (https://github.com/ROCKNIX/distribution,
 # projects/ROCKNIX/packages/tools/openabl), (c) ROCKNIX contributors.
 
@@ -22,11 +22,36 @@ case "%DEVICE%:$chip" in
 esac
 
 dir="/sdcard/openabl/%DEVICE%"
+
+# Both slots must be partitions.
+part() { echo "/dev/block/by-name/abl_$1"; }
+part_size() { wc -c <"$(part "$1")" | tr -d ' '; }
 for s in a b; do
-  dd if="/dev/block/by-name/abl_$s" of="$dir/abl_$s.img" bs=1M || exit 1
-  if ! cmp "$dir/abl_$s.img" "/dev/block/by-name/abl_$s"; then
-    echo "abl_$s.img does not match abl_$s: run backup_abl.sh again" >&2
+  if [ ! -b "$(part $s)" ]; then
+    echo "The partition abl_$s wasn't found. Nothing written." >&2
     exit 1
   fi
 done
+
+# To a temporary name first: a backup that isn't complete and checked never has
+# the name flash_abl.sh and restore_backup_abl.sh look for.
+bad() {
+  rm -f "$dir/abl_a.img.new" "$dir/abl_b.img.new"
+  echo "$1: run backup_abl.sh again. Earlier backups are unchanged." >&2
+  exit 1
+}
+for s in a b; do
+  size="$(part_size $s)"
+  [ -n "$size" ] && [ "$size" != 0 ] || bad "abl_$s can't be read"
+  dd if="$(part $s)" of="$dir/abl_$s.img.new" bs=1M || bad "abl_$s can't be saved"
+done
+sync
+for s in a b; do
+  [ "$(wc -c <"$dir/abl_$s.img.new" | tr -d ' ')" = "$(part_size $s)" ] || bad "The backup of abl_$s is incomplete"
+  cmp "$dir/abl_$s.img.new" "$(part $s)" || bad "The backup does not match abl_$s"
+done
+for s in a b; do
+  mv -f "$dir/abl_$s.img.new" "$dir/abl_$s.img" || exit 1
+done
+sync
 echo "Backed up abl_a and abl_b to $dir. Copy abl_a.img and abl_b.img to your PC."

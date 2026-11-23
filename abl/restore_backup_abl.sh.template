@@ -1,7 +1,7 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-2.0
 # Puts the ABL saved by backup_abl.sh (abl_a.img, abl_b.img) back on both
-# slots and reads each slot back.
+# slots, the inactive slot first, and reads each slot back.
 # After ROCKNIX's OpenABL scripts (https://github.com/ROCKNIX/distribution,
 # projects/ROCKNIX/packages/tools/openabl), (c) ROCKNIX contributors.
 
@@ -21,15 +21,32 @@ case "%DEVICE%:$chip" in
 esac
 
 dir="/sdcard/openabl/%DEVICE%"
+
+# Both slots must be partitions.
+part() { echo "/dev/block/by-name/abl_$1"; }
+part_size() { wc -c <"$(part "$1")" | tr -d ' '; }
 for s in a b; do
-  if [ ! -s "$dir/abl_$s.img" ]; then
-    echo "No abl_$s.img in $dir. Nothing written." >&2
+  if [ ! -b "$(part $s)" ]; then
+    echo "The partition abl_$s wasn't found. Nothing written." >&2
     exit 1
   fi
 done
+
+# A backup must be the whole partition.
 for s in a b; do
-  dd if="$dir/abl_$s.img" of="/dev/block/by-name/abl_$s" bs=1M || exit 1
-  if ! cmp "$dir/abl_$s.img" "/dev/block/by-name/abl_$s"; then
+  size="$(part_size $s)"
+  if [ ! -f "$dir/abl_$s.img" ] || [ -z "$size" ] || [ "$size" = 0 ] || [ "$(wc -c <"$dir/abl_$s.img" | tr -d ' ')" != "$size" ]; then
+    echo "abl_$s.img in $dir is missing or is not a whole backup. Nothing written." >&2
+    exit 1
+  fi
+done
+
+case "$(getprop ro.boot.slot_suffix 2>/dev/null)" in
+  _b) order="a b" ;;
+  *) order="b a" ;;
+esac
+for s in $order; do
+  if ! dd if="$dir/abl_$s.img" of="$(part $s)" bs=1M || ! cmp "$dir/abl_$s.img" "$(part $s)"; then
     echo "abl_$s read back wrong: run restore_backup_abl.sh again before rebooting." >&2
     exit 1
   fi

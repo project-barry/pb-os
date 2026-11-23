@@ -6,8 +6,7 @@ the fix for an intermittent hang on the logo before the kernel starts. It isn't
 an upstream release: report problems with it to PB-OS.
 GPL-3.0-or-later, Copyright (C) 2026-present Open Handheld Collective.
 LICENSE, LICENSES/ and LICENSES.md in this folder are OpenABL's.
-Source: openabl-%TAG%-source.tar.xz on
-https://github.com/project-barry/OpenABL/releases/tag/%TAG%
+Source: %SOURCE%
 The scripts follow ROCKNIX's OpenABL scripts (GPL-2.0, ROCKNIX contributors);
 the per-SoC folders follow Armada (https://github.com/armada-os/armada).
 
@@ -31,15 +30,16 @@ and don't interrupt flash_abl.sh or power off before it has finished.
 
 2. In Android settings, use "Run script as root": browse to your SoC's
    folder (e.g. openabl/SM8550) and run backup_abl.sh. It saves both
-   slots as abl_a.img and abl_b.img in that folder and checks them.
+   slots as abl_a.img and abl_b.img in that folder and checks them. It
+   replaces earlier backups there: copy those somewhere safe first.
 
 3. Copy abl_a.img and abl_b.img to your PC and keep them.
    restore_backup_abl.sh puts them back if you ever want the old ABL.
    Going back to ROCKNIX ABL: set the device model and boot mode again
    in its menu (OpenABL moves those settings out of ROCKNIX's storage).
 
-4. Run flash_abl.sh the same way. It needs the backups from step 2,
-   writes both slots and reads each one back. If it reports an error,
+4. Run flash_abl.sh the same way. It needs backups from step 2 that match
+   what is in the slots now, writes both slots and reads each one back. If it reports an error,
    don't reboot: run restore_backup_abl.sh.
 
 5. Power on holding Volume Down to open the OpenABL menu
