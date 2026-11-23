@@ -18,7 +18,8 @@ const seen = callable("seen");
 const line = (text, key) => jsx("div", { style: { marginTop: "8px" }, children: text }, key);
 const lines = (items) => jsxs("div", { children: items.map((t, i) => (i === 0 ? jsx("div", { children: t }, "0") : line(t, String(i)))) });
 
-const version = (n) => n.version || "1.2";
+// Each chip's own shipped release, always sent with an update to offer.
+const version = (n) => n.version || "";
 const message = (title, text) => DFL.showModal(jsx(DFL.ConfirmModal, { strTitle: title, strDescription: text, bAlertDialog: true }));
 
 async function runUpdate(n) {

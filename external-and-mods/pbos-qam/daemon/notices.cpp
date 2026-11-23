@@ -12,6 +12,11 @@
 // it. It comes back at every boot and Steam restart until both slots hold
 // the shipped release.
 //
+// Every chip has its own shipped release (<SoC>/VERSION): the SM7750's
+// (Retroid Pocket Duo) is built from another OpenABL than the others' 1.2.
+// Releases are told apart by hash and chip alone, never by comparing version
+// numbers, and the chip's own release is the only one offered.
+//
 // "update" installs the shipped release from here, as Armada's
 // armada-abl-update (armada-os/armada, GPL-2.0-or-later) and PB-OS
 // Installer's Repair do, and only where both slots hold a boot menu PB-OS
@@ -31,6 +36,7 @@
 #include <sys/ioctl.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <ctime>
 #include <mutex>
 #include <optional>
@@ -46,7 +52,7 @@ using pj::Value;
 
 const std::string OPENABL = "/usr/share/pb-os/openabl";
 const std::string BACKUPS = "/home/.pbos-abl-backup";
-const std::string ABL_NOTICE = "abl-openabl-1.2";
+const std::string ABL_NOTICE = "abl-openabl-";  // + the shipped version
 const std::string SOUND_NOTICE = "sound-check-help";
 const std::string SOUND_CHECK = "/usr/lib/pbos-sound-check/pbos-sound-check";
 const std::string SEEN = "/var/lib/pbos-qam/notices.json";
@@ -59,7 +65,8 @@ struct Menu {
 };
 
 // PB-OS Installer's list (abl/AblSetup.kt). The shipped release is found by
-// its releases.tsv hash, whatever its name here.
+// its releases.tsv hash, whatever its name here. SM7750: none yet, as its
+// first release has no older menu to replace.
 const Menu MENUS[] = {
     {"OpenABL 1.2", "SM8550", "c7d681004563b69d892b5f93d3fac66a5f555c273c39ebf05febc72f95699df8", 532480},
     {"OpenABL 1.2", "SM8650", "c32434666ad5c725caa149151cfc5a66918c40f05e3f692c93795481910a6422", 532480},
@@ -83,11 +90,13 @@ std::string sha256(const std::string& data) {
     return r.out.substr(0, r.out.find(' '));
 }
 
-// "SM8550" (also the QCS8550 handhelds) or "SM8650", from the device tree.
+// "SM8550" (also the QCS8550 handhelds), "SM8650" or "SM7750" (Linux calls it
+// Eliza), from the device tree.
 std::string soc() {
     std::string c = lower(dt_compatible());
     if (c.find("sm8650") != std::string::npos) return "SM8650";
     if (c.find("sm8550") != std::string::npos || c.find("qcs8550") != std::string::npos) return "SM8550";
+    if (c.find("qcom,eliza") != std::string::npos) return "SM7750";
     return "";
 }
 
@@ -97,26 +106,45 @@ struct Target {
     size_t bytes = 0;
 };
 
+// The release's version: <SoC>/VERSION, or, in a folder from before the SoCs
+// had their own, the top VERSION, which is only SM8550's and SM8650's.
+std::string shipped_version(const std::string& s) {
+    std::string v = trim(rd(OPENABL + "/" + s + "/VERSION"));
+    if (v.empty() && (s == "SM8550" || s == "SM8650")) v = trim(rd(OPENABL + "/VERSION"));
+    return v;
+}
+
 std::optional<Target> target() {
     std::string s = soc();
-    std::string version = trim(rd(OPENABL + "/VERSION"));
-    if (s.empty() || version.empty()) return std::nullopt;
+    if (s.empty()) return std::nullopt;
+    std::string version = shipped_version(s);
+    if (version.empty()) return std::nullopt;
+    std::optional<Target> t;
+    std::vector<std::string> foreign;  // other chips' payloads
     for (const auto& line : split_lines(rd(OPENABL + "/releases.tsv"))) {
         if (line.empty() || line[0] == '#') continue;
         std::vector<std::string> f;
         size_t start = 0;
         for (size_t tab; (tab = line.find('\t', start)) != std::string::npos; start = tab + 1) f.push_back(line.substr(start, tab - start));
         f.push_back(line.substr(start));
-        if (f.size() < 4 || f[0] != version || f[1] != s || !is_digits(f[2])) continue;
-        Target t{version, trim(f[3]), OPENABL + "/" + s + "/abl_signed-" + s + ".elf", std::stoul(f[2])};
-        auto data = read_file(t.payload);
-        if (!data || data->size() != t.bytes || sha256(*data) != t.sha256) {
-            log("pbos-qamd: %s does not match releases.tsv", t.payload.c_str());
-            return std::nullopt;
-        }
-        return t;
+        if (f.size() < 4) continue;
+        if (f[1] != s) foreign.push_back(trim(f[3]));
+        if (t || f[0] != version || f[1] != s || !is_digits(f[2])) continue;
+        t = Target{version, trim(f[3]), OPENABL + "/" + s + "/abl_signed-" + s + ".elf", std::stoul(f[2])};
     }
-    return std::nullopt;
+    if (!t) return std::nullopt;
+    for (const auto& m : MENUS)
+        if (s != m.soc) foreign.push_back(m.sha256);
+    if (std::find(foreign.begin(), foreign.end(), t->sha256) != foreign.end()) {
+        log("pbos-qamd: releases.tsv gives %s another chip's boot menu", s.c_str());
+        return std::nullopt;
+    }
+    auto data = read_file(t->payload);
+    if (!data || data->size() != t->bytes || sha256(*data) != t->sha256) {
+        log("pbos-qamd: %s does not match releases.tsv", t->payload.c_str());
+        return std::nullopt;
+    }
+    return t;
 }
 
 struct Slot {
@@ -225,14 +253,14 @@ private:
         check();
         if (!outdated() || !can_update()) return sound_notice();
         Value v = Value::object();
-        v["id"] = ABL_NOTICE;
+        v["id"] = ABL_NOTICE + target_->version;
         for (const auto& s : slots_)
             if (s.readable && !s.current) {
                 v["menu"] = s.menu;
                 break;
             }
         v["canUpdate"] = can_update();
-        v["version"] = target_ ? target_->version : "";
+        v["version"] = target_->version;
         v["device"] = dt_model();
         return v;
     }
