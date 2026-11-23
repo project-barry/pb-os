@@ -1,8 +1,8 @@
-// The notices section: a message Steam shows once it starts (sections/
-// notices.js), for something the user should fix. It has no page in the
-// PB-OS tab.
+// The notices section: messages Steam shows once it starts (sections/
+// notices.js), each once, and the boot menu's update on the PB-OS tab's System
+// page, there as long as there is one.
 //
-// The one notice: an older boot menu PB-OS knows (the PB-OS fork's OpenABL 1.2,
+// The first: an older boot menu PB-OS knows (the PB-OS fork's OpenABL 1.2,
 // OpenABL 1.0/1.1, ROCKNIX ABL) instead of the OpenABL release PB-OS ships, the
 // same for every chip (/usr/share/pb-os/openabl, approved hashes in its
 // releases.tsv). Both slots' boot loaders (abl_a, abl_b) are read and hashed as
@@ -10,22 +10,24 @@
 // partition keeps what was there before), so the notice names the menu the
 // device has. Releases are told apart by hash and chip, never by their names.
 // Devices already on the shipped release, or with a boot loader PB-OS can't
-// identify, never see it. It comes back at every boot and Steam restart until
-// both slots hold the shipped release.
+// identify, never see it. The message is shown once for each shipped release
+// ("seen", in /var/lib/pbos-qam/notices.json); the System page offers the update
+// until both slots hold it ("offer").
 //
 // "update" installs the shipped release from here, as Armada's
 // armada-abl-update (armada-os/armada, GPL-2.0-or-later) and PB-OS
 // Installer's Repair do, and only where both slots hold a boot menu PB-OS
 // knows for this chip: never over a stock or unknown boot loader (the stock
 // one is needed for Android updates and can't be downloaded again). Both
-// slots are backed up to /home/.pbos-abl-backup first; then slot b, then
-// slot a, each written, flushed and read back; a slot that doesn't read back
-// right gets its backup again.
+// slots are backed up to /home/.pbos-abl-backup first; then the inactive slot,
+// then the active one, each written, flushed and read back; a slot that doesn't
+// read back right gets its backup again, and the other one isn't touched. When
+// the active slot can't be told, nothing is offered or written.
 //
-// The second notice, only when there is no boot menu one to show: while PB-OS
+// The second notice, when there is no boot menu one left to show: while PB-OS
 // Sound Check ships, a short ask to run it if the sound goes, on every device
 // (most reports come from the AYN Thor, which most users have). Once per
-// device ("seen", in /var/lib/pbos-qam/notices.json).
+// device ("seen").
 
 #include <fcntl.h>
 #include <linux/fs.h>
@@ -33,9 +35,11 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <cstdint>
 #include <ctime>
 #include <mutex>
 #include <optional>
+#include <sstream>
 
 #include "section.h"
 #include "util.h"
@@ -51,6 +55,9 @@ const std::string BACKUPS = "/home/.pbos-abl-backup";
 const std::string ABL_NOTICE = "abl-update";
 const std::string SOUND_NOTICE = "sound-check-help";
 const std::string SOUND_CHECK = "/usr/lib/pbos-sound-check/pbos-sound-check";
+const std::string CMDLINE = "/proc/cmdline";
+const std::string DEV = "/dev";
+const std::string SYS_BLOCK = "/sys/class/block";
 const std::string SEEN = "/var/lib/pbos-qam/notices.json";
 
 struct Menu {
@@ -78,7 +85,7 @@ const Menu MENUS[] = {
     {"ROCKNIX ABL 1.1.8", "SM8650", "4ed04dda4da2ac76bc27925ae68094c055a043697f1a1bee4b958b979905bed5", 258048},
 };
 
-std::string slot_path(char s) { return std::string("/dev/disk/by-partlabel/abl_") + s; }
+std::string slot_path(char s) { return DEV + "/disk/by-partlabel/abl_" + s; }
 
 std::string sha256(const std::string& data) {
     RunOpts o;
@@ -179,6 +186,58 @@ Slot read_slot(char s, const std::optional<Target>& t, const std::string& chip) 
     return out;
 }
 
+std::string read_at(const std::string& path, uint64_t off, size_t n) {
+    std::string out(n, '\0');
+    int fd = open(path.c_str(), O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return "";
+    ssize_t got = pread(fd, out.data(), n, static_cast<off_t>(off));
+    close(fd);
+    return got == static_cast<ssize_t>(n) ? out : "";
+}
+
+uint64_t le(const std::string& s, size_t at, size_t n) {
+    uint64_t v = 0;
+    for (size_t i = n; i-- > 0;) v = v << 8 | static_cast<unsigned char>(s[at + i]);
+    return v;
+}
+
+// How the boot loader (Qualcomm's GetActiveSlot) sees a slot: 0 when its boot
+// partition isn't marked active (GPT attribute bit 50), else the partition's
+// priority (bits 48-49), the higher one wins.
+std::optional<int> gpt_priority(char slot) {
+    std::string name = std::string("boot_") + slot;
+    std::string part = basename(realpath(DEV + "/disk/by-partlabel/" + name));
+    std::string sys = realpath(SYS_BLOCK + "/" + part);
+    std::string num = trim(rd(sys + "/partition")), lbs = trim(rd(dirname(sys) + "/queue/logical_block_size"));
+    if (!is_digits(num) || !is_digits(lbs) || num.size() > 4 || lbs.size() > 6 || std::stoul(num) == 0) return std::nullopt;
+    std::string disk = DEV + "/" + basename(dirname(sys));
+    uint64_t block = std::stoul(lbs);
+    std::string hdr = read_at(disk, block, 92);
+    if (hdr.empty() || hdr.compare(0, 8, "EFI PART") != 0) return std::nullopt;
+    uint64_t size = le(hdr, 84, 4);
+    if (size < 128 || std::stoul(num) > le(hdr, 80, 4)) return std::nullopt;
+    std::string e = read_at(disk, le(hdr, 72, 8) * block + (std::stoul(num) - 1) * size, 128);
+    if (e.empty()) return std::nullopt;
+    // The right entry: its name (UTF-16) is the partition's.
+    for (size_t i = 0; i <= name.size(); ++i)
+        if (le(e, 56 + 2 * i, 2) != (i < name.size() ? static_cast<unsigned char>(name[i]) : 0)) return std::nullopt;
+    uint64_t attrs = le(e, 48, 8);
+    return attrs >> 50 & 1 ? static_cast<int>(attrs >> 48 & 3) : 0;
+}
+
+// 'a' or 'b': the slot in use, which is also the one the device starts from
+// next, or 0 when that can't be told (or androidboot.slot_suffix, where the boot
+// loader passes it, says another).
+char active_slot() {
+    auto a = gpt_priority('a'), b = gpt_priority('b');
+    if (!a || !b || *a == *b) return 0;
+    char active = *a > *b ? 'a' : 'b';
+    std::istringstream in(rd(CMDLINE));
+    for (std::string w; in >> w;)
+        if (w.rfind("androidboot.slot_suffix=", 0) == 0 && w != std::string("androidboot.slot_suffix=_") + active) return 0;
+    return active;
+}
+
 // On the charger, or a battery at least 30% full.
 bool enough_power() {
     for (const auto& d : listdir("/sys/class/power_supply")) {
@@ -227,6 +286,7 @@ public:
 
     Value call(const std::string& m, const Value& a) override {
         if (m == "get") return get();
+        if (m == "offer") return offer_now();
         if (m == "update") return update();
         if (m == "seen") return seen(arg(a, 0, "").str());
         throw CallError("notices has no method " + m);
@@ -240,6 +300,8 @@ private:
         std::string chip = soc();
         slots_[0] = read_slot('a', target_, chip);
         slots_[1] = read_slot('b', target_, chip);
+        active_ = active_slot();
+        if (!active_ && outdated()) log("pbos-qamd: the active boot menu slot can't be told: no update");
         for (const auto& s : slots_)
             if (s.readable && !s.current) log("pbos-qamd: boot menu notice (%s)", s.menu.empty() ? "unknown menu" : s.menu.c_str());
     }
@@ -250,33 +312,47 @@ private:
         return false;
     }
 
-    // Whether "update" may run: the shipped release is here and checked, and
-    // both slots hold it or a boot menu PB-OS knows for this chip, and have room.
+    // Whether "update" may run: the shipped release is here and checked, the
+    // active slot is known, and both slots hold the release or a boot menu PB-OS
+    // knows for this chip, and have room.
     bool can_update() const {
-        if (!target_) return false;
+        if (!target_ || !active_) return false;
         for (const auto& s : slots_)
             if (!s.readable || !s.known || s.size < target_->bytes) return false;
         return true;
     }
 
-    // {} when there is nothing to say; else {id, menu (of the first slot that
-    // isn't current), canUpdate, version, device}. Only a device known to have an
-    // older boot menu hears about it: one PB-OS can't identify (stock, a test
-    // build) is left alone, as "update" would refuse it.
-    Value get() {
-        std::lock_guard<std::mutex> g(mu_);
+    // {} when there is no update; else {id, menu (of the first slot that isn't
+    // current), canUpdate, version, device}. Only a device known to have an older
+    // boot menu hears about it: one PB-OS can't identify (stock, a test build) is
+    // left alone, as "update" would refuse it.
+    Value offer() {
         check();
-        if (!outdated() || !can_update()) return sound_notice();
         Value v = Value::object();
+        if (!outdated() || !can_update()) return v;
         v["id"] = ABL_NOTICE;
         for (const auto& s : slots_)
             if (s.readable && !s.current) {
                 v["menu"] = s.menu;
                 break;
             }
-        v["canUpdate"] = can_update();
-        v["version"] = target_ ? target_->name : "";
+        v["canUpdate"] = true;
+        v["version"] = target_->name;
         v["device"] = dt_model();
+        return v;
+    }
+
+    // For the System page: whether or not the message was shown.
+    Value offer_now() {
+        std::lock_guard<std::mutex> g(mu_);
+        return offer();
+    }
+
+    // The message to show: the update's, once for each release, else Sound Check's.
+    Value get() {
+        std::lock_guard<std::mutex> g(mu_);
+        Value v = offer();
+        if (v["id"].str().empty() || told_ == target_->name || read_json(SEEN)[ABL_NOTICE].str() == target_->name) return sound_notice();
         return v;
     }
 
@@ -292,9 +368,16 @@ private:
     // A notice shown once: not again on this device.
     Value seen(const std::string& id) {
         std::lock_guard<std::mutex> g(mu_);
-        if (id != SOUND_NOTICE) throw CallError("notices: unknown notice " + id);
+        if (id != SOUND_NOTICE && id != ABL_NOTICE) throw CallError("notices: unknown notice " + id);
         Value state = read_json(SEEN);
-        state[id] = true;
+        if (id == SOUND_NOTICE) {
+            state[id] = true;
+        } else {
+            if (!target_) return Value(false);
+            // Also here, so one that can't be saved doesn't keep Sound Check's away.
+            told_ = target_->name;
+            state[id] = told_;
+        }
         return Value(write_json(SEEN, state));
     }
 
@@ -302,7 +385,9 @@ private:
         std::lock_guard<std::mutex> g(mu_);
         check();
         if (!outdated()) return Value(true);
+        if (!active_) throw CallError("Couldn't tell which boot menu slot is in use. Nothing was changed");
         if (!can_update()) throw CallError("This boot menu can't be updated from PB-OS: use PB-OS Installer's Repair");
+        if (active_slot() != active_) throw CallError("The boot menu slot in use changed. Restart and try again");
         if (!enough_power()) throw CallError("Connect the charger first (or charge to 30%)");
         auto payload = read_file(target_->payload);
         if (!payload || payload->size() != target_->bytes || sha256(*payload) != target_->sha256)
@@ -328,7 +413,8 @@ private:
         if (!flush(dir) || !flush(BACKUPS) || !flush(dirname(BACKUPS))) throw CallError("Couldn't back up the boot menu");
         log("pbos-qamd: boot menu backed up to %s", dir.c_str());
 
-        for (char s : {'b', 'a'}) {
+        // The inactive slot first: until it reads back right, the one in use is as it was.
+        for (char s : {active_ == 'a' ? 'b' : 'a', active_}) {
             const Slot& slot = slots_[s == 'a' ? 0 : 1];
             if (slot.current) continue;
             const std::string& before = backup[s == 'a' ? 0 : 1];
@@ -357,6 +443,8 @@ private:
     bool checked_ = false;
     std::optional<Target> target_;
     Slot slots_[2];
+    char active_ = 0;   // the slot in use, or 0
+    std::string told_;  // the release whose message was shown since this started
 };
 
 }  // namespace
