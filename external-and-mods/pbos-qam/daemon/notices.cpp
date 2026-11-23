@@ -63,6 +63,9 @@ struct Menu {
 // PB-OS Installer's list (abl/AblSetup.kt). The shipped release is found by
 // its releases.tsv hash, whatever its name here. SM7750: none, as OpenABL-PB
 // 1.2 is its first.
+// When a release after OpenABL-PB 1.2 ships, OpenABL-PB 1.2's three payloads
+// (releases.tsv) go here, or the new one is never offered over it: the image
+// build refuses until they do.
 const Menu MENUS[] = {
     {"OpenABL 1.2 (PB-OS fork)", "SM8550", "c7d681004563b69d892b5f93d3fac66a5f555c273c39ebf05febc72f95699df8", 532480},
     {"OpenABL 1.2 (PB-OS fork)", "SM8650", "c32434666ad5c725caa149151cfc5a66918c40f05e3f692c93795481910a6422", 532480},
@@ -84,6 +87,11 @@ std::string sha256(const std::string& data) {
     auto r = run({"sha256sum"}, o);
     if (!r.started || r.code != 0) return "";
     return r.out.substr(0, r.out.find(' '));
+}
+
+// A SHA-256 as sha256() gives it: never "", which is its failure.
+bool is_sha256(const std::string& s) {
+    return s.size() == 64 && s.find_first_not_of("0123456789abcdef") == std::string::npos;
 }
 
 // "SM8550" (also the QCS8550 handhelds), "SM8650" or "SM7750" (Linux calls it
@@ -119,9 +127,15 @@ std::optional<Target> target() {
         f.push_back(line.substr(start));
         if (f.size() < 4) continue;
         if (f[1] != s) foreign.push_back(trim(f[3]));
-        if (t || f[0] != version || f[1] != s || !is_digits(f[2])) continue;
+        if (f[0] != version || f[1] != s) continue;
+        std::string sum = trim(f[3]);
+        // One valid row: no hash, a size no boot loader has or a second row means no offer.
+        if (t || !is_digits(f[2]) || f[2].size() > 7 || std::stoul(f[2]) == 0 || !is_sha256(sum)) {
+            log("pbos-qamd: releases.tsv has no single valid row for %s", s.c_str());
+            return std::nullopt;
+        }
         // "OpenABL-PB 1.2", or an older folder's plain "1.2".
-        t = Target{is_digits(version.substr(0, 1)) ? "OpenABL " + version : version, trim(f[3]),
+        t = Target{is_digits(version.substr(0, 1)) ? "OpenABL " + version : version, sum,
                    OPENABL + "/" + s + "/abl_signed-" + s + ".elf", std::stoul(f[2])};
     }
     if (!t) return std::nullopt;
@@ -139,6 +153,7 @@ std::optional<Target> target() {
 
 struct Slot {
     bool readable = false;
+    size_t size = 0;
     std::string menu;     // a name from MENUS, or "" for one PB-OS doesn't know
     bool known = false;   // a menu from MENUS for this chip
     bool current = false; // the shipped release
@@ -149,6 +164,7 @@ Slot read_slot(char s, const std::optional<Target>& t, const std::string& chip) 
     auto data = read_file(slot_path(s));
     if (!data || data->empty()) return out;
     out.readable = true;
+    out.size = data->size();
     if (t && data->size() >= t->bytes && sha256(data->substr(0, t->bytes)) == t->sha256) {
         out.menu = t->name;
         out.known = out.current = true;
@@ -195,6 +211,15 @@ bool write_slot(char s, const std::string& data) {
     return ok;
 }
 
+// A file or folder, on the drive.
+bool flush(const std::string& path) {
+    int fd = open(path.c_str(), O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return false;
+    bool ok = fsync(fd) == 0;
+    close(fd);
+    return ok;
+}
+
 class Notices : public Section {
 public:
     std::string name() const override { return "notices"; }
@@ -226,11 +251,11 @@ private:
     }
 
     // Whether "update" may run: the shipped release is here and checked, and
-    // both slots hold it or a boot menu PB-OS knows for this chip.
+    // both slots hold it or a boot menu PB-OS knows for this chip, and have room.
     bool can_update() const {
         if (!target_) return false;
         for (const auto& s : slots_)
-            if (!s.readable || !s.known) return false;
+            if (!s.readable || !s.known || s.size < target_->bytes) return false;
         return true;
     }
 
@@ -293,12 +318,14 @@ private:
         for (int i = 0; i < 2; ++i) {
             char s = i == 0 ? 'a' : 'b';
             auto data = read_file(slot_path(s));
-            if (!data || data->empty() || !write_text(dir + "/abl_" + s + ".img", *data))
+            std::string file = dir + "/abl_" + s + ".img";
+            if (!data || data->size() < target_->bytes || !write_text(file, *data) || !flush(file) || read_file(file) != data)
                 throw CallError("Couldn't back up the boot menu");
             backup[i] = *data;
         }
         write_text(dir + "/README", "Boot menu slots abl_a and abl_b before PB-OS installed " + target_->name +
                                         ". Each .img is the whole partition.\n");
+        if (!flush(dir) || !flush(BACKUPS) || !flush(dirname(BACKUPS))) throw CallError("Couldn't back up the boot menu");
         log("pbos-qamd: boot menu backed up to %s", dir.c_str());
 
         for (char s : {'b', 'a'}) {
@@ -311,7 +338,7 @@ private:
             if (!ok) {
                 bool restored = write_slot(s, before);
                 auto again = restored ? read_file(slot_path(s)) : std::nullopt;
-                restored = again && sha256(*again) == sha256(before);
+                restored = again && *again == before;
                 log("pbos-qamd: boot menu slot %c failed; backup %s", s, restored ? "restored" : "NOT restored");
                 checked_ = false;
                 throw CallError(restored ? std::string("Updating the boot menu failed; it was put back as it was")
