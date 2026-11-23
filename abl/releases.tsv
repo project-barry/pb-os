@@ -1,7 +1,10 @@
-# Approved OpenABL payloads (abl_signed-<soc>.elf in openabl-v<version>.tar.gz).
+# Approved OpenABL payloads (abl_signed-<soc>.elf in the release's tarball).
+# 1.1 is upstream's, 1.2 the PB-OS fork's (upstream v1.1 plus a fix).
 version	soc	size	sha256
 1.1	SM8550	532480	cd97748bbd1c5dc994b8a73a05e88955297f4c88384e3ca4028d043fc1b16848
 1.1	SM8650	532480	8fd6a18ec30a8c24751b7db73a6ecb0d9df9f2e1432973273d572841ff3f6216
 1.2	SM8550	532480	c7d681004563b69d892b5f93d3fac66a5f555c273c39ebf05febc72f95699df8
 1.2	SM8650	532480	c32434666ad5c725caa149151cfc5a66918c40f05e3f692c93795481910a6422
-# SM7750 UNFILLED: "<version>	SM7750	<size>	<sha256>" once release.env has its release.
+OpenABL-PB 1.2	SM8550	UNFILLED	UNFILLED
+OpenABL-PB 1.2	SM8650	UNFILLED	UNFILLED
+OpenABL-PB 1.2	SM7750	UNFILLED	UNFILLED

@@ -1,9 +1,25 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-2.0
 # Saves both ABL slots (abl_a, abl_b) as abl_a.img and abl_b.img next to this
-# script, then reads each slot again and compares it with its copy.
+# script, then reads each slot again and compares it with its copy. Refuses
+# on another chip.
 # After ROCKNIX's OpenABL scripts (https://github.com/ROCKNIX/distribution,
 # projects/ROCKNIX/packages/tools/openabl), (c) ROCKNIX contributors.
+
+# The chip this folder is for, before anything else: ro.soc.model, with the
+# names PB-OS Installer accepts. Not ro.board.platform, which chips share; only
+# the KONKR Pocket FIT (SM8650) reports no model, and there the platform decides.
+chip="$(getprop ro.soc.model 2>/dev/null)" || chip="unreadable"
+[ -n "$chip" ] || chip="no model, platform $(getprop ro.board.platform 2>/dev/null)"
+case "%DEVICE%:$chip" in
+  SM8550:SM8550* | SM8550:QCS8550*) ;;
+  SM8650:SM8650* | SM8650:QCS8650* | "SM8650:no model, platform pineapple") ;;
+  SM7750:SM7750* | SM7750:CQ7790*) ;;
+  *)
+    echo "This is the folder for %DEVICE%, but this device's chip is: $chip. Use the folder for your chip (see README). Nothing written." >&2
+    exit 1
+    ;;
+esac
 
 dir="/sdcard/openabl/%DEVICE%"
 for s in a b; do

@@ -1,16 +1,13 @@
-OpenABL (https://github.com/OpenHandheldCollective/OpenABL), from the PB-OS
-fork (https://github.com/project-barry/OpenABL):
-  SM8550, SM8650 - v%VERSION%: upstream v1.1 plus a fix for an intermittent
-    hang on the logo before the kernel starts.
-  SM7750 - v%VERSION_SM7750%: a later upstream version plus SM7750 support.
-    It is not the v%VERSION% of the other chips.
+%NAME%, PB-OS's own build of OpenABL
+(https://github.com/OpenHandheldCollective/OpenABL), from the PB-OS fork
+(https://github.com/project-barry/OpenABL). It is a modified version of upstream
+v1.2: support for the SM7750 (Retroid Pocket Duo), its own name, and the rest of
+the fix for an intermittent hang on the logo before the kernel starts. It isn't
+an upstream release: report problems with it to PB-OS.
 GPL-3.0-or-later, Copyright (C) 2026-present Open Handheld Collective.
-LICENSE, LICENSES/ and LICENSES.md in this folder are OpenABL's (SM7750's own
-are in the SM7750 folder).
-Source: openabl-v%VERSION%-source.tar.xz on
-https://github.com/project-barry/OpenABL/releases/tag/v%VERSION%
-and, for SM7750, openabl-v%VERSION_SM7750%-source.tar.xz on
-https://github.com/project-barry/OpenABL/releases/tag/v%VERSION_SM7750%
+LICENSE, LICENSES/ and LICENSES.md in this folder are OpenABL's.
+Source: openabl-%TAG%-source.tar.xz on
+https://github.com/project-barry/OpenABL/releases/tag/%TAG%
 The scripts follow ROCKNIX's OpenABL scripts (GPL-2.0, ROCKNIX contributors);
 the per-SoC folders follow Armada (https://github.com/armada-os/armada).
 
@@ -23,10 +20,11 @@ Flashing the wrong ABL can brick the device. Match the SoC carefully:
   SM8650 - KONKR Pocket FIT (8 Gen 3)
   SM7750 - Retroid Pocket Duo
 
+The scripts check the chip first and do nothing on another one.
+
 Retroid Pocket Duo: there is no known way to repair a wrong or damaged ABL
-(no EDL programmer), and its two stock slots differ, so keep both backups.
-OpenABL on it starts PB-OS only from images with loader/entries/pbos.conf on
-the card, as this one has; older PB-OS images don't start.
+(no EDL programmer). Its two stock slots differ, so keep both backups safe,
+and don't interrupt flash_abl.sh or power off before it has finished.
 
 1. Copy the openabl folder from this card to the root of Android
    internal storage.
