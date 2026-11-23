@@ -2,20 +2,16 @@
 // notices.js), for something the user should fix. It has no page in the
 // PB-OS tab.
 //
-// The one notice: an older boot menu PB-OS knows (OpenABL 1.0/1.1, ROCKNIX
-// ABL) instead of the OpenABL release PB-OS ships (/usr/share/pb-os/openabl,
-// approved hashes in its releases.tsv). Both slots' boot loaders (abl_a,
-// abl_b) are read and hashed as PB-OS Installer does (the SHA-256 of a
-// menu's first bytes; the rest of the partition keeps what was there
-// before), so the notice names the menu the device has. Devices already on
-// the shipped release, or with a boot loader PB-OS can't identify, never see
-// it. It comes back at every boot and Steam restart until both slots hold
-// the shipped release.
-//
-// Every chip has its own shipped release (<SoC>/VERSION): the SM7750's
-// (Retroid Pocket Duo) is built from another OpenABL than the others' 1.2.
-// Releases are told apart by hash and chip alone, never by comparing version
-// numbers, and the chip's own release is the only one offered.
+// The one notice: an older boot menu PB-OS knows (the PB-OS fork's OpenABL 1.2,
+// OpenABL 1.0/1.1, ROCKNIX ABL) instead of the OpenABL release PB-OS ships, the
+// same for every chip (/usr/share/pb-os/openabl, approved hashes in its
+// releases.tsv). Both slots' boot loaders (abl_a, abl_b) are read and hashed as
+// PB-OS Installer does (the SHA-256 of a menu's first bytes; the rest of the
+// partition keeps what was there before), so the notice names the menu the
+// device has. Releases are told apart by hash and chip, never by their names.
+// Devices already on the shipped release, or with a boot loader PB-OS can't
+// identify, never see it. It comes back at every boot and Steam restart until
+// both slots hold the shipped release.
 //
 // "update" installs the shipped release from here, as Armada's
 // armada-abl-update (armada-os/armada, GPL-2.0-or-later) and PB-OS
@@ -52,7 +48,7 @@ using pj::Value;
 
 const std::string OPENABL = "/usr/share/pb-os/openabl";
 const std::string BACKUPS = "/home/.pbos-abl-backup";
-const std::string ABL_NOTICE = "abl-openabl-";  // + the shipped version
+const std::string ABL_NOTICE = "abl-update";
 const std::string SOUND_NOTICE = "sound-check-help";
 const std::string SOUND_CHECK = "/usr/lib/pbos-sound-check/pbos-sound-check";
 const std::string SEEN = "/var/lib/pbos-qam/notices.json";
@@ -65,11 +61,11 @@ struct Menu {
 };
 
 // PB-OS Installer's list (abl/AblSetup.kt). The shipped release is found by
-// its releases.tsv hash, whatever its name here. SM7750: none yet, as its
-// first release has no older menu to replace.
+// its releases.tsv hash, whatever its name here. SM7750: none, as OpenABL-PB
+// 1.2 is its first.
 const Menu MENUS[] = {
-    {"OpenABL 1.2", "SM8550", "c7d681004563b69d892b5f93d3fac66a5f555c273c39ebf05febc72f95699df8", 532480},
-    {"OpenABL 1.2", "SM8650", "c32434666ad5c725caa149151cfc5a66918c40f05e3f692c93795481910a6422", 532480},
+    {"OpenABL 1.2 (PB-OS fork)", "SM8550", "c7d681004563b69d892b5f93d3fac66a5f555c273c39ebf05febc72f95699df8", 532480},
+    {"OpenABL 1.2 (PB-OS fork)", "SM8650", "c32434666ad5c725caa149151cfc5a66918c40f05e3f692c93795481910a6422", 532480},
     {"OpenABL 1.1", "SM8550", "cd97748bbd1c5dc994b8a73a05e88955297f4c88384e3ca4028d043fc1b16848", 532480},
     {"OpenABL 1.1", "SM8650", "8fd6a18ec30a8c24751b7db73a6ecb0d9df9f2e1432973273d572841ff3f6216", 532480},
     {"OpenABL 1.0", "SM8650", "23046d198dddaab53d7afc17bd726de4d2c65b6eb24d984a6b72e9a0963ba32c", 532480},
@@ -100,27 +96,21 @@ std::string soc() {
     return "";
 }
 
-// The release PB-OS ships for this chip, checked against releases.tsv.
+// The release PB-OS ships for this chip, checked against releases.tsv; never
+// another chip's payload.
 struct Target {
-    std::string version, sha256, payload;
+    std::string name, sha256, payload;
     size_t bytes = 0;
 };
 
-// The release's version: <SoC>/VERSION, or, in a folder from before the SoCs
-// had their own, the top VERSION, which is only SM8550's and SM8650's.
-std::string shipped_version(const std::string& s) {
-    std::string v = trim(rd(OPENABL + "/" + s + "/VERSION"));
-    if (v.empty() && (s == "SM8550" || s == "SM8650")) v = trim(rd(OPENABL + "/VERSION"));
-    return v;
-}
-
 std::optional<Target> target() {
     std::string s = soc();
-    if (s.empty()) return std::nullopt;
-    std::string version = shipped_version(s);
-    if (version.empty()) return std::nullopt;
+    std::string version = trim(rd(OPENABL + "/VERSION"));
+    if (s.empty() || version.empty()) return std::nullopt;
     std::optional<Target> t;
     std::vector<std::string> foreign;  // other chips' payloads
+    for (const auto& m : MENUS)
+        if (s != m.soc) foreign.push_back(m.sha256);
     for (const auto& line : split_lines(rd(OPENABL + "/releases.tsv"))) {
         if (line.empty() || line[0] == '#') continue;
         std::vector<std::string> f;
@@ -130,11 +120,11 @@ std::optional<Target> target() {
         if (f.size() < 4) continue;
         if (f[1] != s) foreign.push_back(trim(f[3]));
         if (t || f[0] != version || f[1] != s || !is_digits(f[2])) continue;
-        t = Target{version, trim(f[3]), OPENABL + "/" + s + "/abl_signed-" + s + ".elf", std::stoul(f[2])};
+        // "OpenABL-PB 1.2", or an older folder's plain "1.2".
+        t = Target{is_digits(version.substr(0, 1)) ? "OpenABL " + version : version, trim(f[3]),
+                   OPENABL + "/" + s + "/abl_signed-" + s + ".elf", std::stoul(f[2])};
     }
     if (!t) return std::nullopt;
-    for (const auto& m : MENUS)
-        if (s != m.soc) foreign.push_back(m.sha256);
     if (std::find(foreign.begin(), foreign.end(), t->sha256) != foreign.end()) {
         log("pbos-qamd: releases.tsv gives %s another chip's boot menu", s.c_str());
         return std::nullopt;
@@ -160,7 +150,7 @@ Slot read_slot(char s, const std::optional<Target>& t, const std::string& chip) 
     if (!data || data->empty()) return out;
     out.readable = true;
     if (t && data->size() >= t->bytes && sha256(data->substr(0, t->bytes)) == t->sha256) {
-        out.menu = "OpenABL " + t->version;
+        out.menu = t->name;
         out.known = out.current = true;
         return out;
     }
@@ -253,14 +243,14 @@ private:
         check();
         if (!outdated() || !can_update()) return sound_notice();
         Value v = Value::object();
-        v["id"] = ABL_NOTICE + target_->version;
+        v["id"] = ABL_NOTICE;
         for (const auto& s : slots_)
             if (s.readable && !s.current) {
                 v["menu"] = s.menu;
                 break;
             }
         v["canUpdate"] = can_update();
-        v["version"] = target_->version;
+        v["version"] = target_ ? target_->name : "";
         v["device"] = dt_model();
         return v;
     }
@@ -307,7 +297,7 @@ private:
                 throw CallError("Couldn't back up the boot menu");
             backup[i] = *data;
         }
-        write_text(dir + "/README", "Boot menu slots abl_a and abl_b before PB-OS installed OpenABL " + target_->version +
+        write_text(dir + "/README", "Boot menu slots abl_a and abl_b before PB-OS installed " + target_->name +
                                         ". Each .img is the whole partition.\n");
         log("pbos-qamd: boot menu backed up to %s", dir.c_str());
 
@@ -328,7 +318,7 @@ private:
                                          : "Updating the boot menu failed and slot " + std::string(1, s) +
                                                " couldn't be put back. Don't restart: ask for help (backup in " + dir + ")");
             }
-            log("pbos-qamd: boot menu slot %c now OpenABL %s", s, target_->version.c_str());
+            log("pbos-qamd: boot menu slot %c now %s", s, target_->name.c_str());
         }
         sync();
         checked_ = false;

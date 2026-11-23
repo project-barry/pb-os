@@ -1,9 +1,9 @@
 // Notices: a message once Steam has started, for something the user should
 // fix (daemon/notices.cpp decides; it has no page in the tab).
-// The one notice: an older boot menu PB-OS knows (OpenABL 1.0/1.1, ROCKNIX
-// ABL) instead of the OpenABL release PB-OS ships, which fixes the freeze on
-// the logo after a restart. The fix runs here, in Game Mode. It shows at every
-// boot and Steam restart until the boot menu is updated.
+// The one notice: an older boot menu PB-OS knows (the PB-OS fork's OpenABL 1.2,
+// OpenABL 1.0/1.1, ROCKNIX ABL) instead of the OpenABL release PB-OS ships. The
+// update runs here, in Game Mode. It shows at every boot and Steam restart
+// until the boot menu is updated.
 // The other: on every device, only when there is no boot menu notice, a short
 // ask to run PB-OS Sound Check if the sound goes. Shown once.
 window.__pbosQam.section("notices", (P) => {
@@ -18,8 +18,8 @@ const seen = callable("seen");
 const line = (text, key) => jsx("div", { style: { marginTop: "8px" }, children: text }, key);
 const lines = (items) => jsxs("div", { children: items.map((t, i) => (i === 0 ? jsx("div", { children: t }, "0") : line(t, String(i)))) });
 
-// Each chip's own shipped release, always sent with an update to offer.
-const version = (n) => n.version || "";
+// The shipped release's name, e.g. "OpenABL-PB 1.2".
+const shipped = (n) => n.version || "OpenABL";
 const message = (title, text) => DFL.showModal(jsx(DFL.ConfirmModal, { strTitle: title, strDescription: text, bAlertDialog: true }));
 
 async function runUpdate(n) {
@@ -31,7 +31,7 @@ async function runUpdate(n) {
     try {
         await update();
         busy.Close();
-        message("Boot menu updated", `OpenABL ${version(n)} is on both slots. A backup of the old boot menu is in /home/.pbos-abl-backup.`);
+        message("Boot menu updated", `${shipped(n)} is on both slots. A backup of the old boot menu is in /home/.pbos-abl-backup.`);
     } catch (e) {
         busy.Close();
         message("Boot menu not updated", String((e && e.message) || e));
@@ -42,7 +42,7 @@ async function runUpdate(n) {
 const confirmUpdate = (n) => DFL.showModal(jsx(DFL.ConfirmModal, {
     strTitle: "Update the boot menu?",
     strDescription: lines([
-        `PB-OS writes OpenABL ${version(n)} to both boot menu slots, one at a time, after backing up both.`,
+        `PB-OS writes ${shipped(n)} to both boot menu slots, one at a time, after backing up both.`,
         "Keep the device on the charger (or above 30% battery) and don't turn it off until it says it's done.",
     ]),
     strOKButtonText: "Update",
@@ -72,7 +72,7 @@ get().then((n) => {
         strTitle: "Alert: You should update your boot loader!",
         strDescription: lines([
             `Your ${n.device || "device"} is running ${n.menu}.`,
-            `Update to OpenABL ${version(n)} to avoid a bug that causes boot instability.`,
+            `This version of PB-OS comes with ${shipped(n)}.`,
         ]),
         strOKButtonText: "Update Now",
         strCancelButtonText: "Close",
