@@ -92,13 +92,14 @@ SIGNER, NAMESPACE = 'pb-os-release', 'pb-os-update'
 # releases had one image per SoC, and each device still takes its own SoC's
 # earlier names (never another SoC's): 'sm8550' (named 'rp6' before alpha
 # v0.5.2) for the Retroid Pocket 6, Nova and AYN Thor, 'pocketfit' for the
-# SM8650 handhelds. The AYN Odin 2, Odin 2 Mini and Odin 2 Portal came with the
-# one image: no earlier names.
+# SM8650 handhelds. The AYN Odin 2, Odin 2 Mini, Odin 2 Portal and Retroid
+# Pocket Duo came with the one image: no earlier names.
 IMAGE = 'pb-os'
 OLD_NAMES = {'KONKR Pocket FIT': ('pocketfit',), 'AYANEO Pocket S2': ('pocketfit',),
              'Retroid Pocket 6': ('sm8550', 'rp6'), 'Retroid Pocket 6 TOP-DPAD': ('sm8550', 'rp6'),
              'Retroid Pocket Nova': ('sm8550', 'rp6'), 'AYN Thor': ('sm8550', 'rp6'),
-             'AYN Odin 2': (), 'AYN Odin 2 Mini': (), 'AYN Odin 2 Portal': ()}
+             'AYN Odin 2': (), 'AYN Odin 2 Mini': (), 'AYN Odin 2 Portal': (),
+             'Retroid Pocket Duo': ()}
 
 
 # Ed25519 (RFC 8032), small and slow, for the tester check only (releases
