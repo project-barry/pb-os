@@ -80,6 +80,10 @@ Usage: $0 [options]
 Env: BOOT_MIB ROOT_MIB HOME_MIB STEAMOS_SM8650_IMG STEAMOS_ROOTFS KERNEL_OUT DEVICE
      PB_OS_VERSION PB_OS_BASE
      ABL_TARBALL (local OpenABL tarball)  SKIP_ABL=1 (no openabl/ on BOOT)
+     ABL_TARBALL_SM7750 (local tarball of the SM7750's own OpenABL release)
+     ABL_VERSION_SM7750 ABL_SHA256_SM7750 (test images only, with
+     ABL_TARBALL_SM7750, while abl/release.env has no SM7750 release: a version
+     name and the tarball's SHA-256)
      empty ROOT_MIB/HOME_MIB = auto (tight pack; home grows on first boot)
      PB_OS_VERSION = the release tag (e.g. alpha-v0.3); the updater compares it
      with the releases. Default: dev-<date>
@@ -374,87 +378,188 @@ detach_img_loops() {
 
 # OpenABL for first-time flashing from Android, staged on BOOT the way
 # Armada staged its ABL: openabl/<SoC>/ with the payload and root scripts,
-# plus OpenABL's license files. The tarball is kept in WORKDIR.
-ABL_SOCS=(SM8550 SM8650)
+# plus OpenABL's license files. The tarballs are kept in WORKDIR. Every SoC
+# gets the common release (PBOS_ABL_* in abl/release.env) unless that file
+# gives it a release of its own (PBOS_ABL_*_<SoC>).
+ABL_SOCS=(SM8550 SM8650 SM7750)
 ABL_SRC=""
 
-fetch_openabl() {
+# One SoC's release from abl/release.env: sets abl_own (1: not the common
+# release), abl_test (1: from the environment), abl_ver, abl_repo, abl_sha and
+# abl_local (a local tarball, or empty).
+abl_release() {
+  local soc="$1" v
+  abl_own=0 abl_test=0
+  abl_ver="${PBOS_ABL_VERSION}"
+  abl_repo="${PBOS_ABL_REPO:-OpenHandheldCollective/OpenABL}"
+  abl_sha="${PBOS_ABL_TARBALL_SHA256}"
+  abl_local="${ABL_TARBALL:-}"
+  v="PBOS_ABL_VERSION_${soc}"
+  if [[ -n "${!v+set}" ]]; then
+    abl_own=1
+    abl_ver="${!v}"
+    v="PBOS_ABL_REPO_${soc}"; abl_repo="${!v:-}"
+    v="PBOS_ABL_TARBALL_SHA256_${soc}"; abl_sha="${!v:-}"
+    v="ABL_TARBALL_${soc}"; abl_local="${!v:-}"
+    local tver tsha
+    v="ABL_VERSION_${soc}"; tver="${!v:-}"
+    v="ABL_SHA256_${soc}"; tsha="${!v:-}"
+    if [[ -z "${abl_ver}" || -z "${abl_sha}" || "${abl_ver}${abl_sha}" == *UNFILLED* ]]; then
+      [[ -n "${abl_local}" && -n "${tver}" && -n "${tsha}" ]] \
+        || die "${soc} OpenABL release is not filled in (PBOS_ABL_VERSION_${soc} and PBOS_ABL_TARBALL_SHA256_${soc} in abl/release.env, its row in abl/releases.tsv). Test image: set ABL_TARBALL_${soc}, ABL_VERSION_${soc} and ABL_SHA256_${soc}. No OpenABL at all: SKIP_ABL=1"
+      [[ ! "${PB_OS_VERSION}" =~ ^alpha-v[0-9.]+$ ]] \
+        || die "${soc}: a test OpenABL (ABL_TARBALL_${soc}) can't go into the release ${PB_OS_VERSION}"
+      abl_test=1 abl_ver="${tver}" abl_sha="${tsha}"
+    elif [[ -n "${tver}${tsha}" ]]; then
+      die "ABL_VERSION_${soc}/ABL_SHA256_${soc} are only for test images before abl/release.env has the ${soc} release"
+    fi
+    [[ "${abl_ver}" != "${PBOS_ABL_VERSION}" ]] \
+      || die "${soc} OpenABL needs a version of its own, not the common ${PBOS_ABL_VERSION}"
+  fi
+  [[ "${abl_ver}" =~ ^[A-Za-z0-9._+-]+$ && -n "${abl_repo}" && "${abl_sha}" =~ ^[0-9a-f]{64}$ ]] \
+    || die "abl/release.env: bad version, repository or tarball hash for ${soc}"
+}
+
+# Dies before the long build when a SoC's release isn't filled in.
+check_openabl_config() {
   [[ "${SKIP_ABL:-0}" == 1 ]] && return 0
-  local ver cache tarball soc payload approved size hash f
+  local soc abl_own abl_test abl_ver abl_repo abl_sha abl_local
   # shellcheck source=abl/release.env
   source "${ROOT}/abl/release.env"
-  ver="${PBOS_ABL_VERSION}"
-  cache="${WORKDIR}/openabl"
-  tarball="${ABL_TARBALL:-${cache}/openabl-v${ver}.tar.gz}"
+  for soc in "${ABL_SOCS[@]}"; do
+    abl_release "${soc}"
+    [[ "${abl_test}" == 1 ]] && continue
+    awk -F'\t' -v v="${abl_ver}" -v s="${soc}" '$1 == v && $2 == s { f = 1 } END { exit !f }' \
+      "${ROOT}/abl/releases.tsv" || die "abl/releases.tsv has no ${abl_ver} ${soc} row"
+  done
+}
+
+# The release abl_release set for ${soc}, downloaded if needed, checked and unpacked in $1.
+unpack_openabl() {
+  local src="$1" tarball f
+  tarball="${abl_local:-${WORKDIR}/openabl/openabl-v${abl_ver}.tar.gz}"
   if [[ ! -f "${tarball}" ]]; then
-    log "Downloading OpenABL v${ver}"
-    mkdir -p "${cache}"
+    [[ "${abl_test}" == 0 ]] || die "no ${tarball}"
+    log "Downloading OpenABL v${abl_ver}"
+    mkdir -p "${WORKDIR}/openabl"
     curl --connect-timeout 30 --retry 3 -fsSL -o "${tarball}.part" \
-      "https://github.com/${PBOS_ABL_REPO:-OpenHandheldCollective/OpenABL}/releases/download/v${ver}/openabl-v${ver}.tar.gz" \
-      || die "OpenABL v${ver} download failed (set ABL_TARBALL or SKIP_ABL=1)"
+      "https://github.com/${abl_repo}/releases/download/v${abl_ver}/openabl-v${abl_ver}.tar.gz" \
+      || die "OpenABL v${abl_ver} download failed (set ABL_TARBALL$([[ "${abl_own}" == 1 ]] && printf '_%s' "${soc}") or SKIP_ABL=1)"
     mv "${tarball}.part" "${tarball}"
   fi
-  [[ "$(sha256sum "${tarball}" | cut -d' ' -f1)" == "${PBOS_ABL_TARBALL_SHA256}" ]] \
-    || die "${tarball} does not match PBOS_ABL_TARBALL_SHA256 in abl/release.env"
-  ABL_SRC="${cache}/v${ver}"
+  [[ "$(sha256sum "${tarball}" | cut -d' ' -f1)" == "${abl_sha}" ]] \
+    || die "${tarball} does not match the OpenABL v${abl_ver} tarball hash (abl/release.env)"
+  rm -rf "${src}"
+  mkdir -p "${src}"
+  tar -xzf "${tarball}" -C "${src}" --strip-components=1
+  for f in LICENSE LICENSES LICENSES.md; do
+    [[ -e "${src}/${f}" ]] || die "OpenABL v${abl_ver} tarball has no ${f}"
+  done
+}
+
+# Collects the checked releases in ABL_SRC: releases.tsv, the common
+# release's license files, and <SoC>/ with the payload, its .sha256, VERSION
+# and, for a SoC with its own release, that release's license files.
+fetch_openabl() {
+  [[ "${SKIP_ABL:-0}" == 1 ]] && return 0
+  local cache="${WORKDIR}/openabl" soc src payload approved size hash f other unpacked=" "
+  local abl_own abl_test abl_ver abl_repo abl_sha abl_local
+  # shellcheck source=abl/release.env
+  source "${ROOT}/abl/release.env"
+  ABL_SRC="${cache}/staged"
   rm -rf "${ABL_SRC}"
   mkdir -p "${ABL_SRC}"
-  tar -xzf "${tarball}" -C "${ABL_SRC}" --strip-components=1
-  for f in LICENSE LICENSES LICENSES.md; do
-    [[ -e "${ABL_SRC}/${f}" ]] || die "OpenABL tarball has no ${f}"
-  done
+  cp "${ROOT}/abl/releases.tsv" "${ABL_SRC}/releases.tsv"
   for soc in "${ABL_SOCS[@]}"; do
-    approved="$(awk -F'\t' -v v="${ver}" -v s="${soc}" \
-      '$1 == v && $2 == s { print $3, $4 }' "${ROOT}/abl/releases.tsv")"
-    [[ -n "${approved}" ]] || die "abl/releases.tsv has no ${ver} ${soc} row"
+    abl_release "${soc}"
+    src="${cache}/v${abl_ver}"
+    if [[ "${unpacked}" != *" ${abl_ver} "* ]]; then
+      unpack_openabl "${src}"
+      unpacked+="${abl_ver} "
+    fi
+    payload="${src}/${soc}/abl_signed-${soc}.elf"
+    [[ -f "${payload}" ]] || die "OpenABL v${abl_ver} tarball has no ${soc}/abl_signed-${soc}.elf"
+    if [[ "${abl_test}" == 1 ]]; then
+      # Not in abl/releases.tsv: the tarball's hash vouches for it.
+      log "TEST OpenABL v${abl_ver} for ${soc}: not a release"
+      printf '%s\t%s\t%s\t%s\n' "${abl_ver}" "${soc}" "$(stat -c %s "${payload}")" \
+        "$(sha256sum "${payload}" | cut -d' ' -f1)" >>"${ABL_SRC}/releases.tsv"
+    fi
+    approved="$(awk -F'\t' -v v="${abl_ver}" -v s="${soc}" \
+      '$1 == v && $2 == s { print $3, $4 }' "${ABL_SRC}/releases.tsv")"
+    [[ -n "${approved}" ]] || die "abl/releases.tsv has no ${abl_ver} ${soc} row"
     read -r size hash <<<"${approved}"
-    payload="${ABL_SRC}/${soc}/abl_signed-${soc}.elf"
-    [[ -f "${payload}" ]] || die "OpenABL tarball has no ${soc}/abl_signed-${soc}.elf"
     [[ "$(stat -c %s "${payload}")" == "${size}" ]] \
       || die "${soc} ABL size does not match abl/releases.tsv"
     [[ "$(sha256sum "${payload}" | cut -d' ' -f1)" == "${hash}" ]] \
       || die "${soc} ABL hash does not match abl/releases.tsv"
     [[ "$(cut -d' ' -f1 "${payload}.sha256")" == "${hash}" ]] \
       || die "${soc} ABL .sha256 in the tarball does not match abl/releases.tsv"
+    other="$(awk -F'\t' -v h="${hash}" -v s="${soc}" '$4 == h && $2 != s { print $2; exit }' "${ABL_SRC}/releases.tsv")"
+    [[ -z "${other}" ]] || die "${soc} and ${other} have the same payload in abl/releases.tsv"
+    mkdir -p "${ABL_SRC}/${soc}"
+    cp "${payload}" "${payload}.sha256" "${ABL_SRC}/${soc}/"
+    printf '%s\n' "${abl_ver}" >"${ABL_SRC}/${soc}/VERSION"
+    if [[ "${abl_own}" == 1 ]]; then
+      cp -R "${src}/LICENSE" "${src}/LICENSES.md" "${src}/LICENSES" "${ABL_SRC}/${soc}/"
+    elif [[ ! -e "${ABL_SRC}/LICENSE" ]]; then
+      cp -R "${src}/LICENSE" "${src}/LICENSES.md" "${src}/LICENSES" "${ABL_SRC}/"
+    fi
+    log "OpenABL v${abl_ver} verified (${soc})"
   done
-  log "OpenABL v${ver} verified (${ABL_SOCS[*]})"
+}
+
+# OpenABL's license files from $1 to $2 (both the top folder and a SoC's).
+install_openabl_licenses() {
+  local f
+  sudo_run install -d "$2/LICENSES"
+  sudo_run install -m0644 "$1/LICENSE" "$1/LICENSES.md" "$2/"
+  for f in "$1"/LICENSES/*; do
+    sudo_run install -m0644 "${f}" "$2/LICENSES/"
+  done
 }
 
 # The same payloads in the root filesystem, so update packages carry them too:
 # the PB-OS tab's boot-menu update (pbos-qamd notices section) installs them
-# from there, checked against releases.tsv's hashes.
+# from there, checked against releases.tsv's hashes. VERSION is the common
+# release's, <SoC>/VERSION each SoC's.
 install_openabl_rootfs() {
   [[ -n "${ABL_SRC}" ]] || return 0
-  local dst="${R}/usr/share/pb-os/openabl" soc f
+  local dst="${R}/usr/share/pb-os/openabl" soc
   sudo_run rm -rf "${dst}"
-  sudo_run install -d "${dst}/LICENSES"
+  sudo_run install -d "${dst}"
   printf '%s\n' "${PBOS_ABL_VERSION}" | sudo_run tee "${dst}/VERSION" >/dev/null
-  sudo_run install -m0644 "${ROOT}/abl/releases.tsv" "${ABL_SRC}/LICENSE" "${ABL_SRC}/LICENSES.md" "${dst}/"
-  for f in "${ABL_SRC}"/LICENSES/*; do
-    sudo_run install -m0644 "${f}" "${dst}/LICENSES/"
-  done
+  sudo_run install -m0644 "${ABL_SRC}/releases.tsv" "${dst}/"
+  install_openabl_licenses "${ABL_SRC}" "${dst}"
   for soc in "${ABL_SOCS[@]}"; do
     sudo_run install -d "${dst}/${soc}"
-    sudo_run install -m0644 "${ABL_SRC}/${soc}/abl_signed-${soc}.elf" "${dst}/${soc}/"
+    sudo_run install -m0644 "${ABL_SRC}/${soc}/abl_signed-${soc}.elf" "${ABL_SRC}/${soc}/VERSION" "${dst}/${soc}/"
+    if [[ -e "${ABL_SRC}/${soc}/LICENSE" ]]; then
+      install_openabl_licenses "${ABL_SRC}/${soc}" "${dst}/${soc}"
+    fi
   done
 }
 
 stage_openabl() {
   [[ -n "${ABL_SRC}" ]] || return 0
-  local dst="${MNT}/boot/openabl" soc d s f
-  # vfat cannot store Unix owner/mode, so install/tee rather than cp -a.
-  sudo_run install -d "${dst}" "${dst}/LICENSES"
-  sed "s/%VERSION%/${PBOS_ABL_VERSION}/g" "${ROOT}/abl/README" \
-    | sudo_run tee "${dst}/README" >/dev/null
-  sudo_run install -m0644 "${ABL_SRC}/LICENSE" "${ABL_SRC}/LICENSES.md" "${dst}/"
-  for f in "${ABL_SRC}"/LICENSES/*; do
-    sudo_run install -m0644 "${f}" "${dst}/LICENSES/"
+  local dst="${MNT}/boot/openabl" soc d s
+  local -a subst=(-e "s/%VERSION%/${PBOS_ABL_VERSION}/g")
+  for soc in "${ABL_SOCS[@]}"; do
+    subst+=(-e "s/%VERSION_${soc}%/$(<"${ABL_SRC}/${soc}/VERSION")/g")
   done
+  # vfat cannot store Unix owner/mode, so install/tee rather than cp -a.
+  sudo_run install -d "${dst}"
+  sed "${subst[@]}" "${ROOT}/abl/README" \
+    | sudo_run tee "${dst}/README" >/dev/null
+  install_openabl_licenses "${ABL_SRC}" "${dst}"
   for soc in "${ABL_SOCS[@]}"; do
     d="${dst}/${soc}"
     sudo_run install -d "${d}"
     sudo_run install -m0644 "${ABL_SRC}/${soc}/abl_signed-${soc}.elf" \
       "${ABL_SRC}/${soc}/abl_signed-${soc}.elf.sha256" "${d}/"
+    if [[ -e "${ABL_SRC}/${soc}/LICENSE" ]]; then
+      install_openabl_licenses "${ABL_SRC}/${soc}" "${d}"
+    fi
     for s in flash_abl backup_abl restore_backup_abl; do
       sed "s/%DEVICE%/${soc}/g" "${ROOT}/abl/${s}.sh.template" \
         | sudo_run tee "${d}/${s}.sh" >/dev/null
@@ -647,6 +752,7 @@ EOF
   log "Flash: sudo dd if='${IMG}' of=/dev/sdX bs=4M status=progress conv=fsync"
 }
 
+check_openabl_config
 if [[ "$IMAGE_ONLY" -eq 0 ]]; then
   ensure_official_rootfs
   apply_mods
