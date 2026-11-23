@@ -381,6 +381,9 @@ detach_img_loops() {
 # Armada staged its ABL: openabl/<SoC>/ with the payload and root scripts,
 # plus OpenABL's license files. The tarball is kept in WORKDIR.
 ABL_SOCS=(SM8550 SM8650 SM7750)
+# The SoCs with a folder on the card. Not the Retroid Pocket Duo's: it is
+# flashed only with PB-OS Installer (no known way to repair a bad flash there).
+ABL_CARD_SOCS=(SM8550 SM8650)
 ABL_SRC=""
 
 # The release's payload for a SoC, from a releases.tsv: "<size> <sha256>" (a
@@ -405,15 +408,9 @@ openabl_test_version() {
   [[ "${PB_OS_VERSION}" == dev-* || ("${PB_OS_VERSION}" == *test* && "${PB_OS_VERSION}" != *latest*) ]]
 }
 
-# The release's tag: of OpenABL-PB (the fork's v1.2 is another build) and of
-# this version, and not a placeholder.
+# The release's tag, e.g. pb-v1.2 (the fork's v1.2 is another build).
 openabl_tag_ok() {
-  local t version="${PBOS_ABL_NAME##* }"
-  t="$(tr 'A-Z' 'a-z' <<<"$1")"
-  [[ "$t" =~ ^[a-z0-9][a-z0-9._-]*$ && "$t" == *pb* && "$t" == *"${version}"* ]] || return 1
-  case "$t" in
-    *unfilled* | *todo* | *tbd* | *fixme* | *xxx* | *placeholder* | *test* | *example*) return 1 ;;
-  esac
+  [[ "$1" == "pb-v${PBOS_ABL_NAME##* }" ]]
 }
 
 # Dies before the long build when the release isn't filled in: ABL_TEST=1 for a
@@ -452,7 +449,7 @@ check_openabl_config() {
   done < <(awk -F'\t' -v v="${PBOS_ABL_NAME}" '$1 "" != v "" && $4 ~ /^[0-9a-f]+$/ && length($4) == 64 { print $4 }' "${ROOT}/abl/releases.tsv")
   if ((unfilled)); then
     openabl_test_version \
-      || die "${PBOS_ABL_NAME} is not filled in: PBOS_ABL_TAG (of the OpenABL-PB release) and PBOS_ABL_TARBALL_SHA256 in abl/release.env, its rows in abl/releases.tsv, abl/payloads.pin. A test tarball or SKIP_ABL=1 can't go into ${PB_OS_VERSION}: only dev-* and *test* versions"
+      || die "${PBOS_ABL_NAME} is not filled in: PBOS_ABL_TAG (pb-v${PBOS_ABL_NAME##* }) and PBOS_ABL_TARBALL_SHA256 in abl/release.env, its rows in abl/releases.tsv, abl/payloads.pin. A test tarball or SKIP_ABL=1 can't go into ${PB_OS_VERSION}: only dev-* and *test* versions"
     [[ -n "${ABL_TARBALL:-}" && -f "${ABL_PAYLOADS:-}" ]] && openabl_filled "1 ${ABL_TARBALL_SHA256:-}" \
       || die "${PBOS_ABL_NAME} is not filled in (abl/release.env, releases.tsv, payloads.pin). Test image: ABL_TARBALL, ABL_TARBALL_SHA256 and ABL_PAYLOADS, or SKIP_ABL=1"
     for soc in "${ABL_SOCS[@]}"; do
@@ -554,7 +551,7 @@ stage_openabl() {
   for f in "${ABL_SRC}"/LICENSES/*; do
     sudo_run install -m0644 "${f}" "${dst}/LICENSES/"
   done
-  for soc in "${ABL_SOCS[@]}"; do
+  for soc in "${ABL_CARD_SOCS[@]}"; do
     d="${dst}/${soc}"
     sudo_run install -d "${d}"
     sudo_run install -m0644 "${ABL_SRC}/${soc}/abl_signed-${soc}.elf" \

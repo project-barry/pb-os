@@ -15,7 +15,6 @@ chip="$(getprop ro.soc.model 2>/dev/null)" || chip="unreadable"
 case "%DEVICE%:$chip" in
   SM8550:SM8550* | SM8550:QCS8550*) ;;
   SM8650:SM8650* | SM8650:QCS8650* | "SM8650:no model, platform pineapple") ;;
-  SM7750:SM7750* | SM7750:CQ7790*) ;;
   *)
     echo "This is the folder for %DEVICE%, but this device's chip is: $chip. Use the folder for your chip (see README). Nothing written." >&2
     exit 1
@@ -31,6 +30,12 @@ bytes=%SIZE%
 # Both slots must be partitions.
 part() { echo "/dev/block/by-name/abl_$1"; }
 part_size() { wc -c <"$(part "$1")" | tr -d ' '; }
+# Makes the next read come from the storage, not from memory.
+reread() {
+  sync
+  blockdev --flushbufs "$1" 2>/dev/null
+  { echo 3 >/proc/sys/vm/drop_caches; } 2>/dev/null
+}
 for s in a b; do
   if [ ! -b "$(part $s)" ]; then
     echo "The partition abl_$s wasn't found. Nothing written." >&2
@@ -49,6 +54,7 @@ done
 
 # And of what is in the slot now, before the first write.
 for s in a b; do
+  reread "$(part $s)"
   if ! cmp -s "$dir/abl_$s.img" "$(part $s)"; then
     echo "abl_$s.img is not what abl_$s holds now. After a failed flash: run restore_backup_abl.sh. Otherwise copy the old backups somewhere safe and run backup_abl.sh again. Nothing written." >&2
     exit 1
@@ -71,10 +77,11 @@ case "$(getprop ro.boot.slot_suffix 2>/dev/null)" in
   *) order="b a" ;;
 esac
 for s in $order; do
-  dd if="$elf" of="$(part $s)" bs=1M || {
+  dd if="$elf" of="$(part $s)" bs=1M conv=fsync || {
     echo "abl_$s couldn't be written. Do not reboot: run restore_backup_abl.sh." >&2
     exit 1
   }
+  reread "$(part $s)"
   if [ "$(head -c "$bytes" "$(part $s)" | sha256sum | cut -d' ' -f1)" != "$want" ]; then
     echo "abl_$s read back wrong. Do not reboot: run restore_backup_abl.sh." >&2
     exit 1

@@ -14,7 +14,6 @@ chip="$(getprop ro.soc.model 2>/dev/null)" || chip="unreadable"
 case "%DEVICE%:$chip" in
   SM8550:SM8550* | SM8550:QCS8550*) ;;
   SM8650:SM8650* | SM8650:QCS8650* | "SM8650:no model, platform pineapple") ;;
-  SM7750:SM7750* | SM7750:CQ7790*) ;;
   *)
     echo "This is the folder for %DEVICE%, but this device's chip is: $chip. Use the folder for your chip (see README). Nothing written." >&2
     exit 1
@@ -26,6 +25,12 @@ dir="/sdcard/openabl/%DEVICE%"
 # Both slots must be partitions.
 part() { echo "/dev/block/by-name/abl_$1"; }
 part_size() { wc -c <"$(part "$1")" | tr -d ' '; }
+# Makes the next read come from the storage, not from memory.
+reread() {
+  sync
+  blockdev --flushbufs "$1" 2>/dev/null
+  { echo 3 >/proc/sys/vm/drop_caches; } 2>/dev/null
+}
 for s in a b; do
   if [ ! -b "$(part $s)" ]; then
     echo "The partition abl_$s wasn't found. Nothing written." >&2
@@ -45,8 +50,8 @@ for s in a b; do
   [ -n "$size" ] && [ "$size" != 0 ] || bad "abl_$s can't be read"
   dd if="$(part $s)" of="$dir/abl_$s.img.new" bs=1M || bad "abl_$s can't be saved"
 done
-sync
 for s in a b; do
+  reread "$(part $s)"
   [ "$(wc -c <"$dir/abl_$s.img.new" | tr -d ' ')" = "$(part_size $s)" ] || bad "The backup of abl_$s is incomplete"
   cmp "$dir/abl_$s.img.new" "$(part $s)" || bad "The backup does not match abl_$s"
 done

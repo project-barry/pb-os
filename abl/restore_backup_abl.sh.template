@@ -13,7 +13,6 @@ chip="$(getprop ro.soc.model 2>/dev/null)" || chip="unreadable"
 case "%DEVICE%:$chip" in
   SM8550:SM8550* | SM8550:QCS8550*) ;;
   SM8650:SM8650* | SM8650:QCS8650* | "SM8650:no model, platform pineapple") ;;
-  SM7750:SM7750* | SM7750:CQ7790*) ;;
   *)
     echo "This is the folder for %DEVICE%, but this device's chip is: $chip. Use the folder for your chip (see README). Nothing written." >&2
     exit 1
@@ -25,6 +24,12 @@ dir="/sdcard/openabl/%DEVICE%"
 # Both slots must be partitions.
 part() { echo "/dev/block/by-name/abl_$1"; }
 part_size() { wc -c <"$(part "$1")" | tr -d ' '; }
+# Makes the next read come from the storage, not from memory.
+reread() {
+  sync
+  blockdev --flushbufs "$1" 2>/dev/null
+  { echo 3 >/proc/sys/vm/drop_caches; } 2>/dev/null
+}
 for s in a b; do
   if [ ! -b "$(part $s)" ]; then
     echo "The partition abl_$s wasn't found. Nothing written." >&2
@@ -46,7 +51,10 @@ case "$(getprop ro.boot.slot_suffix 2>/dev/null)" in
   *) order="b a" ;;
 esac
 for s in $order; do
-  if ! dd if="$dir/abl_$s.img" of="$(part $s)" bs=1M || ! cmp "$dir/abl_$s.img" "$(part $s)"; then
+  dd if="$dir/abl_$s.img" of="$(part $s)" bs=1M conv=fsync
+  written=$?
+  reread "$(part $s)"
+  if [ "$written" != 0 ] || ! cmp "$dir/abl_$s.img" "$(part $s)"; then
     echo "abl_$s read back wrong: run restore_backup_abl.sh again before rebooting." >&2
     exit 1
   fi

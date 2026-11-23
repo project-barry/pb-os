@@ -17,13 +17,13 @@ Flashing the wrong ABL can brick the device. Match the SoC carefully:
 
   SM8550 - Retroid Pocket 6, Retroid Pocket Nova, AYN Thor
   SM8650 - KONKR Pocket FIT (8 Gen 3)
-  SM7750 - Retroid Pocket Duo
 
 The scripts check the chip first and do nothing on another one.
 
-Retroid Pocket Duo: there is no known way to repair a wrong or damaged ABL
-(no EDL programmer). Its two stock slots differ, so keep both backups safe,
-and don't interrupt flash_abl.sh or power off before it has finished.
+Retroid Pocket Duo (SM7750): flash it only with the PB-OS Installer app. There
+is no folder for it here, and no known way to repair a wrong or damaged ABL on
+it (no EDL programmer). Its two stock slots differ, so keep both backups the
+app makes, and don't power off before it says it has finished.
 
 1. Copy the openabl folder from this card to the root of Android
    internal storage.
