@@ -63,9 +63,7 @@ DTBS_SM8550="qcs8550-ayn-odin2 qcs8550-ayn-odin2mini qcs8550-ayn-odin2portal qcs
 # Retroid Pocket Duo (SM7750 "Eliza", Retroid's DTS from retroid/patches
 # 0070/0071), SOC=all only (DUO=0 leaves it out). Appended to KERNEL like the
 # others (OpenABL runs on the Duo; its boot entry and Device model take the
-# DTB from there), and also packed into a boot image of its own,
-# boot/KERNEL-rpduo (header v2 with the Duo DTB), for `fastboot boot` through
-# the stock ABL (sm7750/dts adds the IDs that ABL matches).
+# DTB from there).
 DTBS_SM7750="eliza-retroidpocket-rpduo"
 case "$SOC" in
   sm8650) SOCS=(SM8650); PORT_DIRS=("${HERE}"); DTBS="${DTBS:-$DTBS_SM8650}" ;;
@@ -522,20 +520,6 @@ pack_kernel_img() {
   md5sum "$out" | awk '{print $1"  KERNEL"}' >"$(dirname "$out")/KERNEL.md5"
 }
 
-# Retroid Pocket Duo: boot image for its stock ABL (`fastboot boot`): header
-# v2, the Duo DTB in the dtb section, the same initramfs and cmdline as
-# KERNEL. The image builder patches the real root in, as for KERNEL.
-pack_duo_img() {
-  local out="$1" img="${SRC}/arch/arm64/boot/Image" payload cmdline
-  payload="$(mktemp)"
-  gzip -9 -n -c "$img" >"$payload"
-  cmdline="$(SOC="$SOC" bash -c "source '${HERE}/cmdline.sh'; build_cmdline 00000000-02")"
-  python3 "${HERE}/mkbootimg-v0.py" --kernel "$payload" --ramdisk "$INITRD" \
-    --dtb "${SRC}/arch/arm64/boot/dts/qcom/${DTBS_SM7750}.dtb" \
-    --cmdline "$cmdline" --out "$out"
-  rm -f "$payload"
-}
-
 install_output() {
   local o="${OUT_BASE}/${KREL}"
   rm -rf "$o"
@@ -569,7 +553,6 @@ install_output() {
   cp "${SRC}/.config" "$o/config-${KREL}"
   cp "${SRC}/System.map" "$o/System.map-${KREL}"
   pack_kernel_img "$o/boot/KERNEL"
-  ((DUO)) && pack_duo_img "$o/boot/KERNEL-rpduo"
   ln -sfn "$KREL" "${OUT_BASE}/current"
   log "done: $o"
   ls -la "$o/boot" >&2
@@ -582,7 +565,6 @@ main() {
     [[ -d "$OUT_BASE/$KREL" ]] || die "no previously built kernel output"
     build_initramfs
     pack_kernel_img "$OUT_BASE/$KREL/boot/KERNEL"
-    ((DUO)) && pack_duo_img "$OUT_BASE/$KREL/boot/KERNEL-rpduo"
     log "repacked initramfs: $OUT_BASE/$KREL/boot/KERNEL"
     return
   fi

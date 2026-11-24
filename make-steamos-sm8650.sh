@@ -700,12 +700,6 @@ EOF
   # vfat cannot store Unix owner/mode — cp -a fails with EPERM
   sudo_run install -m0644 "${ktmp}" "${MNT}/boot/KERNEL"
   sudo_run bash -c "cd '${MNT}/boot' && md5sum KERNEL > KERNEL.md5"
-  # Retroid Pocket Duo: no OpenABL for its SoC, so it boots its own image
-  # through the stock ABL (`fastboot boot KERNEL-rpduo`, see README.txt).
-  if [[ -f "${KOUT}/boot/KERNEL-rpduo" ]]; then
-    repack_kernel_partuuid "${KOUT}/boot/KERNEL-rpduo" "${ktmp}" "${disk_id}-02"
-    sudo_run install -m0644 "${ktmp}" "${MNT}/boot/KERNEL-rpduo"
-  fi
   rm -f "${ktmp}"
   # OpenABL boot entry: the same kernel, initrd, cmdline and DTBs as KERNEL,
   # started through the EFI stub (OpenABL newer than 1.2 boots nothing else;
@@ -737,8 +731,6 @@ OpenABL menu (hold Volume Down at power-on): Device model -> your exact
 model (e.g. "AYN Thor", "Retroid Pocket Nova", "KONKR Pocket FIT",
 "Retroid Pocket Duo"), Boot mode -> Linux, Start.
 First time on this device? Flash OpenABL from Android: openabl/README.
-Retroid Pocket Duo with its stock bootloader: bootloader unlocked, card in,
-then from a computer in fastboot mode: fastboot boot KERNEL-rpduo
 EOF
 
   sync
