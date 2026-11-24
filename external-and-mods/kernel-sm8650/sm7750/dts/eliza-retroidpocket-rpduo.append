@@ -1,6 +1,7 @@
 /*
  * pb-os: boot through the Duo's STOCK Qualcomm ABL (`fastboot boot
- * KERNEL-rpduo`; there is no OpenABL for SM7750). Tested 2026-11-20.
+ * KERNEL-rpduo`). Tested 2026-11-20. (Through OpenABL the DTB is used as
+ * is: no overlay, nothing below gets in the way. Tested 2026-11-22.)
  *
  * DTB match (LocateDeviceTree.c GetSocDtb): a DTB is dropped unless one
  * qcom,msm-id entry has the chip id in its low 16 bits, so this lists every
@@ -27,11 +28,14 @@
  * The labels list was read from the stock vendor_boot DTBs (label names only).
  */
 / {
+	/* Retroid's DTS writes "RetroidPocket Duo"; their RP6 and Nova DTS
+	 * say "Retroid Pocket 6" / "Retroid Pocket Nova". */
+	model = "Retroid Pocket Duo";
 	qcom,msm-id = <659 0x10000>, <731 0x10000>, <732 0x10000>;
 	qcom,board-id = <0 0>;
 
 	abl-dtbo-sink {
-		pbos,model = "RetroidPocket Duo";
+		pbos,model = "Retroid Pocket Duo";
 		pbos,compatible = "retroidpocket,rpduo", "qcom,eliza";
 	};
 
@@ -2429,4 +2433,15 @@
 
 &{/thermal-zones/gpuss1-thermal} {
 	/delete-node/ cooling-maps;
+};
+
+/*
+ * pb-os: the controller MCU's joystick frame (SET_PAR 0x01) is 10,4 on the
+ * Duo, the value stock Android's librsinput sends; ROCKNIX's driver default
+ * 40,7 stays for the RP6 and Nova. Read by all/patches/0566 (it used to be
+ * rsinput.mcu_frame on the Duo's own cmdline; the OpenABL boot entry is now
+ * shared by every device).
+ */
+&gamepad {
+	mcu-frame = <10 4>;
 };

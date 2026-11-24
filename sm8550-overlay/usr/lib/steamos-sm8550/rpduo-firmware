@@ -66,10 +66,10 @@ WANTED = {
     "qca/ornnv10.bin": ["ornnv10.bin"],
     # Video codec (iris): the kernel asks for vpu30_p2, stock's is vpu30_2v.
     "qcom/vpu/vpu30_p2.mbn": ["vpu30_2v.mbn", "vpu30_2v.mdt"],
-    # The unit's own addresses (persist): without them Wi-Fi and Bluetooth
-    # use Qualcomm's default 00:03:7f:..., the same on every Duo.
+    # The unit's own Wi-Fi address (persist): without it the kernel makes one
+    # from the SoC serial (00:03:7f:...). Bluetooth keeps the kernel's: btqca
+    # sets it at every setup, so one set from userspace is lost.
     "rpduo-persist/wlan_mac.bin": ["wlan_mac.bin"],
-    "rpduo-persist/quec_bt_mac": ["quec_bt_mac"],
     # The unit's factory stick calibration (FactoryTest writes it).
     "rpduo-persist/joys": ["retrostation/joys"],
 }
@@ -80,7 +80,6 @@ WANTED = {
 PERSIST_ONLY = {
     "ath12k/WCN7750/hw1.0/board.bin",
     "rpduo-persist/wlan_mac.bin",
-    "rpduo-persist/quec_bt_mac",
     "rpduo-persist/joys",
 }
 # Bumped when WANTED or the sources change: everything is copied again once
@@ -544,23 +543,6 @@ def wlan_link():
         log(f"Wi-Fi address: {e}")
 
 
-def bt_address():
-    """Bluetooth: the controller forgets it, so set it on every boot."""
-    mac = read_mac(FWROOT / "rpduo-persist/quec_bt_mac", r"((?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2})")
-    if not mac or not Path("/sys/class/bluetooth/hci0").exists():
-        return
-    info = run("btmgmt", "-i", "hci0", "info", check=False, timeout=5).stdout.lower()
-    if f"addr {mac}" in info:
-        return
-    current = next((ln for ln in info.splitlines() if "current settings:" in ln), "")
-    powered = "powered" in current.split()
-    run("btmgmt", "-i", "hci0", "power", "off", check=False, timeout=5)
-    r = run("btmgmt", "-i", "hci0", "public-addr", mac, check=False, timeout=5)
-    if powered:
-        run("btmgmt", "-i", "hci0", "power", "on", check=False, timeout=5)
-    log("Bluetooth address set from persist" if r.returncode == 0 else "Bluetooth address: btmgmt failed")
-
-
 STICK_PARAMS = Path("/sys/module/rsinput/parameters")
 STICKS = (("left_x", "leftx"), ("left_y", "lefty"), ("right_x", "rightx"), ("right_y", "righty"))
 
@@ -651,9 +633,6 @@ def rebind_bluetooth():
 def main():
     if b"retroidpocket,rpduo" not in Path("/proc/device-tree/compatible").read_bytes():
         return 0
-    if "--bt-address" in sys.argv[1:]:
-        bt_address()
-        return 0
     copied = collect("--force" in sys.argv[1:])
     acf = FWROOT / RP / "aw883xx_acf.bin"
     if acf.exists():
@@ -666,10 +645,6 @@ def main():
     if any(c.startswith("qca/") for c in copied):
         rebind_bluetooth()
         time.sleep(3)  # hci0 sets up again
-    # btmgmt can wait on the controller for a long time: set the Bluetooth
-    # address in a job of its own, off the boot's critical path.
-    run("systemd-run", "--no-block", "--collect", "--unit=rpduo-bt-address",
-        str(Path(sys.argv[0]).resolve()), "--bt-address", check=False, timeout=10)
     return 0
 
 

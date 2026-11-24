@@ -92,6 +92,9 @@ patch_kernel() {
   (cd "${tmp}" && md5sum KERNEL > KERNEL.md5)
   verify_ufs_rocknix_kernel_cmdline "${tmp}/KERNEL" \
     || die "KERNEL cmdline still wrong after repair"
+  # OpenABL's boot entry from the same KERNEL (newer OpenABL boots only it).
+  python3 -I /usr/share/pbos-update/pbos-update.py boot-entry --boot "${tmp}" >/dev/null \
+    || die "Failed to write the boot entry"
   log "ROCKNIX KERNEL: $(describe_kernel_root "${tmp}/KERNEL")"
 }
 

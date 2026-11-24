@@ -1,10 +1,12 @@
-OpenABL (https://github.com/OpenHandheldCollective/OpenABL), v%VERSION% from
-the PB-OS fork (https://github.com/project-barry/OpenABL): upstream v1.1 plus a
-fix for an intermittent hang on the logo before the kernel starts.
+%NAME%, PB-OS's own build of OpenABL
+(https://github.com/OpenHandheldCollective/OpenABL), from the PB-OS fork
+(https://github.com/project-barry/OpenABL). It is a modified version of upstream
+v1.2: support for the SM7750 (Retroid Pocket Duo), its own name, and the rest of
+the fix for an intermittent hang on the logo before the kernel starts. It isn't
+an upstream release: report problems with it to PB-OS.
 GPL-3.0-or-later, Copyright (C) 2026-present Open Handheld Collective.
 LICENSE, LICENSES/ and LICENSES.md in this folder are OpenABL's.
-Source: openabl-v%VERSION%-source.tar.xz on
-https://github.com/project-barry/OpenABL/releases/tag/v%VERSION%
+Source: %SOURCE%
 The scripts follow ROCKNIX's OpenABL scripts (GPL-2.0, ROCKNIX contributors);
 the per-SoC folders follow Armada (https://github.com/armada-os/armada).
 
@@ -16,20 +18,28 @@ Flashing the wrong ABL can brick the device. Match the SoC carefully:
   SM8550 - Retroid Pocket 6, Retroid Pocket Nova, AYN Thor
   SM8650 - KONKR Pocket FIT (8 Gen 3)
 
+The scripts check the chip first and do nothing on another one.
+
+Retroid Pocket Duo (SM7750): flash it only with the PB-OS Installer app. There
+is no folder for it here, and no known way to repair a wrong or damaged ABL on
+it (no EDL programmer). Its two stock slots differ, so keep both backups the
+app makes, and don't power off before it says it has finished.
+
 1. Copy the openabl folder from this card to the root of Android
    internal storage.
 
 2. In Android settings, use "Run script as root": browse to your SoC's
    folder (e.g. openabl/SM8550) and run backup_abl.sh. It saves both
-   slots as abl_a.img and abl_b.img in that folder and checks them.
+   slots as abl_a.img and abl_b.img in that folder and checks them. It
+   replaces earlier backups there: copy those somewhere safe first.
 
 3. Copy abl_a.img and abl_b.img to your PC and keep them.
    restore_backup_abl.sh puts them back if you ever want the old ABL.
    Going back to ROCKNIX ABL: set the device model and boot mode again
    in its menu (OpenABL moves those settings out of ROCKNIX's storage).
 
-4. Run flash_abl.sh the same way. It needs the backups from step 2,
-   writes both slots and reads each one back. If it reports an error,
+4. Run flash_abl.sh the same way. It needs backups from step 2 that match
+   what is in the slots now, writes both slots and reads each one back. If it reports an error,
    don't reboot: run restore_backup_abl.sh.
 
 5. Power on holding Volume Down to open the OpenABL menu

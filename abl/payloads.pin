@@ -1,0 +1,7 @@
+# The payloads of abl/release.env's release: <SoC> <size> <sha256>, taken from
+# the machine that built them (build/out/*.sha256), never from the release's
+# tarball, so a payload changed or swapped on the way fails the image build. The
+# rows in releases.tsv must say the same.
+SM8550 532480 8059e73aec1d6349fdd58ccab60d1f003cecf07c0b0a378108200e66254c242a
+SM8650 532480 3ad73fd935d2a95f5128f3f4f74c6bc297f548a2dc62d2fabb71198752233f01
+SM7750 532480 125448c6a8b8d24b60dca7868ce53782b3ca114f0d4f3f1044856afc2579f52d

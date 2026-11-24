@@ -92,13 +92,14 @@ SIGNER, NAMESPACE = 'pb-os-release', 'pb-os-update'
 # releases had one image per SoC, and each device still takes its own SoC's
 # earlier names (never another SoC's): 'sm8550' (named 'rp6' before alpha
 # v0.5.2) for the Retroid Pocket 6, Nova and AYN Thor, 'pocketfit' for the
-# SM8650 handhelds. The AYN Odin 2, Odin 2 Mini and Odin 2 Portal came with the
-# one image: no earlier names.
+# SM8650 handhelds. The AYN Odin 2, Odin 2 Mini, Odin 2 Portal and Retroid
+# Pocket Duo came with the one image: no earlier names.
 IMAGE = 'pb-os'
 OLD_NAMES = {'KONKR Pocket FIT': ('pocketfit',), 'AYANEO Pocket S2': ('pocketfit',),
              'Retroid Pocket 6': ('sm8550', 'rp6'), 'Retroid Pocket 6 TOP-DPAD': ('sm8550', 'rp6'),
              'Retroid Pocket Nova': ('sm8550', 'rp6'), 'AYN Thor': ('sm8550', 'rp6'),
-             'AYN Odin 2': (), 'AYN Odin 2 Mini': (), 'AYN Odin 2 Portal': ()}
+             'AYN Odin 2': (), 'AYN Odin 2 Mini': (), 'AYN Odin 2 Portal': (),
+             'Retroid Pocket Duo': ()}
 
 
 # Ed25519 (RFC 8032), small and slow, for the tester check only (releases
@@ -587,6 +588,7 @@ def stage(source_package, expected, move=False, version=None):
                 'boot_uuid': boot_info['uuid'], 'manifest': manifest, 'screen': screen_info()}
         write_json(work / 'transaction.json', info)
         shutil.copy2('/boot/KERNEL', work / 'previous-KERNEL')
+        if (Path('/boot') / ENTRY_CONF).is_file(): (work / HAD_ENTRY).touch()
         rootarg = next((x[5:] for x in Path('/proc/cmdline').read_text().split() if x.startswith('root=')), '')
         if not rootarg: raise ValueError('cannot identify the boot root argument')
         helper = bootimg_helper(payload)
@@ -1034,12 +1036,156 @@ def remove_downloaded(files):
 
 
 def install_kernel(src, boot):
+    write_kernel(src, boot)
+    refresh_boot_entry(boot)
+
+
+def put_kernel_back(work, boot):
+    """The kernel from before the update. A system that had no boot entry gets
+    none (its own updater would not keep it current, and OpenABL reads it before
+    KERNEL), and an entry that cannot be written goes too: KERNEL boots then."""
+    write_kernel(work / 'previous-KERNEL', boot)
+    try:
+        if not (work / HAD_ENTRY).exists(): remove_boot_entry(boot)
+        else: refresh_boot_entry(boot)
+    except Exception as e:
+        print('BOOT ENTRY:', e, flush=True)
+        remove_boot_entry(boot)
+
+
+def write_kernel(src, boot):
     temp = boot / 'KERNEL.new'
     shutil.copyfile(src, temp)
     with temp.open('rb') as f: os.fsync(f.fileno())
     if digest(temp) != digest(src): raise ValueError('boot copy checksum mismatch')
     os.replace(temp, boot / 'KERNEL')
     (boot / 'KERNEL.md5').write_text(hashlib.md5((boot / 'KERNEL').read_bytes()).hexdigest() + '  KERNEL\n')
+    os.sync()
+
+
+# OpenABL boot entry (Boot Loader Specification). OpenABL newer than 1.2 no
+# longer boots \KERNEL: it starts Linux through its EFI stub from
+# \loader\entries\*.conf, with the DTB its Device model menu picks from
+# \dtbs\qcom\. OpenABL 1.2 reads the entries too, before \KERNEL. So every
+# KERNEL written to BOOT is split into the entry at once (the update's
+# recovery KERNEL as well, or OpenABL would start the old kernel and the
+# update would never apply). One entry for all devices: no devicetree key.
+ENTRY_CONF = 'loader/entries/pbos.conf'
+ENTRY_DIR = 'pbos'
+ENTRY_DTBS = 'dtbs/qcom'
+HAD_ENTRY = 'had-boot-entry'  # in the transaction: BOOT had an entry when the update was staged
+
+
+def split_kernel_image(data):
+    """KERNEL (Android boot image v0: gzip(Image) + appended DTBs, ramdisk,
+    cmdline) -> (gzip Image, [DTB], initrd, cmdline)."""
+    import struct, zlib
+    if data[:8] != b'ANDROID!': raise ValueError('KERNEL is not an Android boot image')
+    ksize, _, rsize = struct.unpack_from('<III', data, 8)
+    page, version = struct.unpack_from('<II', data, 36)
+    if version != 0: raise ValueError(f'KERNEL header v{version}, expected v0')
+    cmdline = data[64:576].split(b'\0', 1)[0] + data[608:1632].split(b'\0', 1)[0]
+    kernel = data[page:page + ksize]
+    roff = page + (ksize + page - 1) // page * page
+    initrd = data[roff:roff + rsize]
+    d = zlib.decompressobj(16 + zlib.MAX_WBITS)
+    image = d.decompress(kernel)
+    if not d.eof or image[:2] != b'MZ' or image[0x38:0x3c] != b'ARMd':
+        raise ValueError('KERNEL has no gzip Image with an EFI stub')
+    rest = d.unused_data
+    gz, dtbs = kernel[:len(kernel) - len(rest)], []
+    while rest:
+        magic, total = struct.unpack_from('>II', rest)
+        if magic != 0xd00dfeed: raise ValueError('junk after the appended DTBs')
+        dtbs.append(rest[:total]); rest = rest[total:]
+    if not dtbs or not initrd or b'root=' not in cmdline: raise ValueError('KERNEL lacks DTBs, initrd or root=')
+    return gz, dtbs, initrd, cmdline.decode('ascii')
+
+
+def dtb_file_name(dtb):
+    """<first root compatible>.dtb, e.g. ayn-thor.dtb (OpenABL keeps the chosen
+    model by its name, so file names don't matter to it)."""
+    import struct
+    off, strs = struct.unpack_from('>II', dtb, 8)
+    pos, depth = off, 0
+    while True:
+        tok = struct.unpack_from('>I', dtb, pos)[0]; pos += 4
+        if tok == 1:
+            pos = (dtb.index(b'\0', pos) + 4) & ~3; depth += 1
+            if depth > 1: break
+        elif tok == 3:
+            n, name = struct.unpack_from('>II', dtb, pos); pos += 8
+            if dtb[strs + name:dtb.index(b'\0', strs + name)] == b'compatible':
+                first = dtb[pos:pos + n].split(b'\0')[0].decode('ascii', 'replace').lower()
+                return re.sub(r'[^a-z0-9]+', '-', first).strip('-') + '.dtb'
+            pos = (pos + n + 3) & ~3
+        elif tok != 4: break
+    raise ValueError('a DTB without a root compatible')
+
+
+def write_synced(path, data):
+    """Write aside, fsync, then rename over: the smallest window FAT offers."""
+    temp = path.with_name(path.name + '.new')
+    with temp.open('wb') as f:
+        f.write(data); f.flush(); os.fsync(f.fileno())
+    os.replace(temp, path)
+
+
+def entry_files(kernel):
+    """The entry's kernel and initrd names for KERNEL's bytes."""
+    tag = hashlib.sha256(kernel).hexdigest()[:12]
+    return f'Image-{tag}.gz', f'initrd-{tag}.gz'
+
+
+def entry_starts(boot, kernel):
+    """BOOT's entry starts this KERNEL file; also True without an entry (KERNEL boots then)."""
+    conf = boot / ENTRY_CONF
+    if not conf.is_file(): return True
+    lines = conf.read_text(errors='replace').splitlines()
+    return f'linux /{ENTRY_DIR}/{entry_files(Path(kernel).read_bytes())[0]}' in lines
+
+
+def remove_boot_entry(boot):
+    """BOOT without its entry: OpenABL boots KERNEL."""
+    (boot / ENTRY_CONF).unlink(missing_ok=True)
+    os.sync()
+    for d, pattern in ((ENTRY_DIR, '*'), (ENTRY_DTBS, '*.new'), ('loader/entries', 'pbos.conf.new')):
+        for p in (boot / d).glob(pattern):
+            if p.is_file(): p.unlink()
+    os.sync()
+
+
+def refresh_boot_entry(boot, kernel=None):
+    """Make BOOT's entry start exactly <boot>/KERNEL (or `kernel`). The kernel
+    and initrd are named after KERNEL's hash and written first, the entry then
+    switches to them in one rename, and the old ones go last."""
+    data = Path(kernel or boot / 'KERNEL').read_bytes()
+    gz, dtbs, initrd, cmdline = split_kernel_image(data)
+    image, ramdisk = entry_files(data)
+    kdir, ddir, conf = boot / ENTRY_DIR, boot / ENTRY_DTBS, boot / ENTRY_CONF
+    for d in (kdir, ddir, conf.parent):
+        d.mkdir(parents=True, exist_ok=True)
+        for p in d.glob('*.new'): p.unlink()  # half writes
+    write_synced(kdir / image, gz)
+    write_synced(kdir / ramdisk, initrd)
+    names = set()
+    for dtb in dtbs:
+        # Models can share a compatible (Retroid Pocket 6 and its TOP-DPAD
+        # variant); OpenABL tells them apart by model name, not file name.
+        stem = dtb_file_name(dtb)[:-4]
+        name, n = stem + '.dtb', 2
+        while name in names: name, n = f'{stem}-{n}.dtb', n + 1
+        names.add(name)
+        if not (ddir / name).is_file() or (ddir / name).read_bytes() != dtb: write_synced(ddir / name, dtb)
+    write_synced(conf, (f'title PB-OS\nsort-key pbos\narchitecture aa64\n'
+                        f'linux /{ENTRY_DIR}/{image}\ninitrd /{ENTRY_DIR}/{ramdisk}\n'
+                        f'options {cmdline}\n').encode())
+    os.sync()
+    # Leftovers: older kernels, DTBs this KERNEL no longer has, half writes.
+    for p in kdir.iterdir():
+        if p.is_file() and p.name not in (image, ramdisk): p.unlink()
+    for p in ddir.iterdir():
+        if p.is_file() and (p.name.endswith('.new') or (p.suffix == '.dtb' and p.name not in names)): p.unlink()
     os.sync()
 
 
@@ -1464,7 +1610,7 @@ def restore(root, boot, home, work):
         copy_tree(backup / 'layers', layers, delete=True)
     elif layers.exists(): shutil.rmtree(layers)
     os.sync()
-    install_kernel(work / 'previous-KERNEL', boot)
+    put_kernel_back(work, boot)
 
 
 # ── Progress on screen during the restart step ───────────────────────────────
@@ -1725,7 +1871,9 @@ def recover_steps(root, boot, home, work, manifest, pending, current, screen):
     screen.start('Installing update')
     # A stage cut short (restart before it finished) leaves the old boot image:
     # this boot runs the old kernel, so restart into the new one when done.
-    restart_after = digest(boot / 'KERNEL') != digest(work / 'next-KERNEL')
+    # The same when the boot entry, which OpenABL reads before KERNEL, is the old one.
+    restart_after = (digest(boot / 'KERNEL') != digest(work / 'next-KERNEL')
+                     or not entry_starts(boot, work / 'next-KERNEL'))
     plan = load_plan(work)
     if plan is None and current == 'staged':
         # Staged by an updater from before plans: the whole payload is
@@ -1745,7 +1893,7 @@ def recover_steps(root, boot, home, work, manifest, pending, current, screen):
             print('RECOVERY ERROR:', e, flush=True)
             (work / 'failure.txt').write_text(str(e) + '\n')
             screen.label('Update failed: keeping the current version')
-            install_kernel(work / 'previous-KERNEL', boot)
+            put_kernel_back(work, boot)
             state(work, 'aborted')
             pending.unlink(); os.sync(); return 10
     if current == 'backed-up':
@@ -1786,6 +1934,8 @@ def main():
     p.add_argument('channel', nargs='?', choices=('dev', 'prod'))
     p = sub.add_parser('tester-line', help='a dev_testers line for a new passphrase (run on your own computer)')
     p.add_argument('name')
+    p = sub.add_parser('boot-entry', help="write BOOT's OpenABL boot entry from its KERNEL (image builder, installers)")
+    p.add_argument('--boot', required=True); p.add_argument('--kernel', help='default: <boot>/KERNEL')
     a = ap.parse_args()
     try:
         if a.command in ('stage', 'update', 'local-update', 'cleanup'):
@@ -1804,6 +1954,7 @@ def main():
         elif a.command == 'tester-line': tester_line(a)
         elif a.command == 'local-check': local_check(a)
         elif a.command == 'recover': return recover(a)
+        elif a.command == 'boot-entry': refresh_boot_entry(Path(a.boot), a.kernel)
         else:
             m, size = validate_archive(a.package)
             print(json.dumps({'version': m['version'], 'kind': 'delta' if is_delta(m) else 'full',

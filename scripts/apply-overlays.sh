@@ -353,7 +353,8 @@ for u in steamvr-program-ble.service steamvr-v4l2loopback.service \
          deckard-audio-setup.service \
          deckard-fan-control.service deckard-fpga.service \
          deckard-led-control.service deckard-typec-logger.service \
-         set-wifi-mac-address.service iwd.service deckard-charger.service \
+         set-wifi-mac-address.service set-bluetooth-mac-address.service \
+         iwd.service deckard-charger.service \
          deckard-power-monitor.service deckard-fpga-resume.service \
          deckard-boot-images.service \
          adbd.service adbd-post.service usb-gadget.service usb-gadget.target \
@@ -363,6 +364,9 @@ for u in steamvr-program-ble.service steamvr-v4l2loopback.service \
   # Frame USB-gadget/ADB/power-monitor: no such hardware here. They crash-loop
   # (1000+ restarts/night) and adbd-post polls ffs.adb/ready at 10 Hz forever,
   # which keeps the SoC out of deep idle and burned battery in standby.
+  # set-*-mac-address: the addresses come from the Frame's EEPROM. Without one
+  # the Bluetooth unit (started by a udev rule) turns Bluetooth off and retries
+  # an empty address for 20 s at every boot.
   # steamos-boot (A/B slot bookkeeping) needs efi.mount, which waits for the
   # Deck's EFI partition (by-partsets/self/efi). There's none here, so every
   # boot sat on it for the full 90 s device timeout.

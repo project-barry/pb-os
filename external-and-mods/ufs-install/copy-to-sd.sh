@@ -26,6 +26,10 @@ export PATH="/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"
 
 HERE="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 BOOTIMG=(python3 "$HERE/ufs-bootimg.py")
+# OpenABL's boot entry (loader/entries/pbos.conf, pbos/, dtbs/qcom/) is
+# written from each KERNEL by the updater's own code: newer OpenABL boots only
+# the entry, 1.2 tries it before KERNEL.
+BOOT_ENTRY=(python3 -I /usr/share/pbos-update/pbos-update.py boot-entry --boot)
 # shellcheck source=home-copy.sh
 source "$HERE/home-copy.sh"
 
@@ -277,6 +281,7 @@ log "installing KERNEL (root=PARTUUID=${DISK_ID}-02)"
 rsync -r --exclude=/KERNEL --exclude=/KERNEL.md5 /boot/ "$WORK/boot/"
 "${BOOTIMG[@]}" retarget /boot/KERNEL "$WORK/boot/KERNEL" --root "PARTUUID=${DISK_ID}-02" >/dev/null
 (cd "$WORK/boot" && md5sum KERNEL >KERNEL.md5)
+"${BOOT_ENTRY[@]}" "$WORK/boot" >/dev/null
 # The installer's backup of Android's partition table, so this card can give
 # the space back to Android (ufs-partition.py restore) like the original.
 if compgen -G "/home/.ufs-backup/ufs-gpt-*" >/dev/null; then
@@ -289,6 +294,7 @@ sync
 log "checking the result"
 info="$("${BOOTIMG[@]}" info "$WORK/boot/KERNEL")"
 grep -q "root=PARTUUID=${DISK_ID}-02" <<<"$info" || die "KERNEL cmdline is wrong"
+grep -q "root=PARTUUID=${DISK_ID}-02" "$WORK/boot/loader/entries/pbos.conf" || die "boot entry is wrong"
 grep -q '^ID_OK=yes' <<<"$info" || die "KERNEL header checksum is wrong"
 (cd "$WORK/boot" && md5sum -c --quiet KERNEL.md5) || die "KERNEL.md5 mismatch"
 [[ -e "$WORK/root/sbin/init" || -L "$WORK/root/sbin/init" ]] || die "system copy is incomplete (no /sbin/init)"
