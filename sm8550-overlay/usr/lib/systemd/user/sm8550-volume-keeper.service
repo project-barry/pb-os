@@ -6,7 +6,7 @@ After=wireplumber.service
 ConditionPathExists=/sys/firmware/devicetree/base/compatible
 
 [Service]
-ExecCondition=/bin/sh -c 'grep -qa "qcom,sm8550" /sys/firmware/devicetree/base/compatible'
+ExecCondition=/bin/sh -c 'grep -qaE "qcom,sm8550|retroidpocket,rpduo" /sys/firmware/devicetree/base/compatible'
 ExecStart=/usr/lib/pbos-platformd/pbos-platformd --user --only volume-keeper
 Restart=on-failure
 RestartSec=5

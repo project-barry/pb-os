@@ -16,7 +16,7 @@ name keeps working.
 | `volume-keys` | `sm8550-volume-keys.service` (user) | `sm8550-volume-keys` | the keys (evdev), input uevents, `/dev/input` permissions (inotify) |
 | `thor-backlight` | `sm8550-thor-backlightd.service` | `sm8550-thor-backlightd` | Steam's file, the /run/sm8550-thor flags, STATE/SCREENS, Barry's settings, charge-rest flag (inotify, pidfd); AYN key + touch (evdev); input/backlight/DRM uevents; process events (Desktop Mode); one-shot timers; 0.5 s re-check only while the bottom screen is dark |
 | `thor-controls` | `sm8550-thor-controlsd.service` | `sm8550-thor-controlsd` | its socket (/run/sm8550-thor/controls.sock) |
-| `thor-desktop-brightness` | `sm8550-thor-desktop-brightness.service` (user) | `sm8550-thor-desktop-brightness` | the session bus (Plasma's ScreenBrightness), the bottom panel's file (inotify) |
+| `thor-desktop-brightness` | `sm8550-thor-desktop-brightness.service` (user) | `sm8550-thor-desktop-brightness` | the session bus (Plasma's ScreenBrightness), the panel behind its hardware slider (inotify) |
 | `audio-dp` | `sm8550-audio-pipewire.service` (user; the script applies the sink policy once, then execs this) | the 2 s loop of `sm8550-audio-pipewire --watch` | DRM uevents (HDMI/DP hotplug); runs the script again on a flip |
 | `barry-audio` | `barry_launcher_audio.service` (user) | `barry_launcher_audio` | the sound server's events (libpulse); SIGUSR1 (apps volume changed) |
 | `memguard` | `pbos-memguard.service` (every device) | new | two PSI triggers on `/proc/pressure/memory` (POLLPRI); one-shot timers only after it acted |

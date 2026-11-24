@@ -77,6 +77,29 @@ S = {
                       files={f"{VAR}/thor-screen-brightness.json": '{"top": 0.5, "bottom": 0.5}'}),
     "no_run_dir": dict(fake={"displays": TWO, "bottom": "display1"}, no_run=True,
                        files={f"{VAR}/thor-screen-brightness.json": '{"top": 0.5, "bottom": 0.5}'}),
+    # The Retroid Pocket Duo (the module only, against what is expected): the
+    # fake's "bottom" display is the hardware slider, its top panel's.
+    "duo_normal": dict(duo=True, bmax="4095\n", fake={"displays": TWO, "bottom": "display0",
+                                                      "levels": {"display0": 9000, "display1": 8000}},
+                       files={f"{RUN}/desktop-start.json": '{"top": 0.4, "bottom": 0.6, "steam": 1638}',
+                              f"{BL}/brightness": "1638\n"},
+                       emits=[("display0", 2500), ("display1", 7000)],
+                       calls=["display0 4500", "display0 4000", "display1 6000"],
+                       ends={"desktop-ready": "1\n", "desktop-top": "0.25000\n", "desktop-bottom": "0.70000\n"}),
+    "duo_swapped": dict(duo=True, bmax="4095\n", fake={"displays": TWO, "bottom": "display1",
+                                                       "levels": {"display0": 9000, "display1": 8000}},
+                        files={f"{RUN}/desktop-start.json": '{"top": 0.8, "bottom": 0.0}',
+                               f"{BL}/brightness": "3276\n"},
+                        emits=[("display1", 5000), ("display0", 4000)],
+                        calls=["display0 7500", "display0 9000", "display1 7500", "display1 8000", "display0 29"],
+                        ends={"desktop-ready": "1\n", "desktop-top": "0.50000\n", "desktop-bottom": "0.40000\n"}),
+    "duo_neither": dict(duo=True, bmax="4095\n", fake={"displays": TWO, "bottom": None,
+                                                       "levels": {"display0": 9000, "display1": 8000}},
+                        files={f"{VAR}/thor-screen-brightness.json": '{"top": 0.5, "bottom": 0.5}',
+                               f"{BL}/brightness": "2048\n"},
+                        emits=[("display1", 1234)],
+                        calls=["display0 4500", "display0 9000", "display1 4500", "display1 8000"],
+                        ends={"desktop-ready": "1\n"}),
 }
 
 
@@ -87,7 +110,8 @@ def reset(sc: dict) -> None:
         os.makedirs(d, exist_ok=True)
     if not sc.get("no_run"):
         os.makedirs(RUN)
-    w("/sys/firmware/devicetree/base/compatible", "ayn,thor\0qcom,sm8550\0")
+    w("/sys/firmware/devicetree/base/compatible",
+      "retroidpocket,rpduo\0qcom,eliza\0" if sc.get("duo") else "ayn,thor\0qcom,sm8550\0")
     bmax = sc.get("bmax", "10000\n")
     if bmax is not None:
         w(f"{BL}/max_brightness", bmax)
@@ -175,6 +199,8 @@ def run(impl: str, out_path: str, only: list[str]) -> int:
     for name, sc in S.items():
         if only and name not in only:
             continue
+        if sc.get("duo") and impl == "py":
+            continue
         reset(sc)
         res[name] = run_one(impl, sc)
         print(f"{impl} {name}: ready after {res[name]['ready_s']} s", flush=True)
@@ -223,6 +249,16 @@ def compare(a_path: str, b_path: str) -> int:
         else:
             passed += 1
             print(f"PASS {name} ({len(x['steps'])} steps, {len(x['steps'][-1][1])} calls; {tail})")
+    for name in b:
+        if not S[name].get("duo"):
+            continue
+        last = b[name]["steps"][-1]
+        calls = [" ".join(c.split()[1:3]) for c in last[1]]
+        ok = calls == S[name]["calls"] and last[2] == S[name]["ends"]
+        passed, failed = passed + ok, failed + (not ok)
+        print(f"{'PASS' if ok else 'FAIL'} {name} (Duo, the module alone)")
+        if not ok:
+            print(f"  calls {calls}\n  want  {S[name]['calls']}\n  files {last[2]}\n  want  {S[name]['ends']}\n{b[name]['log']}")
     print(f"{passed} passed, {failed} failed")
     return 1 if failed else 0
 

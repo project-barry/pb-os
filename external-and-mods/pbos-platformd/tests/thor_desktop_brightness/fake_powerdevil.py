@@ -10,7 +10,8 @@ CONFIG: {"displays": [[name, max], ...],
          "delay": seconds before that write, "steps": writes in an animation
                   (the last one the level asked for), "append": write without
                   truncating, as Steam's file may be written,
-         "fail": every SetBrightness fails}
+         "fail": every SetBrightness fails,
+         "levels": {name: the Brightness it starts at} (else no such property)}
 Each SetBrightness is logged (name level flags); org.test.Fake.Emit(s, i)
 sends BrightnessChanged as a slider move would.
 """
@@ -65,6 +66,8 @@ class Display(dbus.service.Object):
     def Get(self, iface, prop):
         if iface == DISPLAY and prop == "MaxBrightness":
             return dbus.Int32(self.max)
+        if iface == DISPLAY and prop == "Brightness" and self.name in cfg.get("levels", {}):
+            return dbus.Int32(cfg["levels"][self.name])
         raise dbus.exceptions.DBusException(f"no property {prop}", name="org.freedesktop.DBus.Error.InvalidArgs")
 
     @dbus.service.method(DISPLAY, in_signature="iu")

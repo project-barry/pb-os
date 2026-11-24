@@ -1,12 +1,12 @@
 [Unit]
-Description=Barry Launcher: a volume for each AYN Thor screen
+Description=Barry Launcher: a volume for each screen (AYN Thor, Retroid Pocket Duo)
 # The main account only: other logins (ssh) must not drive the shared hardware.
 ConditionUser=steamos
 After=pipewire-pulse.service wireplumber.service
 
 [Service]
 Type=simple
-ExecCondition=/bin/sh -c 'grep -qa "ayn,thor" /sys/firmware/devicetree/base/compatible'
+ExecCondition=/bin/sh -c 'grep -qaE "ayn,thor|retroidpocket,rpduo" /sys/firmware/devicetree/base/compatible'
 ExecStart=/usr/lib/pbos-platformd/pbos-platformd --user --only barry-audio
 Restart=always
 RestartSec=3

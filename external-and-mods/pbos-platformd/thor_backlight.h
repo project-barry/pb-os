@@ -82,6 +82,12 @@ inline double steam_position(double level) {
     return p > 0.0 ? p : 0.0;
 }
 
+// The level Steam puts out with its slider at f (steam_position's inverse).
+inline double steam_level(double f) {
+    double lowest = std::pow(STEAM_LOWEST, 1 / STEAM_GAMMA);
+    return std::pow(lowest + clamp01(f) * (1 - lowest), STEAM_GAMMA);
+}
+
 // Python's round() of a float to an int (ties to even).
 inline long long py_round(double x) { return static_cast<long long>(std::nearbyint(x)); }
 

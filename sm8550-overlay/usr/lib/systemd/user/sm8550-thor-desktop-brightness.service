@@ -1,10 +1,10 @@
 [Unit]
-Description=AYN Thor: Plasma's brightness sliders share each screen's brightness with Game Mode
+Description=AYN Thor, Retroid Pocket Duo: Plasma's brightness sliders share each screen's brightness with Game Mode
 PartOf=graphical-session.target
 After=plasma-powerdevil.service
 
 [Service]
-ExecCondition=/bin/sh -c 'grep -qa "ayn,thor" /sys/firmware/devicetree/base/compatible'
+ExecCondition=/bin/sh -c 'grep -qaE "ayn,thor|retroidpocket,rpduo" /sys/firmware/devicetree/base/compatible'
 ExecStart=/usr/lib/pbos-platformd/pbos-platformd --user --only thor-desktop-brightness
 Restart=on-failure
 RestartSec=3

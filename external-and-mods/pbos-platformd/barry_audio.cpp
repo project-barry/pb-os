@@ -1,5 +1,5 @@
-// barry-audio (was barry_launcher_audio): the AYN Thor's two volumes, one
-// per screen.
+// barry-audio (was barry_launcher_audio): the AYN Thor's and the Retroid
+// Pocket Duo's two volumes, one per screen.
 //
 // PipeWire has a "Top screen" output (60-pbos-top-screen.conf), a loopback
 // into the real output. This keeps:
@@ -17,6 +17,12 @@
 // it goes to 100 % and "Top screen" is the default again. Streams moved onto
 // the real output that are not the bottom apps' go back to "Top screen".
 //
+// A card with an output each for its speakers and its headphones (the Duo's
+// UCM HiFi profile; the Thor's pro-audio outputs have no ports) does not move
+// the default while "Top screen" is it: when headphones are plugged in or
+// out, this takes the output that leaves as it would a new default
+// (jack_choice).
+//
 // The sound server's events (outputs, streams, the default output) and
 // SIGUSR1 (barry_quick, when the bottom volume moves) start a look at
 // everything 150 ms later, as the Python did. A stream is checked against
@@ -32,6 +38,7 @@
 #include <signal.h>
 #include <unistd.h>
 
+#include <cctype>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -165,6 +172,22 @@ int apps_volume(const std::string& path) {
     // Python's bool is an int (true: 1).
     double d = v->is_bool() ? (v->as_bool() ? 1 : 0) : v->is_number() ? v->as_double() : -1;
     return d >= 0 && d <= 100 ? static_cast<int>(d) : 100;
+}
+
+std::string jack_choice(const std::vector<Port>& ports, const std::string& real) {
+    const Port* now = nullptr;
+    for (const auto& p : ports)
+        if (p.output == real) now = &p;
+    if (!now || now->card < 0) return {};
+    bool card_has_jack = false;
+    for (const auto& p : ports) card_has_jack = card_has_jack || (p.card == now->card && p.headphones);
+    if (!card_has_jack) return {};
+    for (const auto& p : ports)
+        if (p.card == now->card && p.headphones && p.plugged == Port::Yes) return p.output == real ? "" : p.output;
+    if (!now->headphones || now->plugged != Port::No) return {};
+    for (const auto& p : ports)  // unplugged: the speakers
+        if (p.card == now->card && !p.headphones) return p.output;
+    return {};
 }
 
 int percent(pa_volume_t v) {
@@ -301,6 +324,7 @@ struct Sink {
     std::optional<int> pct;
     bool mute;
     uint8_t channels;
+    Port port;
 };
 
 struct Input {
@@ -390,6 +414,7 @@ private:
         case PA_CONTEXT_READY:
             self->op(pa_context_subscribe(c,
                                           static_cast<pa_subscription_mask_t>(PA_SUBSCRIPTION_MASK_SINK |
+                                                                              PA_SUBSCRIPTION_MASK_CARD |
                                                                               PA_SUBSCRIPTION_MASK_SINK_INPUT |
                                                                               PA_SUBSCRIPTION_MASK_SERVER),
                                           nullptr, nullptr));
@@ -410,7 +435,8 @@ private:
         if (facility == PA_SUBSCRIPTION_EVENT_SINK_INPUT &&
             (t & PA_SUBSCRIPTION_EVENT_TYPE_MASK) == PA_SUBSCRIPTION_EVENT_REMOVE)
             self->apps_of_.erase(idx);
-        // Output, stream and default-output changes (the mask has no others).
+        // Output, card (headphones), stream and default-output changes (the
+        // mask has no others).
         self->wake();
     }
 
@@ -459,7 +485,7 @@ private:
                 if (eol) return self->answered();
                 const char* api = pa_proplist_gets(i->proplist, "device.api");
                 self->sinks_.push_back({i->index, i->name ? i->name : "", api && *api, percent(i->volume),
-                                        static_cast<bool>(i->mute), i->volume.channels});
+                                        static_cast<bool>(i->mute), i->volume.channels, port_of(i)});
             },
             this));
         ask(pa_context_get_sink_input_info_list(
@@ -544,6 +570,37 @@ private:
         if (changed) save_state(path_, state_);
     }
 
+    static Port port_of(const pa_sink_info* i) {
+        Port p;
+        p.output = i->name ? i->name : "";
+        p.card = i->card == PA_INVALID_INDEX ? -1 : static_cast<long long>(i->card);
+        if (const pa_sink_port_info* a = i->active_port) {
+            std::string name = a->name ? a->name : "";
+            for (char& c : name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            p.headphones = a->type == PA_DEVICE_PORT_TYPE_HEADPHONES || a->type == PA_DEVICE_PORT_TYPE_HEADSET ||
+                           name.find("headphone") != std::string::npos || name.find("headset") != std::string::npos;
+            p.plugged = a->available == PA_PORT_AVAILABLE_YES  ? Port::Yes
+                        : a->available == PA_PORT_AVAILABLE_NO ? Port::No
+                                                               : Port::Unknown;
+        }
+        return p;
+    }
+
+    // The output headphones plugged in or out leave; "" when that has not
+    // changed since the last look (an output picked by hand stays).
+    std::string jack_moved() {
+        std::vector<Port> ports;
+        std::string state;
+        for (const auto& s : sinks_) {
+            if (!s.real) continue;
+            ports.push_back(s.port);
+            if (s.port.headphones) state += s.name + "=" + std::to_string(static_cast<int>(s.port.plugged)) + " ";
+        }
+        if (state == jacks_) return {};
+        jacks_ = state;
+        return jack_choice(ports, real_);
+    }
+
     const Sink* sink_named(const std::string& name) const {
         for (const auto& s : sinks_)
             if (s.name == name) return &s;
@@ -590,9 +647,13 @@ private:
             loop_on_ = out_state;
         }
 
-        // A real output became the default: it is the real output now.
-        if (default_ != TOP && is_real(default_)) {
-            std::string fresh = default_;
+        // A real output became the default: it is the real output now. So is
+        // the one headphones plugged in or out leave.
+        std::string fresh = default_ != TOP && is_real(default_) ? default_ : "";
+        bool from_default = !fresh.empty();
+        std::string jack = jack_moved();
+        if (!jack.empty()) fresh = jack;
+        if (!fresh.empty()) {
             if (!real_.empty() && real_ != fresh && sink_named(real_)) remember(real_, top_pct);
             std::optional<int> want;
             if (const Value* had = state_["top"].find(fresh); had && had->is_number())
@@ -601,7 +662,7 @@ private:
                 std::optional<int> own = sink_named(fresh)->pct;
                 want = own && *own < 99 ? own : top_pct;
             }
-            act(pa_context_set_default_sink(ctx_, TOP, on_done, this));
+            if (from_default) act(pa_context_set_default_sink(ctx_, TOP, on_done, this));
             if (want && want != top_pct) {
                 set_volume(true, 0, TOP, top_channels, *want);
                 top_pct = want;
@@ -683,6 +744,7 @@ private:
     std::string path_, apps_path_;
     Value state_;
     std::string real_;
+    std::string jacks_;  // the headphones' outputs and whether plugged, as last seen
     std::string loop_on_, gone_;  // last logged: the loopback ("on <output>", "gone"), a real output gone
     bool missing_logged_ = false;
     Phase phase_ = Phase::Idle;

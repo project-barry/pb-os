@@ -1,7 +1,7 @@
 // The Barry Launcher section (AYN Thor, Retroid Pocket Duo): the backend of
 // what was the Barry Launcher Decky plugin (folder dual-screen), method for
 // method. On the Duo Steam's slider is the top screen's alone (thor-backlight's
-// DUO profile): get_state says so ("topSlider" false), and that the device has
+// DUO profile): get_state says so ("steamBoth" false), and that the device has
 // no Barry button ("button" "").
 //
 // One switch for the bottom screen, and each screen's brightness, as on
@@ -1397,9 +1397,11 @@ private:
             out["on"] = is_on();
             out["brightness"] = brightness();
             // The button that opens Barry ("" none), and whether the top
-            // screen has a slider here (else Steam's is the top screen's).
+            // screen has a slider here.
             out["button"] = duo() ? "" : "AYN";
-            out["topSlider"] = !duo();
+            out["topSlider"] = true;
+            // Steam's slider sets both screens, or (Duo) the top one alone.
+            out["steamBoth"] = !duo();
             Value req = Value::object();
             req["op"] = "get";
             out["rgbDimmer"] = rgb_dimmer(controlsd(req));

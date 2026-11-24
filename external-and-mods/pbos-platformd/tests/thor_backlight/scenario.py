@@ -714,14 +714,26 @@ def linear(f, mx=3445):
     return max(10, min(mx, int(1 + f * 4094) * mx // 4095))
 
 
+def steam_pos(raw, mx=4095):
+    """thor_backlight.h's steam_position of a top panel value."""
+    lo = 0.01 ** (1 / 2.2)
+    return max(0.0, ((raw / mx) ** (1 / 2.2) - lo) / (1 - lo))
+
+
+def steam_lvl(f):
+    lo = 0.01 ** (1 / 2.2)
+    return (lo + f * (1 - lo)) ** 2.2
+
+
 def c_duo_boot(c):
     c.duo_panels(bottom=2000, top=1500)
     c.devices(key=False)
     c.start()
     s = json.loads(rd(SCREENS) or "{}")
     f = 2000 / 3445
-    c.check("SCREENS made from the bottom panel",
-            abs(s.get("bottom", -1) - f) < 1e-9 and abs(s.get("top", -1) - f) < 1e-9)
+    c.check("SCREENS made from the panels (the top as Steam's slider)",
+            abs(s.get("bottom", -1) - f) < 1e-9 and abs(s.get("top", -1) - steam_pos(1500)) < 1e-9
+            and s.get("steam") == 1500)
     c.check("bottom panel about where it was", abs(int(rd(f"{DUO_BOTTOM}/brightness")) - 2000) <= 2)
     c.check("top panel untouched", rd(f"{DUO_TOP}/brightness") == "1500")
     c.check("nothing mounted over the panels", not any(
@@ -731,7 +743,7 @@ def c_duo_boot(c):
     c.check("Screen off flag made, 0, group-writable",
             rd(f"{RUN}/sleep") == "0" and os.stat(f"{RUN}/sleep").st_mode & 0o777 == 0o664)
     c.snap("started, nothing saved")
-    replace(SCREENS, '{"top": 0.9, "bottom": 0.5, "steam": 0}\n')
+    replace(SCREENS, json.dumps(dict(s, bottom=0.5)))
     time.sleep(0.8)
     c.check("bottom follows SCREENS' bottom, linearly", rd(f"{DUO_BOTTOM}/brightness") == str(linear(0.5)))
     c.check("top panel still untouched", rd(f"{DUO_TOP}/brightness") == "1500")
@@ -740,12 +752,50 @@ def c_duo_boot(c):
     time.sleep(0.6)
     c.check("Steam's top write left alone", rd(f"{DUO_TOP}/brightness") == "3000")
     c.check("bottom not moved by it", rd(f"{DUO_BOTTOM}/brightness") == str(linear(0.5)))
-    c.check("SCREENS not moved by it", json.loads(rd(SCREENS))["bottom"] == 0.5)
+    s = json.loads(rd(SCREENS))
+    c.check("the top slider moves along", s["bottom"] == 0.5 and abs(s["top"] - steam_pos(3000)) < 1e-9
+            and s["steam"] == 3000)
     c.snap("Steam moved the top screen")
-    replace(SCREENS, '{"top": 0.9, "bottom": 0.0, "steam": 0}\n')
+    replace(SCREENS, json.dumps(dict(s, bottom=0.0)))
     time.sleep(0.8)
+    c.check("top not moved by a bottom change", rd(f"{DUO_TOP}/brightness") == "3000")
     c.check("bottom at its lowest", rd(f"{DUO_BOTTOM}/brightness") == str(linear(0.0)))
     c.snap("bottom slider 0")
+    replace(SCREENS, json.dumps(dict(s, top=0.5, bottom=0.5)))  # Barry's, both screens
+    time.sleep(0.8)
+    want = round(steam_lvl(0.5) * 4095)
+    c.check("Barry's top slider moves the top panel", rd(f"{DUO_TOP}/brightness") == str(want))
+    time.sleep(0.4)
+    s = json.loads(rd(SCREENS))
+    c.check("and stays where it was put", s["top"] == 0.5 and rd(f"{DUO_TOP}/brightness") == str(want))
+    c.snap("Barry's top slider")
+    for v in (1200, 1300, 1400):  # Steam's slider again, ten a second
+        wr(f"{DUO_TOP}/brightness", str(v))
+        time.sleep(0.1)
+    time.sleep(0.6)
+    s = json.loads(rd(SCREENS))
+    c.check("Steam's slider has it again", rd(f"{DUO_TOP}/brightness") == "1400" and s["steam"] == 1400
+            and abs(s["top"] - steam_pos(1400)) < 1e-9)
+    c.snap("Steam again")
+
+
+def c_duo_restart(c):
+    """Game Mode starts: Steam fades its level back in, the top screen keeps its own."""
+    c.duo_panels(bottom=2000, top=700)
+    replace(SCREENS, '{"top": 0.5, "bottom": 0.5, "steam": 1500}\n')
+    c.devices(key=False)
+    c.start()
+    for v in (750, 1100, 1500):
+        wr(f"{DUO_TOP}/brightness", str(v))
+        time.sleep(0.4)
+    c.check("not while Steam fades", rd(f"{DUO_TOP}/brightness") == "1500")
+    c.check("no move of its slider", json.loads(rd(SCREENS))["top"] == 0.5)
+    time.sleep(1.6)
+    c.check("then SCREENS' top", rd(f"{DUO_TOP}/brightness") == str(round(steam_lvl(0.5) * 4095)))
+    wr(f"{DUO_TOP}/brightness", "900")
+    time.sleep(0.6)
+    c.check("Steam's slider after", json.loads(rd(SCREENS))["steam"] == 900 and rd(f"{DUO_TOP}/brightness") == "900")
+    c.snap("restored")
 
 
 def c_duo_screen_off(c):
@@ -801,6 +851,83 @@ def c_duo_switch(c):
     c.check("switch on: lit, touch on",
             rd(f"{DUO_BOTTOM}/bl_power") == "0" and c.touch.inhibited() == "0")
     c.snap("switch on")
+
+
+def c_duo_desktop(c):
+    c.duo_panels(bottom=2000, top=1500)
+    replace(SCREENS, '{"top": 0.9, "bottom": 0.5, "steam": 0}\n')
+    c.devices(key=False)
+    c.start()
+    c.proc("kwin_wayland")
+    time.sleep(0.8)
+    c.check("Plasma's helper sees the top panel alone", rd("/sys/class/backlight/ae94000.dsi.0/type") == "firmware"
+            and rd("/sys/class/backlight/ae96000.dsi.0/type") == "raw")
+    c.check("the bottom shows the top's range", rd("/sys/class/backlight/ae96000.dsi.0/max_brightness") == "4095")
+    s = json.loads(rd(f"{RUN}/desktop-start.json") or "{}")
+    c.check("starts from what the top shows", abs(s.get("top", -1) - 1500 / 4095) < 1e-9 and s.get("bottom") == 0.5)
+    c.check("bottom still from SCREENS, no helper yet", rd(f"{DUO_BOTTOM}/brightness") == str(linear(0.5)))
+    c.check("top panel untouched", rd(f"{DUO_TOP}/brightness") == "1500")
+    cpu0 = usage(c.daemon.pid)[0]
+    time.sleep(2)
+    cpu = usage(c.daemon.pid)[0] - cpu0
+    c.check(f"idle in Desktop Mode ({cpu} ms in 2 s)", cpu <= 30)
+    c.snap("Desktop Mode")
+    replace(f"{RUN}/desktop-bottom", "0.50000\n")
+    replace(f"{RUN}/desktop-ready", "1\n")
+    time.sleep(0.8)
+    c.check("the helper has the bottom slider: panel at its highest", rd(f"{DUO_BOTTOM}/brightness") == "3445")
+    replace(f"{RUN}/desktop-bottom", "0.25000\n")
+    replace(f"{RUN}/desktop-top", "0.80000\n")
+    time.sleep(0.6)
+    s = json.loads(rd(SCREENS))
+    c.check("both sliders saved", abs(s["top"] - steam_pos(0.8 * 4095)) < 1e-9 and s["bottom"] == 0.25
+            and s["steam"] == 1500)
+    c.check("top panel still untouched", rd(f"{DUO_TOP}/brightness") == "1500")
+    wr(f"{DUO_TOP}/brightness", "3276")  # what Plasma's slider did
+    wr(STATE, "off")
+    time.sleep(0.6)
+    c.check("bottom off in Desktop Mode", rd(f"{DUO_BOTTOM}/bl_power") == "4")
+    wr(STATE, "on")
+    time.sleep(0.8)
+    c.check("back on, at its highest",
+            rd(f"{DUO_BOTTOM}/bl_power") == "0" and rd(f"{DUO_BOTTOM}/brightness") == "3445")
+    c.snap("Plasma's sliders")
+    c.kill("kwin_wayland")
+    time.sleep(0.8)
+    c.check("nothing mounted over the panels", not any(
+        line.split()[4].startswith("/sys/class/backlight/") for line in open("/proc/self/mountinfo")))
+    c.check("the session's files gone", not any(f.startswith("desktop-") and f != "desktop-switch" for f in os.listdir(RUN)))
+    c.check("bottom at Desktop Mode's level", rd(f"{DUO_BOTTOM}/brightness") == str(linear(0.25)))
+    c.proc("gamescope", "--steam")
+    for v in (750, 1100, 1500, 1500):  # Steam fades its own level back in
+        wr(f"{DUO_TOP}/brightness", str(v))
+        time.sleep(0.3)
+    c.check("not while Steam fades", rd(f"{DUO_TOP}/brightness") == "1500")
+    time.sleep(1.5)
+    c.check("then Desktop Mode's level", abs(int(rd(f"{DUO_TOP}/brightness")) - round(0.8 * 4095)) <= 1)
+    wr(f"{DUO_TOP}/brightness", "1400")  # Steam's slider
+    time.sleep(1.8)
+    c.check("Steam's slider left alone after", rd(f"{DUO_TOP}/brightness") == "1400")
+    c.snap("Game Mode again")
+
+
+def c_duo_desktop_killed(c):
+    """Died in Desktop Mode: the next start clears its mounts."""
+    c.duo_panels(bottom=2000, top=1500)
+    c.devices(key=False)
+    c.start()
+    c.proc("kwin_wayland")
+    time.sleep(0.8)
+    c.daemon.kill()
+    c.daemon.wait()
+    c.kill("kwin_wayland")
+    c.start()
+    time.sleep(0.5)
+    c.check("ranges read past the old mount", "(max 3445)" in (rd(LOG) or "").splitlines()[-1] or
+            (rd(LOG) or "").count("ae96000.dsi.0 (max 3445)") == 2)
+    c.check("nothing mounted over the panels", not any(
+        line.split()[4].startswith("/sys/class/backlight/") for line in open("/proc/self/mountinfo")))
+    c.snap("started again")
 
 
 CASES = {name[2:].replace("_", "-"): fn for name, fn in globals().items() if name.startswith("c_")}

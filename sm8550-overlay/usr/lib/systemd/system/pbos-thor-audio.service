@@ -1,5 +1,5 @@
 [Unit]
-Description=AYN Thor: a volume for each screen (PipeWire's "Top screen" output)
+Description=AYN Thor, Retroid Pocket Duo: a volume for each screen (PipeWire's "Top screen" output)
 # Links the PipeWire config before the user session starts its audio.
 # Other devices never run this.
 After=etc.mount local-fs.target
@@ -7,7 +7,7 @@ Before=systemd-user-sessions.service
 
 [Service]
 Type=oneshot
-ExecCondition=/bin/sh -c 'grep -qa "ayn,thor" /sys/firmware/devicetree/base/compatible'
+ExecCondition=/bin/sh -c 'grep -qaE "ayn,thor|retroidpocket,rpduo" /sys/firmware/devicetree/base/compatible'
 ExecStart=/bin/sh -c 'mkdir -p /etc/pipewire/pipewire.conf.d && ln -sfn /usr/share/pb-os/thor-audio/60-pbos-top-screen.conf /etc/pipewire/pipewire.conf.d/60-pbos-top-screen.conf'
 
 [Install]

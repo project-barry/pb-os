@@ -26,7 +26,7 @@ if grep -qa 'retroidpocket,rpduo' /sys/firmware/devicetree/base/compatible 2>/de
   BARRY_BOTTOM_W=1280
   BARRY_BOTTOM_H=960
   BARRY_TOUCH_TURN=normal
-  BARRY_REFRESH="60"
+  BARRY_REFRESH="60 120"
   BARRY_LIGHTS=
 else
   # AYN Thor: the bottom panel is portrait-native and turned right.

@@ -1,6 +1,6 @@
 // charge-rest (was sm8550-charge-rest): sleep on the charger for the SM8550
-// handhelds (Retroid Pocket 6 / Nova, AYN Thor) and the KONKR Pocket FIT
-// (SM8650), and the stick lights' charging indicator. A one-shot program,
+// handhelds (Retroid Pocket 6 / Nova, AYN Thor), the Retroid Pocket Duo
+// (SM7750) and the KONKR Pocket FIT (SM8650), and the stick lights' charging indicator. A one-shot program,
 // its own process as before: `pbos-platformd charge-rest suspend|preview|
 // settings|save JSON`.
 //
@@ -19,7 +19,7 @@
 //   - takes the big cores offline and caps the CPU and GPU clocks,
 //   - shows the charging indicator on the stick lights (CHARGING_STATE):
 //     a dim pulse while charging, a dim steady light once full,
-//   - until the power button is pressed, the lid opens (AYN Thor) or the
+//   - until the power button is pressed, the lid opens (AYN Thor, Duo) or the
 //     charger is pulled. Pulled: kernel sleep from there (below), until the
 //     next wake. Then everything comes back: CPUs, apps, screens.
 //
@@ -1248,7 +1248,12 @@ void KonkrLights::give_back() {
 }
 
 // -------------------------------------------------------------- the rest --
-bool sm8550() { return rd("/sys/firmware/devicetree/base/compatible").find("qcom,sm8550") != std::string::npos; }
+// The handhelds that rest by themselves (the Retroid Pocket Duo, SM7750, has
+// the same charger firmware interface, power key, lid and doorbell count).
+bool rests() {
+    std::string c = rd("/sys/firmware/devicetree/base/compatible");
+    return c.find("qcom,sm8550") != std::string::npos || c.find("retroidpocket,rpduo") != std::string::npos;
+}
 
 // The KONKR Pocket FIT in deep sleep mode (konkr-sleep prepared it).
 bool pocket_fit() {
@@ -1912,7 +1917,7 @@ int deep_sleep() { return run({SYSTEMD_SLEEP, "suspend"}); }
 
 // systemd-suspend.service's ExecStart.
 int suspend() {
-    if (!sm8550() && !pocket_fit()) {
+    if (!rests() && !pocket_fit()) {
         if (access(KONKR_SUSPEND.c_str(), X_OK) == 0) exec({KONKR_SUSPEND});
         exec({SYSTEMD_SLEEP, "suspend"});
     }

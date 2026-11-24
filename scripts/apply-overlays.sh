@@ -924,7 +924,7 @@ if [[ "$SOC" != sm8650 ]]; then
   rm -f "$R/usr/lib/systemd/user/barry_launcher_inputd.service" \
     "$R/usr/lib/systemd/user/default.target.wants/barry_launcher_inputd.service"
   # A volume for each screen: PipeWire's "Top screen" output (its config
-  # linked into /etc at boot, Thor only) and barry_launcher_audio, which
+  # linked into /etc at boot, two-screen devices only) and barry_launcher_audio, which
   # plays the bottom screen's apps past it.
   install_file "$SM8550_OVL/usr/share/pb-os/thor-audio/60-pbos-top-screen.conf" \
     "$R/usr/share/pb-os/thor-audio/60-pbos-top-screen.conf" 0644

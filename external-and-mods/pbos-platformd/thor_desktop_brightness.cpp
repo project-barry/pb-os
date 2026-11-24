@@ -23,6 +23,15 @@
 // up. Should the file not take a watch, it is looked at every 50 ms as
 // before, for at most CHECK_S.
 //
+// Retroid Pocket Duo: the other way round. The hardware slider is the top
+// screen's (KWin gives it to DSI-1), the bottom one dims in software, and
+// sm8550-thor-backlightd writes neither while Plasma has them. The top panel
+// is the one checked, with a level a little off the one wanted, as the panel
+// shows the wanted one already; then both sliders are set, and both
+// positions written on each change (DESKTOP_TOP, DESKTOP_BOTTOM, whose first
+// is the sign for the daemon to leave the bottom screen to Plasma). Should
+// neither display move the panel, both sliders go back to where they were.
+//
 // The session bus is a connection of this module's own (sd-bus, the user's
 // bus). The D-Bus calls are synchronous, as they were in Python; they happen
 // once, when Plasma starts.
@@ -63,8 +72,16 @@ const std::string DESKTOP_START = RUN_DIR + "/desktop-start.json";
 const std::string DESKTOP_READY = RUN_DIR + "/desktop-ready";
 const std::string DESKTOP_TOP = RUN_DIR + "/desktop-top";
 const std::string SCREENS = "/var/lib/steamos-sm8550/thor-screen-brightness.json";
-const std::string BOTTOM_FILE = "/sys/class/backlight/ae94000.dsi.0/brightness";
-const std::string BOTTOM_MAX = "/sys/class/backlight/ae94000.dsi.0/max_brightness";
+const std::string DESKTOP_BOTTOM = RUN_DIR + "/desktop-bottom";  // the Duo
+// The panel behind Plasma's hardware slider: the Thor's bottom one, the
+// Duo's top one (ae94000 is DSI-1 on both).
+const std::string PANEL_FILE = "/sys/class/backlight/ae94000.dsi.0/brightness";
+const std::string PANEL_FILE_MAX = "/sys/class/backlight/ae94000.dsi.0/max_brightness";
+// The Duo's bottom panel at its lowest (linear_bottom's 10 of 3445), for its
+// software slider, as the Thor's top one's.
+constexpr double DUO_BOTTOM_LOWEST = 10.0 / 3445;
+// How far off the wanted level the Duo's check is.
+constexpr double DUO_PROBE = 0.05;
 // The daemon's: the top panel's lowest and highest, as on AYN's Android.
 constexpr double PANEL_MIN = 10, TOP_CAP = 3413;
 constexpr double CHECK_S = 1.0;   // how long the bottom panel may take to show a new level
@@ -161,6 +178,7 @@ struct Display {
 
 class ThorDesktopBrightness : public Module {
 public:
+    explicit ThorDesktopBrightness(bool duo) : duo_(duo) {}
     const char* name() const override { return "thor-desktop-brightness"; }
 
     void start(pq::Loop& loop) override {
@@ -372,9 +390,11 @@ private:
             write(DESKTOP_READY, "1\n");
             return;
         }
+        if (duo_) return duo_check();
         // The bottom one is display1 on a Thor; checked by its panel.
         top_ = 0, bottom_ = 1;
         begin_check();
+        probe_ = want_.bottom;
         set(displays_[bottom_], want_.bottom);
         check([this](bool shows) {
             if (shows) return finish();
@@ -388,6 +408,58 @@ private:
         });
     }
 
+    // The Duo: which display moves the top panel?
+    void duo_check() {
+        top_ = 0, bottom_ = 1;
+        before_.clear();
+        for (const Display& d : displays_) {
+            std::optional<long long> was;
+            try {
+                was = get_property(PATH + "/" + d.name, DISPLAY, "Brightness", "i").as_int();
+            } catch (const BusError&) {
+            }
+            before_.push_back(was);
+        }
+        begin_check();
+        probe_ = want_.top >= 0.5 ? want_.top - DUO_PROBE : want_.top + DUO_PROBE;
+        set(displays_[top_], probe_);
+        check([this](bool shows) {
+            if (shows) return duo_finish();
+            put_back(top_);
+            std::swap(top_, bottom_);
+            set(displays_[top_], probe_);
+            check([this](bool shows) {
+                if (shows) {
+                    log(displays_[top_].name + " turned out to be the top screen's");
+                    return duo_finish();
+                }
+                log("cannot tell the screens apart: the top panel did not follow either; sliders left alone");
+                put_back(top_);
+                end_check();
+                write(DESKTOP_READY, "1\n");
+            });
+        });
+    }
+
+    void put_back(size_t i) {
+        const Display& d = displays_[i];
+        if (i < before_.size() && before_[i] && d.max != 0)
+            set(d, static_cast<double>(*before_[i]) / static_cast<double>(d.max));
+    }
+
+    void duo_finish() {
+        end_check();
+        const Display& top = displays_[top_];
+        const Display& bottom = displays_[bottom_];
+        set(top, want_.top);
+        set(bottom, std::max(want_.bottom, DUO_BOTTOM_LOWEST));
+        log("top (" + top.name + ") " + fmt("%.3f", want_.top) + ", bottom (" + bottom.name + ") " +
+            fmt("%.3f", want_.bottom));
+        write(DESKTOP_BOTTOM, fmt("%.5f", want_.bottom) + "\n");
+        write(DESKTOP_READY, "1\n");
+        watch_sliders();
+    }
+
     void finish() {
         end_check();
         const Display& top = displays_[top_];
@@ -398,14 +470,22 @@ private:
         log("top (" + top.name + ") " + fmt("%.3f", want_.top) + ", bottom (" + bottom.name + ") " +
             fmt("%.3f", want_.bottom));
         write(DESKTOP_READY, "1\n");
+        watch_sliders();
+    }
+
+    void watch_sliders() {
+        if (changed_slot_) return;
         auto on_changed = [](sd_bus_message* m, void* self, sd_bus_error*) -> int {
             auto* me = static_cast<ThorDesktopBrightness*>(self);
             const char* name = nullptr;
             if (sd_bus_message_read(m, "s", &name) < 0 || !name) return 0;
             auto level = read_int(m);
-            const Display& top = me->displays_[me->top_];
-            if (level && name == top.name && top.max != 0)
-                write(DESKTOP_TOP, fmt("%.5f", static_cast<double>(*level) / static_cast<double>(top.max)) + "\n");
+            auto moved = [&](const Display& d, const std::string& path) {
+                if (level && name == d.name && d.max != 0)
+                    write(path, fmt("%.5f", static_cast<double>(*level) / static_cast<double>(d.max)) + "\n");
+            };
+            moved(me->displays_[me->top_], DESKTOP_TOP);
+            if (me->duo_) moved(me->displays_[me->bottom_], DESKTOP_BOTTOM);
             return 0;
         };
         std::string match = "type='signal',interface='" + std::string(SERVICE) +
@@ -414,10 +494,10 @@ private:
             log("cannot watch PowerDevil's BrightnessChanged");
     }
 
-    // ------------------------------------------- the bottom panel's check ---
+    // -------------------------------------------------- the panel's check ---
     // Watched from before the first SetBrightness, so no write is missed.
     void begin_check() {
-        watch_ = loop_->watch(BOTTOM_FILE, IN_MODIFY | IN_CLOSE_WRITE,
+        watch_ = loop_->watch(PANEL_FILE, IN_MODIFY | IN_CLOSE_WRITE,
                               [this](uint32_t, const std::string&) { look(false); });
     }
 
@@ -428,15 +508,15 @@ private:
         checking_ = nullptr;
     }
 
-    // Has the bottom panel's brightness come to want_.bottom of its range?
+    // Has the panel's brightness come to probe_ of its range?
     // done(bool) runs once, on the loop, within CHECK_S.
     void check(std::function<void(bool)> done) {
-        auto max = py_int(read(BOTTOM_MAX));
+        auto max = py_int(read(PANEL_FILE_MAX));
         if (!max) {
             loop_->post([done] { done(false); });  // as soon as Python's gave up
             return;
         }
-        bottom_max_ = *max;
+        panel_max_ = *max;
         checking_ = std::move(done);
         if (look(false)) return;
         timer_ = loop_->after(CHECK_S, [this] {
@@ -455,12 +535,12 @@ private:
     // Looks at the file; true once the check is over.
     bool look(bool last) {
         if (!checking_) return false;
-        auto words = py_split(read(BOTTOM_FILE));
+        auto words = py_split(read(PANEL_FILE));
         bool shows = false;
         if (!words.empty() && pq::is_digits(words.back()) && words.back().size() <= 15) {
-            double maximum = static_cast<double>(bottom_max_);
+            double maximum = static_cast<double>(panel_max_);
             double slack = std::max(2.0, maximum / 500);
-            shows = std::fabs(std::stoll(words.back()) - want_.bottom * maximum) <= slack;
+            shows = std::fabs(std::stoll(words.back()) - probe_ * maximum) <= slack;
         }
         if (!shows && !last) return false;
         auto done = std::move(checking_);
@@ -492,6 +572,7 @@ private:
         return out;
     }
 
+    const bool duo_;
     pq::Loop* loop_ = nullptr;
     sd_bus* bus_ = nullptr;
     sd_bus_slot* owner_slot_ = nullptr;
@@ -503,12 +584,16 @@ private:
     size_t top_ = 0, bottom_ = 1;
     int watch_ = 0;
     uint64_t timer_ = 0, poll_ = 0;
-    long long bottom_max_ = 0;
+    long long panel_max_ = 0;
+    double probe_ = 0;  // the level the panel is to show
+    std::vector<std::optional<long long>> before_;  // the Duo: the sliders before the check
     std::function<void(bool)> checking_;
 };
 
 }  // namespace
 
-std::unique_ptr<Module> make_thor_desktop_brightness() { return std::make_unique<ThorDesktopBrightness>(); }
+std::unique_ptr<Module> make_thor_desktop_brightness() {
+    return std::make_unique<ThorDesktopBrightness>(dt_has("retroidpocket,rpduo"));
+}
 
 }  // namespace pp

@@ -5,7 +5,7 @@ barry_launcher_statsd on /quick (its docstring has the JSON).
   Bluetooth   the adapter's Powered property on BlueZ's D-Bus (busctl), as
               Steam switches it
   Volume      "system": the default output's volume (wpctl), the one
-              Steam's volume bar moves: on the AYN Thor that is "Top
+              Steam's volume bar moves: with two screens that is "Top
               screen", the top screen's own output; "apps": the bottom
               screen's apps' volume, kept in APPS_STATE. barry_launcher_audio
               plays their streams past "Top screen", straight on the real

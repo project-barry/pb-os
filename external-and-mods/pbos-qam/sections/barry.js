@@ -1107,11 +1107,10 @@ function ScreensPage() {
             },
         })),
         ...(st.brightness ? [
-            // Without it, Steam's slider is the top screen's (the Retroid Pocket Duo).
             ...(topSlider ? [slider("Top screen brightness", st.brightness.top, 0, (v) => bright("top", v), { step: 1 })] : []),
             slider("Bottom screen brightness", st.brightness.bottom, 0, (v) => bright("bottom", v), { step: 1, disabled: !st.on }),
         ] : []),
-        note(topSlider ? "Steam's brightness slider sets both screens." : "Steam's brightness slider sets the top screen."),
+        note(topSlider && st.steamBoth !== false ? "Steam's brightness slider sets both screens." : "Steam's brightness slider sets the top screen."),
         jsx(BottomSettings, { on: !!st.on, button }),
     ] });
 }

@@ -7,6 +7,9 @@
 // 100% after some shutdowns or hard power-offs, and an output that was never
 // the default (e.g. the second pro-output) sits at 100%.
 //
+// On the Retroid Pocket Duo it is for "Top screen", an output without routes
+// too (the card itself is in UCM HiFi).
+//
 // This restores each output's last volume and mute state when it first shows
 // up as the default output (one never seen before keeps its volume, or gets
 // half if it is at the boot-time 100%), then saves them whenever they change,

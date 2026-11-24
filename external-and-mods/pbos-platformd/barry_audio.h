@@ -10,6 +10,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include "json.h"
 
@@ -28,6 +29,19 @@ bool is_app_stream(const char* process_id, const char* process_binary, const App
 // The bottom screen's apps' volume, 0-100 (100 when never set): quick.json's
 // appsVolume (barry_quick.apps_volume).
 int apps_volume(const std::string& path);
+
+// A real output's port: its card (-1 none), whether it is a headphone jack,
+// and what the jack says.
+struct Port {
+    std::string output;
+    long long card = -1;
+    bool headphones = false;
+    enum { Unknown, No, Yes } plugged = Unknown;
+};
+
+// The output to use in place of real: its card's headphones when plugged in,
+// its card's other output when real is headphones unplugged; "" to stay.
+std::string jack_choice(const std::vector<Port>& ports, const std::string& real);
 
 // pactl's value_percent of one channel (rounded), and the volume its "N%"
 // sets (cut).

@@ -12,9 +12,8 @@ pragma ComponentBehavior: Bound
 // (barry_launcher_statsd's /controls); Wi-Fi, Bluetooth, volume and capture
 // are statsd's /quick; how soon Barry goes back to the game art is Barry's
 // own setting (statsd's /settings standbySeconds). On a device without a
-// Barry button (the Retroid Pocket Duo) Steam's slider is the top screen's,
-// so Brightness has the bottom screen's alone, and Screen off puts the
-// bottom screen to sleep (statsd's /quick; a touch wakes it). A setting this
+// Barry button (the Retroid Pocket Duo) Screen off puts the bottom screen to
+// sleep (statsd's /quick; a touch wakes it). A setting this
 // device lacks is left out. While the page shows, it reads them again every few
 // seconds (the charger may come or go). Colors are the skin's; a skin can
 // also replace this file (SkinView.qml).

@@ -232,6 +232,10 @@ fi
 if [[ "$OUTPUT" == DSI-2 ]] && grep -qa 'ayn,thor' /sys/firmware/devicetree/base/compatible 2>/dev/null; then
   MAX_HZ=120
 fi
+# So does the Retroid Pocket Duo's (Visionox VTDR6130).
+if [[ "$OUTPUT" == DSI-1 ]] && grep -qa 'retroidpocket,rpduo' /sys/firmware/devicetree/base/compatible 2>/dev/null; then
+  MAX_HZ=120
+fi
 # Start the Steam UI at 60 Hz: at 144 it redraws menus 144x/s, which roughly
 # doubles UI GPU/CPU load (heat, fan, sluggishness). Steam's refresh slider
 # (STEAM_DISPLAY_REFRESH_LIMITS) still reaches MAX_HZ per game.

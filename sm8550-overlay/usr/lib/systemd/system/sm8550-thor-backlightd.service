@@ -15,6 +15,7 @@ RestartSec=2
 ExecStopPost=-/bin/sh -c 'while mountpoint -q "$(realpath /sys/class/backlight/ae94000.dsi.0)/brightness"; do umount -l "$(realpath /sys/class/backlight/ae94000.dsi.0)/brightness" || break; done'
 ExecStopPost=-/bin/sh -c 'while mountpoint -q "$(realpath /sys/class/backlight/ae94000.dsi.0)/type"; do umount -l "$(realpath /sys/class/backlight/ae94000.dsi.0)/type" || break; done'
 ExecStopPost=-/bin/sh -c 'while mountpoint -q "$(realpath /sys/class/backlight/ae94000.dsi.0)/max_brightness"; do umount -l "$(realpath /sys/class/backlight/ae94000.dsi.0)/max_brightness" || break; done'
+ExecStopPost=-/bin/sh -c 'while mountpoint -q "$(realpath /sys/class/backlight/ae96000.dsi.0)/max_brightness"; do umount -l "$(realpath /sys/class/backlight/ae96000.dsi.0)/max_brightness" || break; done'
 
 [Install]
 WantedBy=multi-user.target

@@ -37,13 +37,16 @@ const std::vector<ModuleInfo>& modules() {
          make_thor_controls},
         // Every device: memory pressure is the same everywhere.
         {"memguard", Instance::System, [] { return true; }, make_memguard},
-        {"volume-keeper", Instance::User, [] { return dt_has("qcom,sm8550"); }, make_volume_keeper},
+        {"volume-keeper", Instance::User, [] { return dt_has("qcom,sm8550") || dt_has("retroidpocket,rpduo"); },
+         make_volume_keeper},
         // Every image (the Python ran everywhere); it looks for its keys itself.
         {"volume-keys", Instance::User, [] { return true; }, make_volume_keys},
         {"konkr-volume", Instance::User, konkr_volume_here, make_konkr_volume},
         {"audio-dp", Instance::User, [] { return dt_has("qcom,sm8550"); }, make_audio_dp},
-        {"barry-audio", Instance::User, [] { return dt_has("ayn,thor"); }, make_barry_audio},
-        {"thor-desktop-brightness", Instance::User, [] { return dt_has("ayn,thor"); }, make_thor_desktop_brightness},
+        {"barry-audio", Instance::User, [] { return dt_has("ayn,thor") || dt_has("retroidpocket,rpduo"); },
+         make_barry_audio},
+        {"thor-desktop-brightness", Instance::User, [] { return dt_has("ayn,thor") || dt_has("retroidpocket,rpduo"); },
+         make_thor_desktop_brightness},
     };
     return all;
 }
