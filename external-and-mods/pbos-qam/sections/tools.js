@@ -42,6 +42,8 @@ const getMtp = callable("get_mtp");
 const getAndroid = callable("get_android");
 const setMtp = callable("set_mtp");
 // Barry Launcher in Desktop Mode (AYN Thor, Retroid Pocket Duo).
+const getVibration = callable("get_vibration");
+const setVibration = callable("set_vibration");
 const getBarryDesktop = callable("get_barry_desktop");
 const setBarryDesktop = callable("set_barry_desktop");
 // Sticks (Retroid Pocket 6 / Nova, AYN Thor; was the Stick Calibration plugin).
@@ -1196,6 +1198,33 @@ function Sticks() {
     return jsx(DFL.PanelSection, { title: "Analog Sticks", children: items });
 }
 
+// The "Vibration" section (AYN Thor, Retroid Pocket Duo): Barry's keys and
+// buttons. The backend buzzes once on a change, to feel it.
+function Vibration() {
+    const [st, setSt] = useState(null);
+    useEffect(() => { getVibration().then(setSt).catch(() => setSt({ supported: false })); }, []);
+    const send = useThrottled(useCallback((v) => {
+        setVibration(v.enabled, v.strength).then(setSt).catch(() => getVibration().then(setSt).catch(() => {}));
+    }, []));
+    if (!st || !st.supported) return null;
+    const change = (patch) => { const next = { ...st, ...patch }; setSt(next); send(next); };
+    return jsxs(DFL.PanelSection, { title: "Vibration", children: [
+        row(jsx(DFL.ToggleField, {
+            label: "Keys and buttons",
+            description: "Barry Launcher's keyboard, trackpad and Deck controls. Not games' own vibration.",
+            checked: st.enabled,
+            onChange: (v) => change({ enabled: v }),
+        })),
+        st.enabled ? row(jsx(DFL.SliderField, {
+            label: "Strength",
+            value: st.strength, min: 1, max: st.levels || 3, step: 1,
+            notchCount: st.levels || 3, notchTicksVisible: true,
+            notchLabels: ["Light", "Medium", "Strong", "Max"].slice(0, st.levels || 3).map((label, notchIndex) => ({ notchIndex, label })),
+            onChange: (v) => { if (v !== st.strength) change({ strength: v }); },
+        })) : null,
+    ] });
+}
+
 // The "Desktop Mode" section (AYN Thor, Retroid Pocket Duo): Barry Launcher on the bottom screen
 // in Desktop Mode, or a plain desktop screen there; Game Mode keeps Barry.
 function BarryDesktop() {
@@ -1225,7 +1254,7 @@ function BarryDesktop() {
 function HardwareTab() {
     const { st, apply } = useControl();
     if (!st) return jsx(DFL.PanelSection, { children: note("Loading…") });
-    if (!st.available) return jsxs(SP_JSX.Fragment, { children: [jsx(FaceButtons, {}), jsx(Sticks, {}), jsx(MtpShare, {}), jsx(BarryDesktop, {})] });
+    if (!st.available) return jsxs(SP_JSX.Fragment, { children: [jsx(FaceButtons, {}), jsx(Sticks, {}), jsx(Vibration, {}), jsx(MtpShare, {}), jsx(BarryDesktop, {})] });
     const buttons = st.buttons || {};
     const steamButtons = (st.buttons_mode || "steam") === "steam";
     return jsxs(SP_JSX.Fragment, { children: [

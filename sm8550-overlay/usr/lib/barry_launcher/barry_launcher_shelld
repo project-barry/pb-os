@@ -13,7 +13,8 @@ keyboard (shell/Keyboard.qml), which call it on 127.0.0.1:PORT:
                   forward
   POST /close     {"app": name}: quit it
   GET  /home      {"serial": n, "open": bool, "over": bool, "page": n,
-                  "under": path, "app": bool, "lifted": [x, y] | null}:
+                  "under": path, "app": bool, "front": bool,
+                  "lifted": [x, y] | null}:
                   Barry is open (its pages over
                   the hero art), over an app it closes back to, and serial
                   counts the times it came up, for its slide-in; page is the
@@ -22,6 +23,7 @@ keyboard (shell/Keyboard.qml), which call it on 127.0.0.1:PORT:
                   picture of that app as it showed (a PNG path, or ""), for
                   the page to slide in over, and app whether an app (not a
                   tool) is in front with Barry closed: side swipes are on;
+                  front: so is an app or a tool (the swipe up is on);
                   lifted where (screen pixels) the swipe up from the bottom
                   edge that opened it lifted, for no tap there just after
   POST /home      open Barry
@@ -2115,6 +2117,13 @@ def take_under_shot() -> str:
     return ""
 
 
+def anything_in_front() -> bool:
+    """An app or a tool shows, Barry closed: the swipe up from the bottom edge
+    goes to Barry (on a device without a Barry button, Shell.qml's)."""
+    app = STATE.front
+    return not DESKTOP and not barry_up() and app is not None and running(app) is not None
+
+
 def app_in_front() -> bool:
     """An app (not a tool: the trackpad, the Deck controls) shows, Barry
     closed: side swipes pull Barry's side pages over it."""
@@ -2658,7 +2667,7 @@ def home_state() -> dict:
             "over": up and STATE.back_app is not None,
             "page": STATE.open_page if up else 0,
             "under": STATE.under if up else "",
-            "app": app_in_front(),
+            "app": app_in_front(), "front": anything_in_front(),
             "lifted": list(STATE.open_lifted) if up and STATE.open_lifted else None}
 
 

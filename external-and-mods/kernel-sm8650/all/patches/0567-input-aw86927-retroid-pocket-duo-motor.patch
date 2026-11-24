@@ -1,0 +1,628 @@
+From: lavachemist <48248311+lavachemist@users.noreply.github.com>
+Subject: [PATCH] input: aw86927: drive the Retroid Pocket Duo's motor as stock does
+
+The driver plays one 235 Hz sine, for another handheld's motor. The Duo's
+resonates at 166 Hz (measured with the chip's own detection), so it was weak.
+With "pbos,f0-hertz" in its node the motor is driven as the Duo's Android does
+(traced from its driver and vibrator service): sines at resonance, full scale
+for clicks and the rated level for long buzzes, at battery voltage, for a fixed
+time, with the brake; one gain for everything, corrected for the battery. Effects
+are FF_PERIODIC/FF_CUSTOM with Android's ids (click, tick, heavy click, ...),
+FF_RUMBLE by its length, the strength FF_GAIN.
+
+Register writes no longer read first (regmap cache), and a command the chip
+does not take resets it. Without the property nothing changes, but the cache.
+
+
+---
+--- a/drivers/input/misc/aw86927.c
++++ b/drivers/input/misc/aw86927.c
+@@ -10,13 +10,20 @@
+ #include <linux/bitfield.h>
+ #include <linux/bits.h>
+ #include <linux/delay.h>
++#include <linux/fixp-arith.h>
+ #include <linux/gpio/consumer.h>
++#include <linux/hrtimer.h>
+ #include <linux/i2c.h>
+ #include <linux/input.h>
+ #include <linux/module.h>
++#include <linux/property.h>
+ #include <linux/regmap.h>
+ #include <linux/regulator/consumer.h>
++#include <linux/slab.h>
++#include <linux/spinlock.h>
+ #include <linux/types.h>
++#include <linux/uaccess.h>
++#include <linux/unaligned.h>
+ 
+ #define AW86927_RSTCFG_REG			0x00
+ #define AW86927_RSTCFG_SOFTRST			0xaa
+@@ -55,8 +62,10 @@
+ #define AW86927_PLAYCFG3_AUTO_BST_MASK		GENMASK(4, 4)
+ #define AW86927_PLAYCFG3_AUTO_BST_ENABLE	1
+ #define AW86927_PLAYCFG3_AUTO_BST_DISABLE	0
++#define AW86927_PLAYCFG3_BRK_EN			BIT(2)
+ #define AW86927_PLAYCFG3_PLAY_MODE_MASK		GENMASK(1, 0)
+ #define AW86927_PLAYCFG3_PLAY_MODE_RAM		0
++#define AW86927_PLAYCFG3_PLAY_MODE_STOP		3
+ 
+ #define AW86927_PLAYCFG4_REG			0x09
+ #define AW86927_PLAYCFG4_STOP			BIT(1)
+@@ -152,6 +161,9 @@
+ #define AW86927_TMCFG_UNLOCK			0x7d
+ #define AW86927_TMCFG_LOCK			0x00
+ 
++#define AW86927_DET_VBATH_REG			0x4f
++#define AW86927_TRIM_REG			0x79
++
+ #define AW86927_ANACFG11_REG			0x70
+ 
+ #define AW86927_ANACFG12_REG			0x71
+@@ -194,13 +206,59 @@
+ 	struct regmap *regmap;
+ 	struct gpio_desc *reset_gpio;
+ 	u16 level;
++
++	/* Stock Android's way (see aw86927_vendor_play()); f0 0: not here */
++	u32 f0;			/* the motor's resonance, Hz */
++	bool broken;		/* the last command failed: set the chip up again */
++	u8 gain;
++	spinlock_t lock;	/* what is asked for: the next three */
++	u8 index;		/* 0: stop */
++	u16 ms;			/* 0: until stopped */
++	int id;			/* the effect playing */
++	struct {
++		u8 index;
++		u16 ms;
++	} effects[8];
++	struct hrtimer timer;
+ };
+ 
++/*
++ * Cached, so that changing a few bits is one write on the bus and no read: what
++ * the chip itself changes, and the SRAM port, are not.
++ */
++static bool aw86927_volatile_reg(struct device *dev, unsigned int reg)
++{
++	switch (reg) {
++	case AW86927_RSTCFG_REG:
++	case AW86927_SYSINT_REG:
++	case AW86927_PLAYCFG4_REG:
++	case AW86927_GLBRD5_REG:
++	case AW86927_RAMADDRH_REG:
++	case AW86927_RAMADDRL_REG:
++	case AW86927_RAMDATA_REG:
++	case AW86927_DETCFG1_REG:
++	case AW86927_DET_VBATH_REG:
++	case AW86927_DET_VBATH_REG + 1:
++	case AW86927_CHIPIDH_REG:
++	case AW86927_CHIPIDL_REG:
++	case AW86927_TRIM_REG:
++		return true;
++	}
++	return false;
++}
++
++static bool aw86927_noinc_reg(struct device *dev, unsigned int reg)
++{
++	return reg == AW86927_RAMDATA_REG;
++}
++
+ static const struct regmap_config aw86927_regmap_config = {
+ 	.reg_bits = 8,
+ 	.val_bits = 8,
+-	.cache_type = REGCACHE_NONE,
++	.cache_type = REGCACHE_MAPLE,
+ 	.max_register = 0x80,
++	.volatile_reg = aw86927_volatile_reg,
++	.writeable_noinc_reg = aw86927_noinc_reg,
+ };
+ 
+ /*
+@@ -324,11 +382,341 @@
+ 		err = aw86927_play_mode(haptics, AW86927_STANDBY_MODE);
+ 		if (err)
+ 			return err;
++	}
++
++	return 0;
++}
++
++/*
++ * Driving the motor as stock Android does on the Retroid Pocket Duo: a looped
++ * wave at battery voltage (the booster stays off), for a fixed time, braked.
++ * Waves 1-3 are full scale, for clicks, wave 4 the motor's rated level; all
++ * are sines at its resonance. The strength is one gain for everything,
++ * corrected for the battery's voltage; an effect's own magnitude is not used.
++ */
++#define AW86927_VENDOR_GAIN		65	/* of 128; stock's default */
++#define AW86927_VENDOR_GAIN_MAX		179
++#define AW86927_VENDOR_VBAT_MV		4200	/* what the gain is for */
++#define AW86927_VENDOR_RATED		38
++
++static int aw86927_setup(struct aw86927_data *haptics);
++
++static int aw86927_ram_clock(struct aw86927_data *haptics, bool on)
++{
++	int err = regmap_update_bits(haptics->regmap, AW86927_SYSCTRL3_REG,
++				     AW86927_SYSCTRL3_EN_RAMINIT_MASK,
++				     FIELD_PREP(AW86927_SYSCTRL3_EN_RAMINIT_MASK, on));
++
++	if (!err && on)
++		usleep_range(500, 600);
++	return err;
++}
++
++/* "Play" the stop mode with the RAM clock on, then wait for the brake */
++static int aw86927_vendor_stop(struct aw86927_data *haptics)
++{
++	unsigned int state;
++	int err, err2;
++
++	err = aw86927_ram_clock(haptics, true);
++	if (err)
++		return err;
++
++	err = regmap_update_bits(haptics->regmap, AW86927_PLAYCFG3_REG,
++				 AW86927_PLAYCFG3_PLAY_MODE_MASK,
++				 AW86927_PLAYCFG3_PLAY_MODE_STOP);
++	if (!err)
++		err = regmap_write(haptics->regmap, AW86927_PLAYCFG4_REG,
++				   AW86927_PLAYCFG4_GO);
++	err2 = aw86927_ram_clock(haptics, false);
++	if (err ?: err2)
++		return err ?: err2;
++
++	err = regmap_read_poll_timeout(haptics->regmap, AW86927_GLBRD5_REG, state,
++				       FIELD_GET(AW86927_GLBRD5_STATE_MASK, state) ==
++						AW86927_GLBRD5_STATE_STANDBY,
++				       2500, 250000);
++	return err ? aw86927_play_mode(haptics, AW86927_STANDBY_MODE) : 0;
++}
++
++static int aw86927_vendor_vbat(struct aw86927_data *haptics, unsigned int *mv)
++{
++	__be16 buf;
++	u16 code;
++	int err;
++
++	err = aw86927_ram_clock(haptics, true);
++	if (err)
++		return err;
++
++	err = regmap_update_bits(haptics->regmap, AW86927_DETCFG2_REG,
++				 AW86927_DETCFG2_DET_SEQ0_MASK,
++				 FIELD_PREP(AW86927_DETCFG2_DET_SEQ0_MASK,
++					    AW86927_DETCFG2_DET_SEQ0_VBAT));
++	if (!err)
++		err = regmap_write(haptics->regmap, AW86927_DETCFG1_REG,
++				   AW86927_DETCFG1_DET_GO_DET_SEQ0);
++	if (!err) {
++		usleep_range(3000, 3500);
++		err = regmap_write(haptics->regmap, AW86927_DETCFG1_REG,
++				   AW86927_DETCFG1_DET_GO_NA);
++	}
++	if (!err)
++		err = regmap_bulk_read(haptics->regmap, AW86927_DET_VBATH_REG, &buf, 2);
++	if (err)
++		return err;
++
++	code = be16_to_cpu(buf) & 0x3ff;
++	*mv = code > 0x2f6 ? 4500 : max(code * 6075u / 1024, 3000u);
++
++	return aw86927_ram_clock(haptics, false);
++}
++
++static int aw86927_vendor_play(struct aw86927_data *haptics, u8 index)
++{
++	unsigned int mv, trim;
++	int err;
++
++	err = aw86927_vendor_vbat(haptics, &mv);
++	if (err)
++		return err;
++
++	err = regmap_write(haptics->regmap, AW86927_PLAYCFG2_REG,
++			   min(haptics->gain * AW86927_VENDOR_VBAT_MV / mv,
++			       (unsigned int)AW86927_VENDOR_GAIN_MAX));
++	if (err)
++		return err;
++
++	err = regmap_update_bits(haptics->regmap, AW86927_WAVCFG1_REG,
++				 AW86927_WAVCFG1_WAVSEQ1_MASK, index);
++	if (err)
++		return err;
++
++	err = regmap_write(haptics->regmap, AW86927_WAVCFG2_REG, 0);
++	if (err)
++		return err;
++
++	err = regmap_update_bits(haptics->regmap, AW86927_WAVCFG9_REG,
++				 AW86927_WAVCFG9_SEQ1LOOP_MASK,
++				 FIELD_PREP(AW86927_WAVCFG9_SEQ1LOOP_MASK,
++					    AW86927_WAVCFG9_SEQ1LOOP_INFINITELY));
++	if (err)
++		return err;
++
++	/* RAM, no booster, software battery mode; and the brake */
++	err = aw86927_play_mode(haptics, AW86927_RAM_MODE);
++	if (err)
++		return err;
++
++	err = regmap_update_bits(haptics->regmap, AW86927_PLAYCFG3_REG,
++				 AW86927_PLAYCFG3_BRK_EN, AW86927_PLAYCFG3_BRK_EN);
++	if (err)
++		return err;
++
++	err = regmap_read(haptics->regmap, AW86927_TRIM_REG, &trim);
++	if (err)
++		return err;
++
++	return regmap_write(haptics->regmap, AW86927_PLAYCFG4_REG,
++			    trim < 0x40 ? AW86927_PLAYCFG4_GO : AW86927_PLAYCFG4_STOP);
++}
++
++static void aw86927_vendor_work(struct work_struct *work)
++{
++	struct aw86927_data *haptics = container_of(work, struct aw86927_data, play_work);
++	unsigned long flags;
++	u8 index;
++	u16 ms;
++	int err;
++
++	hrtimer_cancel(&haptics->timer);
++
++	spin_lock_irqsave(&haptics->lock, flags);
++	index = haptics->index;
++	ms = haptics->ms;
++	spin_unlock_irqrestore(&haptics->lock, flags);
++
++	err = haptics->broken ? aw86927_setup(haptics) : 0;
++	if (!err)
++		err = aw86927_vendor_stop(haptics);
++	if (!err && index)
++		err = aw86927_vendor_play(haptics, index);
++
++	haptics->broken = err;
++	if (err)
++		dev_err(haptics->dev, "Failed to %s: %d\n", index ? "play" : "stop", err);
++	else if (index && ms)
++		hrtimer_start(&haptics->timer, ms_to_ktime(ms), HRTIMER_MODE_REL);
++}
++
++static enum hrtimer_restart aw86927_vendor_timer(struct hrtimer *timer)
++{
++	struct aw86927_data *haptics = container_of(timer, struct aw86927_data, timer);
++	unsigned long flags;
++
++	spin_lock_irqsave(&haptics->lock, flags);
++	haptics->index = 0;
++	haptics->id = -1;
++	spin_unlock_irqrestore(&haptics->lock, flags);
++	queue_work(system_highpri_wq, &haptics->play_work);
++	return HRTIMER_NORESTART;
++}
++
++/* The wave and time of each effect, as stock Android's vibrator service */
++static int aw86927_vendor_upload(struct input_dev *dev, struct ff_effect *effect,
++				 struct ff_effect *old)
++{
++	struct aw86927_data *haptics = input_get_drvdata(dev);
++	u16 ms = effect->replay.length;
++	u8 index;
++	s16 id;
++
++	if (effect->type == FF_PERIODIC) {
++		if (effect->u.periodic.waveform != FF_CUSTOM || !effect->u.periodic.custom_len)
++			return -EINVAL;
++		if (get_user(id, effect->u.periodic.custom_data))
++			return -EFAULT;
++		switch (id) {
++		case 2:		/* tick */
++			index = 1;
++			ms = 36;
++			break;
++		case 0:		/* click */
++		case 3:		/* thud */
++		case 4:		/* pop */
++		case 21:	/* texture tick */
++			index = 1;
++			ms = 48;
++			break;
++		case 1:		/* double click */
++			index = 2;
++			ms = 36;
++			break;
++		case 5:		/* heavy click */
++			index = 3;
++			ms = 48;
++			break;
++		default:
++			return -EINVAL;
++		}
++	} else if (!effect->u.rumble.strong_magnitude && !effect->u.rumble.weak_magnitude) {
++		index = 0;
++	} else {
++		index = !ms || ms > 50 ? 4 : ms <= 10 ? 1 : ms <= 30 ? 2 : 3;
+ 	}
+ 
++	haptics->effects[effect->id].index = index;
++	haptics->effects[effect->id].ms = ms;
+ 	return 0;
+ }
+ 
++static int aw86927_vendor_erase(struct input_dev *dev, int id)
++{
++	return 0;
++}
++
++static int aw86927_vendor_playback(struct input_dev *dev, int id, int value)
++{
++	struct aw86927_data *haptics = input_get_drvdata(dev);
++	unsigned long flags;
++
++	spin_lock_irqsave(&haptics->lock, flags);
++	if (value > 0) {
++		haptics->id = id;
++		haptics->index = haptics->effects[id].index;
++		haptics->ms = haptics->effects[id].ms;
++	} else if (haptics->id == id) {
++		haptics->id = -1;
++		haptics->index = 0;
++	} else {
++		spin_unlock_irqrestore(&haptics->lock, flags);
++		return 0;	/* another one's, or over already */
++	}
++	spin_unlock_irqrestore(&haptics->lock, flags);
++	queue_work(system_highpri_wq, &haptics->play_work);
++	return 0;
++}
++
++static void aw86927_vendor_set_gain(struct input_dev *dev, u16 gain)
++{
++	struct aw86927_data *haptics = input_get_drvdata(dev);
++
++	haptics->gain = gain * 128 / 0xffff;
++}
++
++static void aw86927_vendor_close(struct input_dev *dev)
++{
++	struct aw86927_data *haptics = input_get_drvdata(dev);
++	unsigned long flags;
++
++	spin_lock_irqsave(&haptics->lock, flags);
++	haptics->index = 0;
++	haptics->id = -1;
++	spin_unlock_irqrestore(&haptics->lock, flags);
++	queue_work(system_highpri_wq, &haptics->play_work);
++}
++
++/* The driver goes: the input device is gone, nothing more is asked for */
++static void aw86927_vendor_quiet(void *data)
++{
++	struct aw86927_data *haptics = data;
++
++	hrtimer_cancel(&haptics->timer);
++	cancel_work_sync(&haptics->play_work);
++	hrtimer_cancel(&haptics->timer);
++	aw86927_vendor_stop(haptics);
++}
++
++static int aw86927_vendor_input(struct aw86927_data *haptics)
++{
++	struct input_dev *dev = haptics->input_dev;
++	int err;
++
++	INIT_WORK(&haptics->play_work, aw86927_vendor_work);
++	hrtimer_setup(&haptics->timer, aw86927_vendor_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
++	dev->close = aw86927_vendor_close;
++	input_set_capability(dev, EV_FF, FF_PERIODIC);
++	input_set_capability(dev, EV_FF, FF_CUSTOM);
++	input_set_capability(dev, EV_FF, FF_GAIN);
++
++	err = input_ff_create(dev, ARRAY_SIZE(haptics->effects));
++	if (err)
++		return err;
++
++	dev->ff->upload = aw86927_vendor_upload;
++	dev->ff->erase = aw86927_vendor_erase;
++	dev->ff->playback = aw86927_vendor_playback;
++	dev->ff->set_gain = aw86927_vendor_set_gain;
++	return 0;
++}
++
++/* The SRAM's content: version, each wave's first and last address, the waves */
++static int aw86927_vendor_waves(struct aw86927_data *haptics)
++{
++	unsigned int cycle = 24000 / haptics->f0, i, w;
++	u16 at;
++	u8 *buf;
++	int err;
++
++	/* One cycle at resonance each, full scale for 1-3 and rated for 4 */
++	buf = kmalloc(17 + 4 * cycle, GFP_KERNEL);
++	if (!buf)
++		return -ENOMEM;
++	buf[0] = 0x01;
++	for (w = 0; w < 4; w++) {
++		at = AW86927_RAM_BASE_ADDR + 17 + w * cycle;
++		put_unaligned_be16(at, buf + 1 + 4 * w);
++		put_unaligned_be16(at + cycle - 1, buf + 3 + 4 * w);
++		for (i = 0; i < cycle; i++)
++			buf[17 + w * cycle + i] =
++				(s8)(((s64)(w < 3 ? 127 : AW86927_VENDOR_RATED) *
++				      fixp_sin32(i * 360 / cycle)) >> 31);
++	}
++	err = regmap_noinc_write(haptics->regmap, AW86927_RAMDATA_REG, buf, 17 + 4 * cycle);
++	kfree(buf);
++	return err;
++}
++
+ static int aw86927_haptics_play(struct input_dev *dev, void *data, struct ff_effect *effect)
+ {
+ 	struct aw86927_data *haptics = input_get_drvdata(dev);
+@@ -650,6 +1038,13 @@
+ 	if (err)
+ 		return err;
+ 
++	if (haptics->f0) {
++		err = aw86927_vendor_waves(haptics);
++		if (err)
++			return err;
++		goto written;
++	}
++
+ 	/* Write waveform header to SRAM */
+ 	err = regmap_noinc_write(haptics->regmap, AW86927_RAMDATA_REG,
+ 				 &sram_waveform_header, sizeof(sram_waveform_header));
+@@ -662,6 +1057,7 @@
+ 	if (err)
+ 		return err;
+ 
++written:
+ 	err = regmap_update_bits(haptics->regmap,
+ 				 AW86927_DETCFG2_REG,
+ 				 AW86927_DETCFG2_DET_SEQ0_MASK,
+@@ -761,41 +1157,20 @@
+ 	return 0;
+ }
+ 
+-static int aw86927_probe(struct i2c_client *client)
++/* Reset the chip and make it ready to play */
++static int aw86927_setup(struct aw86927_data *haptics)
+ {
+-	struct aw86927_data *haptics;
+ 	int err;
+ 
+-	haptics = devm_kzalloc(&client->dev, sizeof(struct aw86927_data), GFP_KERNEL);
+-	if (!haptics)
+-		return -ENOMEM;
+-
+-	haptics->dev = &client->dev;
+-	haptics->client = client;
+-
+-	i2c_set_clientdata(client, haptics);
+-
+-	haptics->regmap = devm_regmap_init_i2c(client, &aw86927_regmap_config);
+-	if (IS_ERR(haptics->regmap))
+-		return dev_err_probe(haptics->dev, PTR_ERR(haptics->regmap),
+-					"Failed to allocate register map\n");
++	regcache_drop_region(haptics->regmap, 0, aw86927_regmap_config.max_register);
+ 
+-	haptics->input_dev = devm_input_allocate_device(haptics->dev);
+-	if (!haptics->input_dev)
+-		return -ENOMEM;
+-
+-	haptics->reset_gpio = devm_gpiod_get(haptics->dev, "reset", GPIOD_OUT_HIGH);
+-	if (IS_ERR(haptics->reset_gpio))
+-		return dev_err_probe(haptics->dev, PTR_ERR(haptics->reset_gpio),
+-				     "Failed to get reset gpio\n");
+-
+ 	/* Hardware reset */
+ 	aw86927_hw_reset(haptics);
+ 
+ 	/* Software reset */
+ 	err = regmap_write(haptics->regmap, AW86927_RSTCFG_REG, AW86927_RSTCFG_SOFTRST);
+ 	if (err)
+-		return dev_err_probe(haptics->dev, err,	"Failed Software reset\n");
++		return dev_err_probe(haptics->dev, err, "Failed Software reset\n");
+ 
+ 	/* Wait ~3ms until I2C is accessible */
+ 	usleep_range(3000, 3500);
+@@ -821,23 +1196,6 @@
+ 	if (err)
+ 		return dev_err_probe(haptics->dev, err, "Failed to configure interrupt masks\n");
+ 
+-	err = devm_request_threaded_irq(haptics->dev, client->irq, NULL,
+-					aw86927_irq, IRQF_ONESHOT, NULL, haptics);
+-	if (err)
+-		return dev_err_probe(haptics->dev, err, "Failed to request threaded irq\n");
+-
+-	INIT_WORK(&haptics->play_work, aw86927_haptics_play_work);
+-
+-	haptics->input_dev->name = "aw86927-haptics";
+-	haptics->input_dev->close = aw86927_close;
+-
+-	input_set_drvdata(haptics->input_dev, haptics);
+-	input_set_capability(haptics->input_dev, EV_FF, FF_RUMBLE);
+-
+-	err = input_ff_create_memless(haptics->input_dev, NULL, aw86927_haptics_play);
+-	if (err)
+-		return dev_err_probe(haptics->dev, err, "Failed to create FF dev\n");
+-
+ 	/* Set up registers */
+ 	err = aw86927_play_mode(haptics, AW86927_STANDBY_MODE);
+ 	if (err)
+@@ -852,7 +1210,71 @@
+ 	err = aw86927_ram_init(haptics);
+ 	if (err)
+ 		return dev_err_probe(haptics->dev, err, "Failed to init aw86927 sram\n");
++
++	return 0;
++}
+ 
++static int aw86927_probe(struct i2c_client *client)
++{
++	struct aw86927_data *haptics;
++	int err;
++
++	haptics = devm_kzalloc(&client->dev, sizeof(struct aw86927_data), GFP_KERNEL);
++	if (!haptics)
++		return -ENOMEM;
++
++	haptics->dev = &client->dev;
++	haptics->client = client;
++
++	haptics->gain = AW86927_VENDOR_GAIN;
++	haptics->id = -1;
++	spin_lock_init(&haptics->lock);
++	device_property_read_u32(haptics->dev, "pbos,f0-hertz", &haptics->f0);
++	if (haptics->f0 && (haptics->f0 < 100 || haptics->f0 > 500))
++		return dev_err_probe(haptics->dev, -EINVAL, "f0 %u Hz\n", haptics->f0);
++
++	i2c_set_clientdata(client, haptics);
++
++	haptics->regmap = devm_regmap_init_i2c(client, &aw86927_regmap_config);
++	if (IS_ERR(haptics->regmap))
++		return dev_err_probe(haptics->dev, PTR_ERR(haptics->regmap),
++					"Failed to allocate register map\n");
++
++	haptics->input_dev = devm_input_allocate_device(haptics->dev);
++	if (!haptics->input_dev)
++		return -ENOMEM;
++
++	haptics->reset_gpio = devm_gpiod_get(haptics->dev, "reset", GPIOD_OUT_HIGH);
++	if (IS_ERR(haptics->reset_gpio))
++		return dev_err_probe(haptics->dev, PTR_ERR(haptics->reset_gpio),
++				     "Failed to get reset gpio\n");
++
++	err = aw86927_setup(haptics);
++	if (err)
++		return err;
++
++	err = devm_request_threaded_irq(haptics->dev, client->irq, NULL,
++					aw86927_irq, IRQF_ONESHOT, NULL, haptics);
++	if (err)
++		return dev_err_probe(haptics->dev, err, "Failed to request threaded irq\n");
++
++	haptics->input_dev->name = "aw86927-haptics";
++	haptics->input_dev->close = aw86927_close;
++
++	input_set_drvdata(haptics->input_dev, haptics);
++	input_set_capability(haptics->input_dev, EV_FF, FF_RUMBLE);
++
++	if (haptics->f0) {
++		err = aw86927_vendor_input(haptics);
++		if (!err)
++			err = devm_add_action_or_reset(haptics->dev, aw86927_vendor_quiet, haptics);
++	} else {
++		INIT_WORK(&haptics->play_work, aw86927_haptics_play_work);
++		err = input_ff_create_memless(haptics->input_dev, NULL, aw86927_haptics_play);
++	}
++	if (err)
++		return dev_err_probe(haptics->dev, err, "Failed to create FF dev\n");
++
+ 	err = input_register_device(haptics->input_dev);
+ 	if (err)
+ 		return dev_err_probe(haptics->dev, err, "Failed to register input device\n");

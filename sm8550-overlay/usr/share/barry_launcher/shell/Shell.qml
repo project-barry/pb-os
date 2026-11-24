@@ -124,6 +124,7 @@ Window {
     property string underShot: ""   // the app as it showed, under a side panel (file URL)
     property bool underCover: false // that picture over everything, Barry closed (see underClear)
     property bool appFront: false   // an app in front, Barry closed: side swipes are on (GET /home)
+    property bool anyFront: false   // an app or a tool in front, Barry closed: the swipe up is on
     property bool following: false  // the side page follows the finger (EdgeSwipe)
     property string edgeResult: ""  // let go before Barry showed: "open" or "cancel"
     // Opened on a side page from an app: swiped back, it closes to the app.
@@ -186,11 +187,11 @@ Window {
         }
         // No Barry button: the swipe up from the bottom edge (see the top).
         bottomArmed: Device.barryButton === "" && !win.desktop
-                     && ((win.appFront && !win.barryOpen) || (win.barryOpen && win.heroOn && !win.sidePanel))
+                     && ((win.anyFront && !win.barryOpen) || (win.barryOpen && win.heroOn && !win.sidePanel))
         onSwipedUp: function (x, y) {
             if (win.barryOpen)
                 win.post("/barry", { open: false, back: false, why: "swipe up from the bottom edge" })
-            else if (win.appFront)
+            else if (win.anyFront)
                 win.post("/barry", { open: true, why: "swipe up from the bottom edge", lifted: [Math.round(x), Math.round(y)] })
         }
     }
@@ -611,6 +612,7 @@ Window {
         // off, the logo showing over Barry).
         win.barryOpen = open
         win.appFront = answer.app === true
+        win.anyFront = answer.front === true
     }
 
     // Barry.Input's ShellState: shelld pushes /home and /apps as they change

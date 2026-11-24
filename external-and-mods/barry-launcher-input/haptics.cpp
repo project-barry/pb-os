@@ -25,6 +25,11 @@ constexpr int CLICK_MS = 24;
 constexpr int LET_GO_MS = 60;
 // FF_CONSTANT levels for strengths 1-3.
 constexpr int LEVELS[] = {0x4000, 0x5fff, 0x7fff};
+// The Retroid Pocket Duo's: Android's effects (both a 48 ms click) and its four
+// strengths, a gain for everything the motor does (of 128).
+constexpr __s16 EFFECT_CLICK = 0, EFFECT_TICK = 2;
+constexpr int EFFECT_MS = 48;
+constexpr int GAINS[] = {30, 65, 90, 102};
 
 QString findMotor()
 {
@@ -40,13 +45,10 @@ QString findMotor()
     return {};
 }
 
-// The motor takes FF_CONSTANT (qcom-hv-haptics); else it gets FF_RUMBLE.
-bool takesConstant(int fd)
+bool isDuos(const QString &devnode)
 {
-    unsigned long bits[FF_MAX / (8 * sizeof(unsigned long)) + 1] = {};
-    if (ioctl(fd, EVIOCGBIT(EV_FF, sizeof bits), bits) < 0)
-        return true;
-    return bits[FF_CONSTANT / (8 * sizeof(unsigned long))] >> (FF_CONSTANT % (8 * sizeof(unsigned long))) & 1;
+    QFile f(QStringLiteral("/sys/class/input/%1/device/name").arg(devnode.section(u'/', -1)));
+    return f.open(QIODevice::ReadOnly) && f.readAll().trimmed() == "aw86927-haptics";
 }
 
 }  // namespace
@@ -66,6 +68,7 @@ Haptics *Haptics::create(QQmlEngine *, QJSEngine *engine)
 
 Haptics::Haptics(QObject *parent) : QObject(parent), m_devnode(findMotor())
 {
+    m_effects = isDuos(m_devnode);
     m_letGo.setSingleShot(true);
     connect(&m_letGo, &QTimer::timeout, this, &Haptics::letGo);
     load();
@@ -93,7 +96,7 @@ void Haptics::load()
     if (f.open(QIODevice::ReadOnly))
         o = QJsonDocument::fromJson(f.readAll()).object();
     const bool enabled = o.value(QStringLiteral("enabled")).toBool(true);
-    const int strength = qBound(1, o.value(QStringLiteral("strength")).toInt(2), 3);
+    const int strength = qBound(1, o.value(QStringLiteral("strength")).toInt(2), maxStrength());
     if (enabled != m_enabled || strength != m_strength) {
         m_enabled = enabled;
         m_strength = strength;
@@ -121,7 +124,7 @@ void Haptics::setEnabled(bool enabled)
 
 void Haptics::setStrength(int strength)
 {
-    strength = qBound(1, strength, 3);
+    strength = qBound(1, strength, maxStrength());
     if (strength == m_strength)
         return;
     m_strength = strength;
@@ -144,7 +147,6 @@ void Haptics::pulse(int ms)
     if (!m_enabled || m_devnode.isEmpty())
         return;
     ms = qBound(5, ms, 200);
-    const int level = LEVELS[m_strength - 1];
     if (m_fd < 0) {
         m_fd = open(m_devnode.toLocal8Bit().constData(), O_RDWR | O_CLOEXEC);
         if (m_fd < 0) {
@@ -154,18 +156,25 @@ void Haptics::pulse(int ms)
             return;
         }
         m_effect = -1;
-        m_constant = takesConstant(m_fd);
     }
+    const int level = m_effects ? GAINS[m_strength - 1] : LEVELS[m_strength - 1];
+    const __s16 id = ms <= TICK_MS ? EFFECT_TICK : EFFECT_CLICK;
     if (m_effect < 0 || ms != m_effectMs || level != m_effectLevel) {
         ff_effect effect{};
-        effect.type = m_constant ? FF_CONSTANT : FF_RUMBLE;
+        effect.type = m_effects ? FF_PERIODIC : FF_CONSTANT;
         effect.id = short(m_effect);  // -1: a new one; else changed in place
         effect.direction = 0x4000;
-        if (m_constant) {
-            effect.u.constant.level = short(level);
+        if (m_effects) {
+            effect.u.periodic.waveform = FF_CUSTOM;
+            effect.u.periodic.custom_len = 1;
+            effect.u.periodic.custom_data = const_cast<__s16 *>(&id);
+            input_event gain{};
+            gain.type = EV_FF;
+            gain.code = FF_GAIN;
+            gain.value = (level * 0xffff + 127) / 128;
+            (void)!write(m_fd, &gain, sizeof gain);
         } else {
-            effect.u.rumble.strong_magnitude = __u16(level * 2);
-            effect.u.rumble.weak_magnitude = __u16(level * 2);
+            effect.u.constant.level = short(level);
         }
         effect.replay.length = __u16(ms);
         if (ioctl(m_fd, EVIOCSFF, &effect) < 0) {
@@ -187,7 +196,7 @@ void Haptics::pulse(int ms)
     play.code = __u16(m_effect);
     play.value = 1;
     (void)!write(m_fd, &play, sizeof play);
-    m_letGo.start(ms + LET_GO_MS);
+    m_letGo.start((m_effects ? EFFECT_MS : ms) + LET_GO_MS);
 }
 
 void Haptics::letGo()

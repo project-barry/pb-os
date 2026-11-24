@@ -31,12 +31,16 @@
 //          (sm8550-charge-control).
 // Proton   which PB-OS twin stands for which of Valve's Proton tools
 //          (/usr/lib/steamos/pbos-proton); the frontend sets them per game.
+// Vibration  Barry's key and button vibration, on and off and how strong
+//          (~/.config/barry_launcher/haptics.json, as Barry.Input reads it).
 // Face buttons, Sticks, Barry Launcher in Desktop Mode: fronts for
 //          sm8550-face-buttons, sm8550-stickcal and
 //          barry_launcher_desktop_switch.
 
 #include <fcntl.h>
+#include <linux/input.h>
 #include <sys/inotify.h>
+#include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -748,6 +752,95 @@ Value barry_desktop(const std::vector<std::string>& args) {
     return *v;
 }
 
+// ------------------------------------------------------------ vibration --
+// Barry's own keys and buttons (Barry.Input's haptics.cpp, which watches this
+// file), on the two-screen devices. A change buzzes once, to feel it. On the
+// Retroid Pocket Duo the strength is the motor's, for everything: Android's
+// four (of 128), set here at start too.
+std::string haptics_path() { return desktop_user().home + "/.config/barry_launcher/haptics.json"; }
+
+std::string vibration_motor() {
+    for (const auto& f : glob("/sys/class/input/event*/device/name")) {
+        std::string name = rd(f);
+        if (name == "qcom-hv-haptics" || name == "aw86927-haptics")
+            return "/dev/input/" + basename(dirname(dirname(f)));
+    }
+    return "";
+}
+
+bool duo_motor(const std::string& motor) {
+    return rd("/sys/class/input/" + basename(motor) + "/device/name") == "aw86927-haptics";
+}
+
+void ff_event(int fd, int code, int value) {
+    input_event e{};
+    e.type = EV_FF;
+    e.code = static_cast<__u16>(code);
+    e.value = value;
+    (void)!write(fd, &e, sizeof e);
+}
+
+Value vibration_state() {
+    std::string c = dt_compatible();
+    bool two = c.find("ayn,thor") != std::string::npos || c.find("retroidpocket,rpduo") != std::string::npos;
+    Value out = Value::object();
+    std::string motor = vibration_motor();
+    long long levels = duo_motor(motor) ? 4 : 3;
+    out["supported"] = two && !motor.empty();
+    out["levels"] = levels;
+    Value st = read_json(haptics_path());
+    out["enabled"] = st.has("enabled") ? st["enabled"].truthy() : true;
+    out["strength"] = std::max(1LL, std::min(levels, st.has("strength") ? st["strength"].as_int(2) : 2));
+    return out;
+}
+
+// This strength; and one click, to feel it (as haptics.cpp).
+void vibration_apply(long long strength, bool buzz) {
+    static const int LEVELS[] = {0x4000, 0x5fff, 0x7fff}, GAINS[] = {30, 65, 90, 102};
+    std::string motor = vibration_motor();
+    bool duo = duo_motor(motor);
+    if (motor.empty() || (!buzz && !duo)) return;
+    int fd = open(motor.c_str(), O_RDWR | O_CLOEXEC);
+    if (fd < 0) return;
+    ff_effect effect{};
+    effect.id = -1;
+    effect.replay.length = 24;
+    __s16 click = 0;
+    if (duo) {
+        ff_event(fd, FF_GAIN, (GAINS[std::min(strength, 4LL) - 1] * 0xffff + 127) / 128);
+        effect.type = FF_PERIODIC;
+        effect.u.periodic.waveform = FF_CUSTOM;
+        effect.u.periodic.custom_len = 1;
+        effect.u.periodic.custom_data = &click;
+    } else {
+        effect.type = FF_CONSTANT;
+        effect.direction = 0x4000;
+        effect.u.constant.level = static_cast<short>(LEVELS[std::min(strength, 3LL) - 1]);
+    }
+    if (buzz && ioctl(fd, EVIOCSFF, &effect) == 0) {
+        ff_event(fd, effect.id, 1);
+        std::this_thread::sleep_for(std::chrono::milliseconds(110));
+        ioctl(fd, EVIOCRMFF, static_cast<int>(effect.id));
+    }
+    close(fd);
+}
+
+Value set_vibration(bool enabled, long long strength) {
+    Value st = Value::object();
+    st["enabled"] = enabled;
+    st["strength"] = std::max(1LL, std::min(duo_motor(vibration_motor()) ? 4LL : 3LL, strength));
+    const User& u = desktop_user();
+    RunOpts o;
+    o.env = clean_env({"HOME=" + u.home, "USER=" + u.name, "LOGNAME=" + u.name});
+    o.input = st.dump() + "\n";
+    auto r = run({"setpriv", "--reuid=" + std::to_string(u.uid), "--regid=" + std::to_string(u.gid), "--init-groups", "--",
+                  "sh", "-c", "mkdir -p \"${1%/*}\" && cat >\"$1.tmp\" && mv \"$1.tmp\" \"$1\"", "sh", haptics_path()},
+                 o);
+    if (r.code != 0) log("tools: vibration not saved: %s", trim(r.err).c_str());
+    else vibration_apply(st["strength"].as_int(2), enabled);
+    return vibration_state();
+}
+
 // ------------------------------------------------------------------ mtp --
 // MTP over the USB-C cable (pbos-mtp.service, uMTP-Responder): a PC browses
 // and copies the user's files with nothing to install on either side. Off by
@@ -1321,6 +1414,9 @@ public:
                 kind_known_ = true;
             }
             if (kind == "multicolor") start_engine();
+            // The Duo's motor starts at stock's default strength every boot.
+            Value vib = vibration_state();
+            if (vib["supported"].truthy()) vibration_apply(vib["strength"].as_int(2), false);
             host_->loop.post([this, kind] {
                 if (kind == "pbosd") watch_profile();
             });
@@ -1451,6 +1547,8 @@ public:
         if (m == "apk_close") return apk_close();
         if (m == "get_mtp") return mtp_state();
         if (m == "set_mtp") return set_mtp(arg(a, 0, false).truthy());
+        if (m == "get_vibration") return vibration_state();
+        if (m == "set_vibration") return set_vibration(arg(a, 0, true).truthy(), arg(a, 1, 2).as_int(2));
         if (m == "get_barry_desktop") return barry_desktop({"get"});
         if (m == "set_barry_desktop") {
             bool on = arg(a, 0, true).truthy();

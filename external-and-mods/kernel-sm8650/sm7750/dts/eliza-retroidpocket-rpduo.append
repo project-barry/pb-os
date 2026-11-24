@@ -2445,3 +2445,13 @@
 &gamepad {
 	mcu-frame = <10 4>;
 };
+
+/*
+ * pb-os: the vibration motor's resonance, measured on a Duo (166.4-166.7 Hz,
+ * 2026-11-24): all/patches/0567 drives it as the Duo's Android does.
+ */
+&i2c2 {
+	vibrator@5a {
+		pbos,f0-hertz = <166>;
+	};
+};
