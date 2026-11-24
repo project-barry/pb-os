@@ -1,19 +1,21 @@
 #!/bin/bash
 # barry_launcher_desktop_switch: Barry Launcher on or off in Desktop Mode
-# (AYN Thor). Off, the bottom screen is a plain second screen of the desktop:
+# (AYN Thor, Retroid Pocket Duo). Off, the bottom screen is a plain second screen of the desktop:
 # it sits right under the top one, windows and the pointer go there, the
 # taskbar there can be tapped, and Plasma's own keyboard is back. Game Mode
 # keeps Barry either way.
 #   get | on | off | toggle   prints {"supported", "enabled", "live"}
 #   settle                    (barry_launcher_desktop at login, while off)
+#   touch                     (barry_launcher_desktop at login, while on)
 # The setting is barry_launcherrc [Desktop] Enabled. In a running Plasma
 # session it takes effect at once ("live"), otherwise at the next Desktop
 # start. Run as the desktop user (PB-OS Tools runs it with runuser); the
 # menu entry "Barry Launcher On/Off" runs "toggle".
-if ! grep -qa "ayn,thor" /sys/firmware/devicetree/base/compatible 2>/dev/null; then
+if ! grep -qaE "ayn,thor|retroidpocket,rpduo" /sys/firmware/devicetree/base/compatible 2>/dev/null; then
   echo '{"supported": false}'
   exit 0
 fi
+. /usr/lib/barry_launcher/barry_device
 api=http://127.0.0.1:47824
 unit=barry_launcher_desktop.service
 plasma_im=/usr/share/applications/org.kde.plasma.keyboard.desktop
@@ -48,11 +50,11 @@ geometry() {
 # like barry_launcher_desktop does now. Any other layout is kept.
 layout_under() {
   local tx ty tw th bx by bw bh
-  read -r tx ty tw th <<<"$(geometry DSI-2)"
-  read -r bx by bw bh <<<"$(geometry DSI-1)"
+  read -r tx ty tw th <<<"$(geometry "$BARRY_TOP_OUTPUT")"
+  read -r bx by bw bh <<<"$(geometry "$BARRY_BOTTOM_OUTPUT")"
   [[ -n "$th" && -n "$bh" ]] || return 0
   if (( bx == tx + tw && by == ty + th )); then
-    kscreen-doctor "output.DSI-1.position.$((tx + (tw - bw) / 2)),$((ty + th))" >/dev/null 2>&1
+    kscreen-doctor "output.$BARRY_BOTTOM_OUTPUT.position.$((tx + (tw - bw) / 2)),$((ty + th))" >/dev/null 2>&1
   fi
 }
 # Plasma's panel (taskbar) sits on the first screen in KWin's order; keep
@@ -60,9 +62,9 @@ layout_under() {
 top_screen_first() {
   local prio
   prio="$(kscreen-doctor -o 2>/dev/null | sed -E 's/\x1b\[[0-9;]*m//g' \
-    | awk '$1 == "Output:" { o = $3 } o == "DSI-2" && $1 == "priority" { print $2; exit }')"
+    | awk -v t="$BARRY_TOP_OUTPUT" '$1 == "Output:" { o = $3 } o == t && $1 == "priority" { print $2; exit }')"
   [[ -n "$prio" && "$prio" != 1 ]] || return 0
-  kscreen-doctor output.DSI-2.priority.1 output.DSI-1.priority.2 >/dev/null 2>&1
+  kscreen-doctor "output.$BARRY_TOP_OUTPUT.priority.1" "output.$BARRY_BOTTOM_OUTPUT.priority.2" >/dev/null 2>&1
 }
 # Barry's trackpad takes the bottom touchscreen from KWin while open: KWin
 # gets it back, or the plain desktop there would ignore touch.
@@ -74,6 +76,24 @@ touch_back() {
       busctl --user set-property org.kde.KWin "/org/kde/KWin/InputDevice/${ev%%/*}" \
         org.kde.KWin.InputDevice enabled b true >/dev/null 2>&1 || true
     fi
+  done
+}
+# Each touchscreen drives its own screen. KWin keeps the choice, so this
+# matters on the first Desktop start (and after a reset of its settings). The
+# Thor's two controllers are told apart by bus path instead
+# (thorch-kwin-touch-map), started by its own autostart entry.
+map_touch() {
+  [[ "$BARRY_DEVICE" != thor ]] || return 0
+  local name ev out
+  for name in /sys/class/input/event*/device/name; do
+    case "$(cat "$name" 2>/dev/null)" in
+      top_touchscreen) out="$BARRY_TOP_OUTPUT" ;;
+      bottom_touchscreen) out="$BARRY_BOTTOM_OUTPUT" ;;
+      *) continue ;;
+    esac
+    ev="${name#/sys/class/input/}"
+    busctl --user set-property org.kde.KWin "/org/kde/KWin/InputDevice/${ev%%/*}" \
+      org.kde.KWin.InputDevice outputName s "$out" >/dev/null 2>&1 || true
   done
 }
 # Barry off leaves KWin without a virtual keyboard, like the Steam Deck and
@@ -101,7 +121,7 @@ turn_off() {
   touch_back
   layout_under
   top_screen_first
-  notify "Off in Desktop Mode: the bottom screen is part of the desktop. Turn it on again with the AYN button, from the menu (Barry Launcher On/Off) or in PB-OS Tools."
+  notify "Off in Desktop Mode: the bottom screen is part of the desktop. Turn it on again ${BARRY_BUTTON:+with the $BARRY_BUTTON button, }from the menu (Barry Launcher On/Off) or in PB-OS Tools."
 }
 turn_on() {
   kwriteconfig6 --file barry_launcherrc --group Desktop --key Enabled true
@@ -121,8 +141,12 @@ case "${1:-get}" in
     enabled && exit 0
     no_barry_keyboard
     touch_back
+    map_touch
     layout_under
     top_screen_first
+    exit 0 ;;
+  touch)
+    map_touch
     exit 0 ;;
   *) echo "usage: ${0##*/} get|on|off|toggle" >&2; exit 2 ;;
 esac

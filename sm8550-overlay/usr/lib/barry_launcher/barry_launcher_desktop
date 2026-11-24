@@ -1,6 +1,6 @@
 #!/bin/bash
-# barry_launcher_desktop: Barry Launcher on the AYN Thor's bottom screen in
-# Desktop Mode (Plasma on Wayland): the same home screen, apps and keyboard
+# barry_launcher_desktop: Barry Launcher on the bottom screen (AYN Thor,
+# Retroid Pocket Duo) in Desktop Mode (Plasma on Wayland): the same home screen, apps and keyboard
 # as in Game Mode, with KWin in the place of the bottom screen's gamescope
 # (barry_desktop.py). Barry's keyboard is KWin's input method
 # (barry_launcher_imd) instead of Plasma's own.
@@ -8,7 +8,10 @@
 # applications menu, with Barry already running, it goes Home, and with
 # Barry turned off in Desktop Mode (barry_launcher_desktop_switch, PB-OS
 # Tools) it turns it on again.
-grep -qa "ayn,thor" /sys/firmware/devicetree/base/compatible 2>/dev/null || exit 0
+grep -qaE "ayn,thor|retroidpocket,rpduo" /sys/firmware/devicetree/base/compatible 2>/dev/null || exit 0
+# The device's facts (outputs, the bottom screen's size and touchscreen, its
+# Barry button), for everything started here.
+. /usr/lib/barry_launcher/barry_device
 switch=/usr/lib/barry_launcher/barry_launcher_desktop_switch
 # Run by its unit or from the menu: the cgroup says which (a menu start may
 # carry plasmashell's unit environment).
@@ -36,6 +39,8 @@ for name in /sys/class/input/event*/device/name; do
       org.kde.KWin.InputDevice enabled b true >/dev/null 2>&1 || true
   fi
 done
+# Each touchscreen on its own screen (the Thor: thorch-kwin-touch-map).
+"$switch" touch
 # KWin starts its input method at login, so on the first run it is still
 # Plasma's: --notify makes KWin switch to Barry's at once.
 im=/usr/share/applications/org.barry_launcher.keyboard.desktop
@@ -65,33 +70,33 @@ geometry() {
     | awk -v o="$1" '$1 == "Output:" { n = $3 } n == o && $1 == "Geometry:" { print $2, $3; exit }' \
     | sed -E 's/^(-?[0-9]+),(-?[0-9]+) ([0-9]+)x([0-9]+)$/\1 \2 \3 \4/'
 }
-# The bottom screen sits right under the top one, centered (1536x864 over
-# 992x864 at 125 % puts it at 272,864). The position comes from both
+# The bottom screen sits right under the top one, centered (Thor: 1536x864
+# over 992x864 at 125 % puts it at 272,864; Duo: over 1024x768, at 256,864). The position comes from both
 # screens' sizes, so it follows their scale. Run again once
 # thorch-display-setup has set the layout at login.
 under_layout() {
   local tx ty tw th bw
-  read -r tx ty tw th <<<"$(geometry DSI-2)"
-  read -r _ _ bw _ <<<"$(geometry DSI-1)"
+  read -r tx ty tw th <<<"$(geometry "$BARRY_TOP_OUTPUT")"
+  read -r _ _ bw _ <<<"$(geometry "$BARRY_BOTTOM_OUTPUT")"
   [[ -n "$th" && -n "$bw" ]] || return 0
-  kscreen-doctor "output.DSI-1.position.$((tx + (tw - bw) / 2)),$((ty + th))" >/dev/null 2>&1
+  kscreen-doctor "output.$BARRY_BOTTOM_OUTPUT.position.$((tx + (tw - bw) / 2)),$((ty + th))" >/dev/null 2>&1
 }
 # Plasma puts its panel (taskbar) on screen 0, the first output in KWin's
 # order, and moves it when that order changes. The shipped layout makes the
-# top screen (DSI-2) first, but a kwinoutputconfig.json saved by an older
+# top screen first, but a kwinoutputconfig.json saved by an older
 # install can have the bottom one first, which puts the taskbar under Barry
 # (pb-os issue #2). Make the top screen first whenever it is not.
 top_screen_first() {
   local prio
   prio="$(kscreen-doctor -o 2>/dev/null | sed -E 's/\x1b\[[0-9;]*m//g' \
-    | awk '$1 == "Output:" { o = $3 } o == "DSI-2" && $1 == "priority" { print $2; exit }')"
+    | awk -v t="$BARRY_TOP_OUTPUT" '$1 == "Output:" { o = $3 } o == t && $1 == "priority" { print $2; exit }')"
   [[ -n "$prio" && "$prio" != 1 ]] || return 0
-  kscreen-doctor output.DSI-2.priority.1 output.DSI-1.priority.2 >/dev/null 2>&1
+  kscreen-doctor "output.$BARRY_TOP_OUTPUT.priority.1" "output.$BARRY_BOTTOM_OUTPUT.priority.2" >/dev/null 2>&1
 }
 under_layout
 top_screen_first
 (sleep 6; under_layout; top_screen_first) &
-export BARRY_DESKTOP=1 BARRY_OUTPUT="${BARRY_OUTPUT:-DSI-1}"
+export BARRY_DESKTOP=1 BARRY_OUTPUT="${BARRY_OUTPUT:-$BARRY_BOTTOM_OUTPUT}"
 shell_qml=/usr/share/barry_launcher/shell
 /usr/lib/barry_launcher/barry_launcher_shelld &
 # When the keyboards come up (KWin's input method, text focus, touches).

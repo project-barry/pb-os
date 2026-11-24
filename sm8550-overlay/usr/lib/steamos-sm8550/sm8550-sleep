@@ -1,6 +1,6 @@
 #!/bin/sh
 # sm8550-sleep pre|post: run by systemd-suspend.service (drop-in) around
-# every system sleep on SM8550.
+# every system sleep on SM8550 and the Retroid Pocket Duo.
 #
 # pre:  the stick LEDs fade out first (they would otherwise stay lit until
 #       the kernel suspends, after the screen is already dark), Bluetooth off
@@ -14,7 +14,7 @@
 # post: undo all of it (the LEDs fade back in); removing the null sink sends
 #       the streams back to the default devices.
 # The one image also runs on SM8650, where konkr-sleep prepares the sleep.
-grep -qa "qcom,sm8550" /sys/firmware/devicetree/base/compatible 2>/dev/null || exit 0
+grep -qaE "qcom,sm8550|retroidpocket,rpduo" /sys/firmware/devicetree/base/compatible 2>/dev/null || exit 0
 BT_MARK=/run/sm8550-sleep-bt-was-on
 LED_SAVE=/run/sm8550-sleep-leds
 NULL=sm8550-sleep

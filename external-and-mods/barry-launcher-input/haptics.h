@@ -4,7 +4,8 @@
 // motor through InputPlumber, not through this.
 //
 // The motor is the "qcom-hv-haptics" input device (force feedback,
-// FF_CONSTANT). Its driver keeps one effect, for the one open file that
+// FF_CONSTANT), or the Retroid Pocket Duo's "aw86927-haptics" (FF_RUMBLE).
+// The first one's driver keeps one effect, for the one open file that
 // uploaded it, and Barry's keyboards and apps are separate processes: each
 // holds the device only for a burst of buzzes, letting go a moment after
 // the last, so the others can have it.
@@ -70,6 +71,7 @@ private:
     int m_effect = -1;  // uploaded effect id
     int m_effectMs = 0;
     int m_effectLevel = 0;
+    bool m_constant = true;  // the motor takes FF_CONSTANT
     bool m_warned = false;
     QTimer m_letGo;
     QFileSystemWatcher m_watcher;

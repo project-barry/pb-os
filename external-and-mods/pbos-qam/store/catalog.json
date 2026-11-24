@@ -107,7 +107,7 @@
         "type": "flatpak",
         "ref": "net.kuribo64.melonDS"
       },
-      "note": "On the AYN Thor, Quick Access → PB-OS → Display → Two-screen emulators puts the touch screen on the bottom screen."
+      "note": "On the AYN Thor and Retroid Pocket Duo, Quick Access → PB-OS → Display → Two-screen emulators puts the touch screen on the bottom screen."
     },
     {
       "id": "azahar",
@@ -119,7 +119,7 @@
         "type": "flatpak",
         "ref": "org.azahar_emu.Azahar"
       },
-      "note": "On the AYN Thor, Quick Access → PB-OS → Display → Two-screen emulators puts the touch screen on the bottom screen."
+      "note": "On the AYN Thor and Retroid Pocket Duo, Quick Access → PB-OS → Display → Two-screen emulators puts the touch screen on the bottom screen."
     },
     {
       "id": "eden",

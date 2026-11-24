@@ -7,9 +7,8 @@
 # face-button map (rsinput_nintendo). Volume up stays on gpio-keys, which
 # InputPlumber leaves alone (retroid-pocket-duo.toml).
 #
-# UNTESTED (no Duo in hand): check the printed face-button layout, the stick
-# ranges (sm8550-fixpad) and whether the pad needs a keyboard target for the
-# on-screen keyboard's haptics.
+# The keyboard target and Barry Launcher's Deck controls as on the AYN Thor.
+# Untested: the printed face-button layout and the Deck controls.
 #
 # Do not list USB/BT as sources: the Deck controller is USB (VID 28de) and
 # matching it as a source restarts the composite in a loop.
@@ -35,6 +34,38 @@ source_devices:
       product_id: "3001"
       handler: event*
     passthrough: false
+  # Barry Launcher's Deck controls (DeckControls.qml, Barry.Input): the Deck's
+  # trackpads and back buttons, drawn on the bottom screen, as more of this
+  # controller. Present only while Barry's Deck app is open. The pads need
+  # InputPlumber patch 0004 (touchscreen as trackpad).
+  - group: barry_deck
+    # Re-made at once when the Deck view reloads (a skin change): join
+    # the running composite even while it still holds the old ones.
+    unique: false
+    evdev:
+      name: Barry Deck Left Pad
+      handler: event*
+    config:
+      touchscreen:
+        trackpad: left
+  - group: barry_deck
+    # Re-made at once when the Deck view reloads (a skin change): join
+    # the running composite even while it still holds the old ones.
+    unique: false
+    evdev:
+      name: Barry Deck Right Pad
+      handler: event*
+    config:
+      touchscreen:
+        trackpad: right
+  - group: barry_deck
+    # Re-made at once when the Deck view reloads (a skin change): join
+    # the running composite even while it still holds the old ones.
+    unique: false
+    evdev:
+      name: Barry Deck Buttons
+      handler: event*
+    capability_map_id: barry_deck_buttons
 
 options:
   auto_manage: true
@@ -43,3 +74,4 @@ options:
 # sm8550-inputplumber-ext-hid then switches to the real Steam Deck (deck).
 target_devices:
   - deck-uhid
+  - keyboard

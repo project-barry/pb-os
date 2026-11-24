@@ -1,10 +1,10 @@
 [Unit]
-Description=SM8550 uclamp boost for game and Steam UI threads
+Description=SM8550, Retroid Pocket Duo: uclamp boost for game and Steam UI threads
 ConditionPathExists=/sys/firmware/devicetree/base/compatible
 
 [Service]
 Type=simple
-ExecCondition=/bin/sh -c 'grep -qa "qcom,sm8550" /sys/firmware/devicetree/base/compatible'
+ExecCondition=/bin/sh -c 'grep -qaE "qcom,sm8550|retroidpocket,rpduo" /sys/firmware/devicetree/base/compatible'
 ExecStart=/usr/lib/steamos-sm8550/sm8550-boostd
 Restart=always
 RestartSec=2

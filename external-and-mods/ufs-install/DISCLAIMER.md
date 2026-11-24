@@ -4,7 +4,7 @@
 
 ## What these tools do
 
-The scripts in **external-and-mods/ufs-install** repartition the **internal UFS** storage on Qualcomm SM8650 handhelds (KONKR Pocket FIT, AYANEO Pocket S2) and SM8550 handhelds (Retroid Pocket 6, AYN Thor) to install **this project's SteamOS** alongside **Android**, using a **ROCKNIX ABL** dual-boot layout with **three Linux partitions** (`ROCKNIX` + `STORAGE` + `HOME`).
+The scripts in **external-and-mods/ufs-install** repartition the **internal UFS** storage on Qualcomm SM8650 handhelds (KONKR Pocket FIT, AYANEO Pocket S2) and SM8550 handhelds (Retroid Pocket 6, AYN Thor), and the Retroid Pocket Duo (SM7750), to install **this project's SteamOS** alongside **Android**, using a **ROCKNIX ABL** dual-boot layout with **three Linux partitions** (`ROCKNIX` + `STORAGE` + `HOME`).
 
 This is **not** a supported manufacturer procedure. It is an **experimental community tool**.
 

@@ -1,5 +1,5 @@
 [Unit]
-Description=Face buttons map (AYN Thor, Retroid Pocket 6 / Nova)
+Description=Face buttons map (AYN Thor, Retroid Pocket 6 / Nova / Duo)
 # Writes the saved choice (printed letters or Xbox positions) into the
 # device's InputPlumber config before InputPlumber reads it; an update puts
 # the stock file back. Only once someone has made a choice.

@@ -31,10 +31,22 @@ QString findMotor()
     const QStringList events = QDir(QStringLiteral("/sys/class/input")).entryList({QStringLiteral("event*")});
     for (const QString &event : events) {
         QFile f(QStringLiteral("/sys/class/input/%1/device/name").arg(event));
-        if (f.open(QIODevice::ReadOnly) && f.readAll().trimmed() == "qcom-hv-haptics")
+        if (!f.open(QIODevice::ReadOnly))
+            continue;
+        const QByteArray name = f.readAll().trimmed();
+        if (name == "qcom-hv-haptics" || name == "aw86927-haptics")
             return QStringLiteral("/dev/input/") + event;
     }
     return {};
+}
+
+// The motor takes FF_CONSTANT (qcom-hv-haptics); else it gets FF_RUMBLE.
+bool takesConstant(int fd)
+{
+    unsigned long bits[FF_MAX / (8 * sizeof(unsigned long)) + 1] = {};
+    if (ioctl(fd, EVIOCGBIT(EV_FF, sizeof bits), bits) < 0)
+        return true;
+    return bits[FF_CONSTANT / (8 * sizeof(unsigned long))] >> (FF_CONSTANT % (8 * sizeof(unsigned long))) & 1;
 }
 
 }  // namespace
@@ -142,13 +154,19 @@ void Haptics::pulse(int ms)
             return;
         }
         m_effect = -1;
+        m_constant = takesConstant(m_fd);
     }
     if (m_effect < 0 || ms != m_effectMs || level != m_effectLevel) {
         ff_effect effect{};
-        effect.type = FF_CONSTANT;
+        effect.type = m_constant ? FF_CONSTANT : FF_RUMBLE;
         effect.id = short(m_effect);  // -1: a new one; else changed in place
         effect.direction = 0x4000;
-        effect.u.constant.level = short(level);
+        if (m_constant) {
+            effect.u.constant.level = short(level);
+        } else {
+            effect.u.rumble.strong_magnitude = __u16(level * 2);
+            effect.u.rumble.weak_magnitude = __u16(level * 2);
+        }
         effect.replay.length = __u16(ms);
         if (ioctl(m_fd, EVIOCSFF, &effect) < 0) {
             // ENOSPC: another Barry process holds the motor's one effect

@@ -1,4 +1,4 @@
-# Barry Launcher (AYN Thor bottom screen).
+# Barry Launcher (AYN Thor, Retroid Pocket Duo bottom screens).
 #
 # The Deck controls' devices (Barry.Input: "Barry Deck Left Pad", "... Right
 # Pad", "... Buttons") are InputPlumber's alone: it reads them as part of
@@ -9,4 +9,4 @@ SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="Barry Deck *", \
   ENV{LIBINPUT_IGNORE_DEVICE}="1", TAG-="uaccess", MODE="0600"
 # The vibration motor, for Barry's haptics (keys, clicks), to the user at
 # the seat.
-SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="qcom-hv-haptics", TAG+="uaccess"
+SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="qcom-hv-haptics|aw86927-haptics", TAG+="uaccess"

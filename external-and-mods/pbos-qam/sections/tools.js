@@ -41,7 +41,7 @@ const getMtp = callable("get_mtp");
 // Android apps: is Google Play added (see androidTitles).
 const getAndroid = callable("get_android");
 const setMtp = callable("set_mtp");
-// Barry Launcher in Desktop Mode (AYN Thor).
+// Barry Launcher in Desktop Mode (AYN Thor, Retroid Pocket Duo).
 const getBarryDesktop = callable("get_barry_desktop");
 const setBarryDesktop = callable("set_barry_desktop");
 // Sticks (Retroid Pocket 6 / Nova, AYN Thor; was the Stick Calibration plugin).
@@ -1196,7 +1196,7 @@ function Sticks() {
     return jsx(DFL.PanelSection, { title: "Analog Sticks", children: items });
 }
 
-// The "Desktop Mode" section (AYN Thor): Barry Launcher on the bottom screen
+// The "Desktop Mode" section (AYN Thor, Retroid Pocket Duo): Barry Launcher on the bottom screen
 // in Desktop Mode, or a plain desktop screen there; Game Mode keeps Barry.
 function BarryDesktop() {
     const [st, setSt] = useState(null);

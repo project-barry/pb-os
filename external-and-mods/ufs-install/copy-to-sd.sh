@@ -78,8 +78,8 @@ fail() {
 for t in sfdisk wipefs mkfs.vfat mkfs.ext4 rsync findmnt lsblk python3 md5sum blockdev flock uuidgen; do
   command -v "$t" >/dev/null || die "missing tool: $t"
 done
-tr '\0' '\n' </sys/firmware/devicetree/base/compatible | grep -qxE 'qcom,sm(8650|8550)' \
-  || die "this tool is for SM8650 and SM8550 devices with OpenABL"
+tr '\0' '\n' </sys/firmware/devicetree/base/compatible | grep -qxE 'qcom,sm(8650|8550)|retroidpocket,rpduo' \
+  || die "this tool is for SM8650, SM8550 and Retroid Pocket Duo devices with OpenABL"
 MODEL="$(tr -d '\0' </sys/firmware/devicetree/base/model)"
 
 ROOT_SRC="$(findmnt -no SOURCE /)"

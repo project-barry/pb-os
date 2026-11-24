@@ -259,6 +259,8 @@ if [[ -f "$R/etc/xdg/autostart/steam.desktop" ]]; then
 fi
 install_file "$OVL/usr/share/steamos-sm8550/kwinoutputconfig-thor.json" \
   "$R/usr/share/steamos-sm8550/kwinoutputconfig-thor.json" 0644
+install_file "$OVL/usr/share/steamos-sm8550/kwinoutputconfig-rpduo.json" \
+  "$R/usr/share/steamos-sm8550/kwinoutputconfig-rpduo.json" 0644
 backup "$R/usr/bin/steamos-session-select" "$STOCK/usr/bin/steamos-session-select"
 install_file "$OVL/usr/bin/steamos-session-select" \
   "$R/usr/bin/steamos-session-select" 0755

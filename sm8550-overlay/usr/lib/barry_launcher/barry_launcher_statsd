@@ -142,6 +142,10 @@ DEFAULT_QUICK_LAYOUT = [
 ]
 if NO_BARRY_BUTTON:
     DEFAULT_QUICK_LAYOUT.insert(DEFAULT_QUICK_LAYOUT.index({"id": "fan", "span": 2}) + 1, {"id": "screenoff", "span": 2})
+# No stick lights (barry_device's BARRY_LIGHTS empty): no Lights widget.
+if os.environ.get("BARRY_LIGHTS", "1") == "":
+    BARRY_WIDGETS = [w for w in BARRY_WIDGETS if w[0] != "lights"]
+    DEFAULT_QUICK_LAYOUT = [w for w in DEFAULT_QUICK_LAYOUT if w["id"] != "lights"]
 SETTINGS = os.path.join(os.environ.get("XDG_CONFIG_HOME", f"{HOME}/.config"), "barry_launcher/settings.json")
 DEFAULTS = {"skin": "ayn", "idleSeconds": 0, "standbySeconds": 15, "heroArt": True,
             "bottomSleepSeconds": 0, "skinVariants": {}, "quickLayout": None}

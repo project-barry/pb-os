@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Install the SteamOS running from the microSD card to internal UFS.
-# SM8650 (KONKR Pocket FIT, AYANEO Pocket S2) and SM8550 (Retroid Pocket 6,
-# AYN Thor) with OpenABL.
+# SM8650 (KONKR Pocket FIT, AYANEO Pocket S2), SM8550 (Retroid Pocket 6,
+# AYN Thor) and the Retroid Pocket Duo (SM7750) with OpenABL.
 #
 #   ... | userdata (Android, you pick) | ROCKNIX 2G | STORAGE 20G | HOME (rest) |
 #
@@ -85,9 +85,11 @@ for t in sfdisk mkfs.vfat mkfs.ext4 rsync findmnt lsblk python3 md5sum blockdev;
   command -v "$t" >/dev/null || die "missing tool: $t"
 done
 
-# Both SoCs use the same layout (userdata, then ROCKNIX + STORAGE + HOME).
-tr '\0' '\n' </sys/firmware/devicetree/base/compatible | grep -qxE 'qcom,sm(8650|8550)' \
-  || die "this installer is for SM8650 (KONKR Pocket FIT, AYANEO Pocket S2) and SM8550 (Retroid Pocket 6 and Nova, AYN Thor) devices"
+# Every SoC uses the same layout (userdata, then ROCKNIX + STORAGE + HOME).
+# SM7750 (Linux calls it Eliza): the Retroid Pocket Duo only, the one its
+# OpenABL is for.
+tr '\0' '\n' </sys/firmware/devicetree/base/compatible | grep -qxE 'qcom,sm(8650|8550)|retroidpocket,rpduo' \
+  || die "this installer is for SM8650 (KONKR Pocket FIT, AYANEO Pocket S2), SM8550 (Retroid Pocket 6 and Nova, AYN Thor) and Retroid Pocket Duo devices"
 MODEL="$(tr -d '\0' </sys/firmware/devicetree/base/model)"
 
 # The initramfs carries no modules, so root on UFS needs the drivers built in.
@@ -291,12 +293,13 @@ esac
 if [[ "$HOME_MODE" == keep ]]; then
   # The Android apps payload lives in home, not the system: the kept HOME
   # takes this SD install's, as PB-OS Installer does.
-  KA=steamos/.local/share/konkr-android
+  # (konkr-android: its name before alpha v0.5.4.21.)
+  KA=steamos/.local/share/pbos-android
   if [[ -d "/home/$KA" ]]; then
     for d in steamos/.local steamos/.local/share; do
       [[ -d "$WORK/home/$d" ]] || install -d -o 1000 -g 1000 "$WORK/home/$d"
     done
-    rm -rf "${WORK:?}/home/$KA"
+    rm -rf "${WORK:?}/home/$KA" "${WORK:?}/home/steamos/.local/share/konkr-android"
     rsync -aAXH --numeric-ids "/home/$KA/" "$WORK/home/$KA/"
   fi
 else

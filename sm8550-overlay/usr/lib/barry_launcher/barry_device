@@ -15,6 +15,7 @@
 #                        axes lie): right (portrait panel turned right),
 #                        normal (the panel's own landscape)
 #   BARRY_REFRESH        the bottom panel's refresh rates (Hz)
+#   BARRY_LIGHTS         1: it has stick lights; empty: none
 if grep -qa 'retroidpocket,rpduo' /sys/firmware/devicetree/base/compatible 2>/dev/null; then
   # Retroid Pocket Duo: top DSI-1 1080x1920 portrait, bottom DSI-2 1280x960
   # landscape-native; no Barry button.
@@ -26,6 +27,7 @@ if grep -qa 'retroidpocket,rpduo' /sys/firmware/devicetree/base/compatible 2>/de
   BARRY_BOTTOM_H=960
   BARRY_TOUCH_TURN=normal
   BARRY_REFRESH="60"
+  BARRY_LIGHTS=
 else
   # AYN Thor: the bottom panel is portrait-native and turned right.
   BARRY_DEVICE=thor
@@ -36,6 +38,7 @@ else
   BARRY_BOTTOM_H=1080
   BARRY_TOUCH_TURN=right
   BARRY_REFRESH="60 120"
+  BARRY_LIGHTS=1
 fi
 export BARRY_DEVICE BARRY_BUTTON BARRY_TOP_OUTPUT BARRY_BOTTOM_OUTPUT BARRY_BOTTOM_W BARRY_BOTTOM_H \
-  BARRY_TOUCH_TURN BARRY_REFRESH
+  BARRY_TOUCH_TURN BARRY_REFRESH BARRY_LIGHTS

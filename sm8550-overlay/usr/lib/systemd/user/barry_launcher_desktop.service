@@ -1,10 +1,10 @@
 [Unit]
-Description=Barry Launcher: AYN Thor bottom-screen home, apps and keyboard in Desktop Mode
+Description=Barry Launcher: bottom-screen home, apps and keyboard in Desktop Mode (AYN Thor, Retroid Pocket Duo)
 PartOf=graphical-session.target
 After=plasma-plasmashell.service
 
 [Service]
-ExecCondition=/bin/sh -c 'grep -qa "ayn,thor" /sys/firmware/devicetree/base/compatible'
+ExecCondition=/bin/sh -c 'grep -qaE "ayn,thor|retroidpocket,rpduo" /sys/firmware/devicetree/base/compatible'
 ExecStart=/usr/lib/barry_launcher/barry_launcher_desktop
 Restart=on-failure
 RestartSec=3

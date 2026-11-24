@@ -1,7 +1,7 @@
 [Desktop Entry]
 Type=Application
 Name=Barry Launcher
-Comment=The AYN Thor bottom screen's home screen, apps and keyboard
+Comment=The bottom screen's home screen, apps and keyboard
 Exec=/usr/lib/barry_launcher/barry_launcher_desktop
 Icon=input-touchpad
 Categories=Utility;

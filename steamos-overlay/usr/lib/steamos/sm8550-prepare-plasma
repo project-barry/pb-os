@@ -10,9 +10,17 @@ fi
 # gamescope creates this dir without the sticky bit; kwin then refuses Xwayland.
 chmod 1777 /tmp/.X11-unix 2>/dev/null || true
 
+# The two-screen devices, with Barry Launcher on the bottom one.
+two_screens() {
+  grep -qaE 'ayn,thor|retroidpocket,rpduo' /sys/firmware/devicetree/base/compatible 2>/dev/null
+}
+is_duo() {
+  grep -qa 'retroidpocket,rpduo' /sys/firmware/devicetree/base/compatible 2>/dev/null
+}
+
 # Desktop rotation per device. The shipped kwinoutputconfig (Rotated270) suits
 # panels with DT rotation 90 (Pocket FIT, AYN Thor); the Retroid Pocket 6 and
-# AYN Odin 2 Portal panels (and the Retroid Pocket Duo's top one) are rotation
+# AYN Odin 2 Portal panels are rotation
 # 270 and need Rotated90 or the desktop is upside down
 # (Game Mode is fine: gamescope reads the DRM panel orientation itself).
 # The Retroid Pocket Nova panel is landscape-native (no DT rotation), so it
@@ -23,7 +31,7 @@ seed_rotation() {
   local model want mode="" cfg marker
   model="$(tr -d '\0' </sys/firmware/devicetree/base/model 2>/dev/null)"
   case "$model" in
-    "Retroid Pocket 6"*|"AYN Odin 2 Portal"|"Retroid Pocket Duo"|"RetroidPocket Duo") want=Rotated90 ;;
+    "Retroid Pocket 6"*|"AYN Odin 2 Portal") want=Rotated90 ;;
     "Retroid Pocket Nova") want=Normal mode=1280x960 ;;
     *) return 0 ;;
   esac
@@ -56,12 +64,12 @@ seed_rotation
 # ~/.config). Only the shipped 125 % is raised: a scale picked in Display
 # Settings stays. The shipped auto-rotation "in touch mode" becomes "never",
 # so a panel with an orientation sensor does not turn with the device. The
-# AYN Thor keeps its own two-screen layout (below).
+# two-screen devices keep their own layout (below).
 seed_touch_desktop() {
   local cfg="$HOME/.config/kwinoutputconfig.json"
   local marker="${XDG_STATE_HOME:-$HOME/.local/state}/pbos-touch-desktop-seeded"
   [[ -f "$marker" ]] && return 0
-  grep -qa 'ayn,thor' /sys/firmware/devicetree/base/compatible 2>/dev/null && return 0
+  two_screens && return 0
   if [[ -f "$cfg" ]] && python3 - "$cfg" <<'PY'
 import json, sys
 path = sys.argv[1]
@@ -168,8 +176,30 @@ seed_thor_layout() {
 }
 seed_thor_layout
 
-# AYN Thor: the taskbar on the top screen. Plasma ties a panel to a screen
-# number when it first builds the desktop, and keeps it there: a Thor's one
+# Retroid Pocket Duo: the same for its panels (top DSI-1, portrait, turned
+# left; bottom DSI-2, landscape). Once, over whatever is there: alpha v0.5.5
+# left the bottom panel as a plain second desktop screen, at KWin's own
+# choice of place, and its one-screen 150 %.
+seed_duo_layout() {
+  local cfg="$HOME/.config/kwinoutputconfig.json"
+  local duo=/usr/share/steamos-sm8550/kwinoutputconfig-rpduo.json
+  local marker="${XDG_STATE_HOME:-$HOME/.local/state}/pbos-duo-layout-seeded"
+  is_duo || return 0
+  if [[ -f "$duo" && ! -f "$marker" ]]; then
+    mkdir -p "$HOME/.config" "$(dirname "$marker")"
+    cp -f "$duo" "$cfg"
+    kwriteconfig6 --file kwinrc --group Xwayland --key Scale 1.25
+    kwriteconfig6 --file kwinrc --group Input --key TabletMode --delete
+    kwriteconfig6 --file kdeglobals --group KScreen --key ScaleFactor 1.25
+    kwriteconfig6 --file kdeglobals --group KScreen --key ScreenScaleFactors "DSI-1=1.25"
+    : >"$marker"
+  fi
+  kwriteconfig6 --file kded5rc --group Module-kscreen --key autoload false 2>/dev/null || true
+}
+seed_duo_layout
+
+# Two screens: the taskbar on the top screen. Plasma ties a panel to a screen
+# number when it first builds the desktop, and keeps it there: the one
 # taskbar has ended up on the bottom screen, under Barry (once on a card's
 # first Desktop start, and on Thors whose saved screen order had the bottom
 # one first). Plasma's scripts cannot move a panel to another screen, so its
@@ -177,9 +207,9 @@ seed_thor_layout
 # screen goes to screen 0, the top one (the shipped layout makes it first).
 # Layouts with no taskbar or several are left alone, as is a running
 # Plasma's (it saves its own when it quits).
-thor_taskbar_on_top() {
+taskbar_on_top() {
   local rc="$HOME/.config/plasma-org.kde.plasma.desktop-appletsrc" panels id
-  grep -qa 'ayn,thor' /sys/firmware/devicetree/base/compatible 2>/dev/null || return 0
+  two_screens || return 0
   [[ -f "$rc" ]] || return 0
   pgrep -u "$(id -u)" -x plasmashell >/dev/null && return 0
   panels="$(awk '/^\[Containments\]\[[0-9]+\]$/ { split($0, a, /[][]/); id = a[4] }
@@ -189,17 +219,18 @@ thor_taskbar_on_top() {
   [[ "$(kreadconfig6 --file plasma-org.kde.plasma.desktop-appletsrc --group Containments --group "$id" --key lastScreen)" != 0 ]] || return 0
   kwriteconfig6 --file plasma-org.kde.plasma.desktop-appletsrc --group Containments --group "$id" --key lastScreen 0
 }
-thor_taskbar_on_top
+taskbar_on_top
 
-# The SM8550 image carries Barry Launcher for the AYN Thor's bottom screen.
+# The image carries Barry Launcher for a bottom screen.
 # Elsewhere its menu entry and its virtual keyboard (Settings > Virtual
-# Keyboard) are hidden by a user copy marked Hidden, removed again on a Thor.
-hide_thor_entries() {
+# Keyboard) are hidden by a user copy marked Hidden, removed again on a two-screen
+# device.
+hide_barry_entries() {
   local apps="${XDG_DATA_HOME:-$HOME/.local/share}/applications" f
   for f in barry_launcher_desktop.desktop barry_launcher_desktop_switch.desktop \
     org.barry_launcher.keyboard.desktop; do
     [[ -f "/usr/share/applications/$f" ]] || continue
-    if grep -qa 'ayn,thor' /sys/firmware/devicetree/base/compatible 2>/dev/null; then
+    if two_screens; then
       grep -qsx 'X-PBOS-Hidden=true' "$apps/$f" && rm -f "$apps/$f"
     elif [[ ! -f "$apps/$f" ]]; then
       mkdir -p "$apps"
@@ -207,19 +238,19 @@ hide_thor_entries() {
     fi
   done
 }
-hide_thor_entries
+hide_barry_entries
 
 # Images up to 0.5.2 made plasma-keyboard KWin's virtual keyboard; the Steam
 # Deck has none in Desktop Mode (Steam+X is the keyboard) and on the Nova it
 # kept the launcher menu flashing with a dead search field. Updates never
 # touch ~/.config, so drop that one choice once; a keyboard picked later in
-# Settings > Virtual Keyboard stays. The AYN Thor keeps Barry's keyboard
-# (barry_launcher_desktop sets it, its off switch puts plasma-keyboard back).
+# Settings > Virtual Keyboard stays. Two-screen devices keep
+# Barry's keyboard (barry_launcher_desktop sets it).
 seed_desktop_keyboard_off() {
   local marker="${XDG_STATE_HOME:-$HOME/.local/state}/pbos-desktop-keyboard-off-seeded"
   local plasma_im=/usr/share/applications/org.kde.plasma.keyboard.desktop
   [[ -f "$marker" ]] && return 0
-  grep -qa 'ayn,thor' /sys/firmware/devicetree/base/compatible 2>/dev/null && return 0
+  two_screens && return 0
   if [[ "$(kreadconfig6 --file kwinrc --group Wayland --key InputMethod 2>/dev/null)" == "$plasma_im" ]]; then
     kwriteconfig6 --file kwinrc --group Wayland --key InputMethod --delete
     kwriteconfig6 --file kwinrc --group Wayland --key VirtualKeyboardEnabled --delete
@@ -228,7 +259,7 @@ seed_desktop_keyboard_off() {
 }
 seed_desktop_keyboard_off
 
-# AYN Thor: Game Mode silenced the bottom touchscreen; the desktop uses both.
+# Two screens: Game Mode silenced the bottom touchscreen; the desktop uses both.
 if [[ -x /usr/lib/steamos-sm8550/sm8550-touch-inhibit ]]; then
   /usr/lib/steamos-sm8550/sm8550-touch-inhibit bottom_touchscreen 0
 fi

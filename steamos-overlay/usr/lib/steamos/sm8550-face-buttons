@@ -42,6 +42,8 @@ case " $compat " in
     FILE=$DEV/50-ayn_odin2_mini.yaml; PAIRS="ayn_mcu_nintendo:ayn_mcu_thor"; DEFAULT=xbox ;;
   *"retroidpocket,rpnova"*)
     FILE=$DEV/50-retroid_pocket_nova.yaml; PAIRS="rsinput_nintendo:rsinput1"; DEFAULT=nintendo ;;
+  *"retroidpocket,rpduo"*)
+    FILE=$DEV/50-retroid_pocket_duo.yaml; PAIRS="rsinput_nintendo:rsinput1"; DEFAULT=nintendo ;;
   *"retroidpocket,rp6"*)
     FILE=$DEV/50-retroid_pocket6.yaml; PAIRS="rsinput_nintendo:rsinput1"; DEFAULT=nintendo ;;
 esac
