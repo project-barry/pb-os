@@ -588,6 +588,7 @@ def stage(source_package, expected, move=False, version=None):
                 'boot_uuid': boot_info['uuid'], 'manifest': manifest, 'screen': screen_info()}
         write_json(work / 'transaction.json', info)
         shutil.copy2('/boot/KERNEL', work / 'previous-KERNEL')
+        if (Path('/boot') / ENTRY_CONF).is_file(): (work / HAD_ENTRY).touch()
         rootarg = next((x[5:] for x in Path('/proc/cmdline').read_text().split() if x.startswith('root=')), '')
         if not rootarg: raise ValueError('cannot identify the boot root argument')
         helper = bootimg_helper(payload)
@@ -1035,6 +1036,24 @@ def remove_downloaded(files):
 
 
 def install_kernel(src, boot):
+    write_kernel(src, boot)
+    refresh_boot_entry(boot)
+
+
+def put_kernel_back(work, boot):
+    """The kernel from before the update. A system that had no boot entry gets
+    none (its own updater would not keep it current, and OpenABL reads it before
+    KERNEL), and an entry that cannot be written goes too: KERNEL boots then."""
+    write_kernel(work / 'previous-KERNEL', boot)
+    try:
+        if not (work / HAD_ENTRY).exists(): remove_boot_entry(boot)
+        else: refresh_boot_entry(boot)
+    except Exception as e:
+        print('BOOT ENTRY:', e, flush=True)
+        remove_boot_entry(boot)
+
+
+def write_kernel(src, boot):
     temp = boot / 'KERNEL.new'
     shutil.copyfile(src, temp)
     with temp.open('rb') as f: os.fsync(f.fileno())
@@ -1042,7 +1061,6 @@ def install_kernel(src, boot):
     os.replace(temp, boot / 'KERNEL')
     (boot / 'KERNEL.md5').write_text(hashlib.md5((boot / 'KERNEL').read_bytes()).hexdigest() + '  KERNEL\n')
     os.sync()
-    refresh_boot_entry(boot)
 
 
 # OpenABL boot entry (Boot Loader Specification). OpenABL newer than 1.2 no
@@ -1055,6 +1073,7 @@ def install_kernel(src, boot):
 ENTRY_CONF = 'loader/entries/pbos.conf'
 ENTRY_DIR = 'pbos'
 ENTRY_DTBS = 'dtbs/qcom'
+HAD_ENTRY = 'had-boot-entry'  # in the transaction: BOOT had an entry when the update was staged
 
 
 def split_kernel_image(data):
@@ -1112,16 +1131,41 @@ def write_synced(path, data):
     os.replace(temp, path)
 
 
+def entry_files(kernel):
+    """The entry's kernel and initrd names for KERNEL's bytes."""
+    tag = hashlib.sha256(kernel).hexdigest()[:12]
+    return f'Image-{tag}.gz', f'initrd-{tag}.gz'
+
+
+def entry_starts(boot, kernel):
+    """BOOT's entry starts this KERNEL file; also True without an entry (KERNEL boots then)."""
+    conf = boot / ENTRY_CONF
+    if not conf.is_file(): return True
+    lines = conf.read_text(errors='replace').splitlines()
+    return f'linux /{ENTRY_DIR}/{entry_files(Path(kernel).read_bytes())[0]}' in lines
+
+
+def remove_boot_entry(boot):
+    """BOOT without its entry: OpenABL boots KERNEL."""
+    (boot / ENTRY_CONF).unlink(missing_ok=True)
+    os.sync()
+    for d, pattern in ((ENTRY_DIR, '*'), (ENTRY_DTBS, '*.new'), ('loader/entries', 'pbos.conf.new')):
+        for p in (boot / d).glob(pattern):
+            if p.is_file(): p.unlink()
+    os.sync()
+
+
 def refresh_boot_entry(boot, kernel=None):
     """Make BOOT's entry start exactly <boot>/KERNEL (or `kernel`). The kernel
     and initrd are named after KERNEL's hash and written first, the entry then
     switches to them in one rename, and the old ones go last."""
     data = Path(kernel or boot / 'KERNEL').read_bytes()
     gz, dtbs, initrd, cmdline = split_kernel_image(data)
-    tag = hashlib.sha256(data).hexdigest()[:12]
+    image, ramdisk = entry_files(data)
     kdir, ddir, conf = boot / ENTRY_DIR, boot / ENTRY_DTBS, boot / ENTRY_CONF
-    for d in (kdir, ddir, conf.parent): d.mkdir(parents=True, exist_ok=True)
-    image, ramdisk = f'Image-{tag}.gz', f'initrd-{tag}.gz'
+    for d in (kdir, ddir, conf.parent):
+        d.mkdir(parents=True, exist_ok=True)
+        for p in d.glob('*.new'): p.unlink()  # half writes
     write_synced(kdir / image, gz)
     write_synced(kdir / ramdisk, initrd)
     names = set()
@@ -1566,7 +1610,7 @@ def restore(root, boot, home, work):
         copy_tree(backup / 'layers', layers, delete=True)
     elif layers.exists(): shutil.rmtree(layers)
     os.sync()
-    install_kernel(work / 'previous-KERNEL', boot)
+    put_kernel_back(work, boot)
 
 
 # ── Progress on screen during the restart step ───────────────────────────────
@@ -1827,7 +1871,9 @@ def recover_steps(root, boot, home, work, manifest, pending, current, screen):
     screen.start('Installing update')
     # A stage cut short (restart before it finished) leaves the old boot image:
     # this boot runs the old kernel, so restart into the new one when done.
-    restart_after = digest(boot / 'KERNEL') != digest(work / 'next-KERNEL')
+    # The same when the boot entry, which OpenABL reads before KERNEL, is the old one.
+    restart_after = (digest(boot / 'KERNEL') != digest(work / 'next-KERNEL')
+                     or not entry_starts(boot, work / 'next-KERNEL'))
     plan = load_plan(work)
     if plan is None and current == 'staged':
         # Staged by an updater from before plans: the whole payload is
@@ -1847,7 +1893,7 @@ def recover_steps(root, boot, home, work, manifest, pending, current, screen):
             print('RECOVERY ERROR:', e, flush=True)
             (work / 'failure.txt').write_text(str(e) + '\n')
             screen.label('Update failed: keeping the current version')
-            install_kernel(work / 'previous-KERNEL', boot)
+            put_kernel_back(work, boot)
             state(work, 'aborted')
             pending.unlink(); os.sync(); return 10
     if current == 'backed-up':
