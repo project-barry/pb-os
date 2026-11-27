@@ -56,13 +56,13 @@ Physical testing was done on one unit of each:
 | Retroid Pocket 6 | Snapdragon 8 Gen 2 (SM8550) | Yes: from microSD and internal storage |
 | Retroid Pocket Nova | Snapdragon 8 Gen 2 (QCS8550) | Yes: from microSD and internal storage |
 | AYN Thor | Snapdragon 8 Gen 2 (SM8550) | Yes: from microSD |
-| Retroid Pocket Duo | Snapdragon SM7750 | Yes: from microSD |
+| Retroid Pocket Duo | Snapdragon SM7750 | Yes: from microSD and internal storage |
 | KONKR Pocket FIT | Snapdragon 8 Gen 3 (SM8650) | Yes: from microSD and internal storage |
 
 Installing to internal storage (UFS, next to Android) has run for several
 days on the Retroid Pocket 6, the Retroid Pocket Nova and the KONKR Pocket
 FIT; see [external-and-mods/ufs-install](external-and-mods/ufs-install/README.md).
-On the AYN Thor and the Retroid Pocket Duo it is untested.
+On the Retroid Pocket Duo it has been tested once (alpha v0.5.6); on the AYN Thor it is untested.
 
 The image also includes support for the AYN Odin 2, Odin 2 Portal, Odin 2
 Mini and AYANEO Pocket S2. None of it has been tested on those devices, so
