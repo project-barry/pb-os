@@ -14,7 +14,6 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROTON_TAG="${1:?usage: build.sh TAG [WORKDIR]}"
 W="${2:-/work/proton-pbos}/$PROTON_TAG"
 OUT="$HERE/dist/$PROTON_TAG-arm64"
-SDK=registry.gitlab.steamos.cloud/proton/steamrt4/sdk/arm64-llvm:4.0.20260331.220802-2
 J="${J:-$(nproc)}"
 
 mkdir -p "$W"
@@ -22,6 +21,10 @@ if [[ ! -d "$W/src/.git" ]]; then
   git clone --depth 1 --branch "$PROTON_TAG" https://github.com/ValveSoftware/Proton.git "$W/src"
   git -C "$W/src" submodule update --init --depth 1 wine
 fi
+# The SDK image Valve built this tag with (its Makefile.in), unless SDK= is set.
+SDK="${SDK:-$(sed -n 's/^[[:space:]]*STEAMRT_IMAGE ?= \(.*\/sdk\/arm64-llvm:.*\)$/\1/p' "$W/src/Makefile.in")}"
+[[ -n "$SDK" ]] || { echo "no arm64-llvm SDK in $W/src/Makefile.in; set SDK=" >&2; exit 1; }
+echo "SDK: $SDK"
 docker pull -q "$SDK"
 cp "$HERE"/*.patch "$W/"
 

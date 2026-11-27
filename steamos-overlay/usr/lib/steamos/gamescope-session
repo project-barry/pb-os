@@ -94,12 +94,23 @@ export GAMESCOPE_DISABLE_ASYNC_FLIPS=1
 # `pbosctl`-managed flag /var/lib/pbosd/kms-rotation, which lets gamescope
 # scan games out directly instead of compositing every frame. Two failed
 # starts in a row turn the flag off again.
+# Retroid Pocket Duo: on by default (its top panel's picture is turned by the
+# display hardware, kernel 0661; measured faster, picture right). There the
+# flag is not needed; the file /var/lib/pbosd/kms-rotation-off turns it off.
+# Every other device is opt-in as before.
 KMS_ROT_FLAG=/var/lib/pbosd/kms-rotation
+KMS_ROT_OFF=/var/lib/pbosd/kms-rotation-off
 KMS_ROT_TRIES="$XDG_RUNTIME_DIR/gamescope-kms-rotation.tries"
 KMS_ROTATION=0
+KMS_ROT_WANT=0
+[[ -e "$KMS_ROT_FLAG" ]] && KMS_ROT_WANT=1
+if [[ ! -e "$KMS_ROT_OFF" ]] \
+  && grep -qa 'retroidpocket,rpduo' /sys/firmware/devicetree/base/compatible 2>/dev/null; then
+  KMS_ROT_WANT=1
+fi
 DEVICE_MODEL="$(tr -d '\0' </sys/firmware/devicetree/base/model 2>/dev/null)"
 # Pocket S2 1440x2560 exceeds the DPU inline rotator height limit.
-if [[ -e "$KMS_ROT_FLAG" && "$DEVICE_MODEL" != "AYANEO Pocket S2" ]]; then
+if [[ "$KMS_ROT_WANT" == 1 && "$DEVICE_MODEL" != "AYANEO Pocket S2" ]]; then
   tries="$(cat "$KMS_ROT_TRIES" 2>/dev/null || echo 0)"
   if (( tries >= 2 )); then
     echo >&2 "gamescope-session: KMS rotation failed twice, falling back to shader"

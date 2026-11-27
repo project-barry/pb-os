@@ -6,3 +6,8 @@
 # pinned, 40.6/31 with Mesa's own chooser. The environment wins over drirc.
 grep -qa 'retroidpocket,rpduo' /sys/firmware/devicetree/base/compatible 2>/dev/null || exit 0
 echo TU_AUTOTUNE_ALGO=bandwidth
+# ir3's texture alias (alias.tex) gives wrong results on the Adreno 722:
+# overbright flashes and GPU read faults in Tomb Raider. Off costs no fps.
+# systemd runs generators in name order and hands each one the environment
+# so far, so a value set earlier is kept and noaliastex is added to it.
+echo "IR3_SHADER_DEBUG=${IR3_SHADER_DEBUG:+${IR3_SHADER_DEBUG},}noaliastex"

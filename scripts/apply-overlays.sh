@@ -1239,6 +1239,15 @@ if [[ -n "$MESA_SO" ]]; then
 else
   log "== Mesa: keeping Frame Turnip (Adreno 750 = this SoC)"
 fi
+# Retroid Pocket Duo (Adreno 722): 2 CCUs, not Valve's 1 (upstream Mesa
+# 8c589b897b3). Changes only the A722 entry, so every other GPU is as before;
+# both native aarch64 copies (the Performance Overlay's pin too). No exact
+# match (a Mesa with the fix, a new layout): a WARNING, the library untouched.
+# The x86/x86_64 FEX guest copies under /usr/share/guestos are not patched.
+log "== Turnip: Adreno 722 CCU count"
+python3 "$ROOT/scripts/patch-a722-turnip.py" \
+  "$R/usr/lib/libvulkan_freedreno.so" \
+  "$R/usr/lib/steamos-sm8650/frame-turnip/libvulkan_freedreno.so" | tee -a "$LOG"
 
 # ---------------------------------------------------------------------------
 # User home (steamos uid 1000)
