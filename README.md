@@ -42,8 +42,8 @@ lavachemist
 pb-os runs Valve's SteamOS for ARM (the Steam Frame build) on Snapdragon
 handhelds. It is a fork of hashtagbasit's
 [SteamOS-ARM-Port](https://github.com/hashtagbasit/SteamOS-ARM-Port).
-Alpha v0.5.4, one image for the Retroid Pocket 6, Retroid Pocket Nova, AYN
-Thor and KONKR Pocket FIT, is on the
+Alpha v0.5.6, one image for the Retroid Pocket 6, Retroid Pocket Nova,
+Retroid Pocket Duo, AYN Thor and KONKR Pocket FIT, is on the
 [Releases](https://github.com/project-barry/pb-os/releases) page, with
 flashing steps. You can also build your own.
 
@@ -56,12 +56,13 @@ Physical testing was done on one unit of each:
 | Retroid Pocket 6 | Snapdragon 8 Gen 2 (SM8550) | Yes: from microSD and internal storage |
 | Retroid Pocket Nova | Snapdragon 8 Gen 2 (QCS8550) | Yes: from microSD and internal storage |
 | AYN Thor | Snapdragon 8 Gen 2 (SM8550) | Yes: from microSD |
+| Retroid Pocket Duo | Snapdragon SM7750 | Yes: from microSD |
 | KONKR Pocket FIT | Snapdragon 8 Gen 3 (SM8650) | Yes: from microSD and internal storage |
 
 Installing to internal storage (UFS, next to Android) has run for several
 days on the Retroid Pocket 6, the Retroid Pocket Nova and the KONKR Pocket
 FIT; see [external-and-mods/ufs-install](external-and-mods/ufs-install/README.md).
-On the AYN Thor it is untested.
+On the AYN Thor and the Retroid Pocket Duo it is untested.
 
 The image also includes support for the AYN Odin 2, Odin 2 Portal, Odin 2
 Mini and AYANEO Pocket S2. None of it has been tested on those devices, so
@@ -71,11 +72,11 @@ Here is a link to all of our benchmark tests: [docs/benchmark-results.md](docs/b
 
 ## PB-OS Features
 
-- **One image and one kernel** for every device, Snapdragon 8 Gen 2 and 8
-  Gen 3.
+- **One image and one kernel** for every device: Snapdragon 8 Gen 2, 8 Gen 3
+  and the Retroid Pocket Duo's SM7750.
 - **Valve's stable channel** (SteamOS 0.4.5) as the base.
 - **EAS scheduling by default.**
-- **AYN Thor: Barry Launcher** on the bottom screen, with apps, a keyboard, a trackpad, a performance
+- **AYN Thor and Retroid Pocket Duo: Barry Launcher** on the bottom screen, with apps, a keyboard, a trackpad, a performance
   dashboard, and its settings in the PB-OS tab.
 - **PB-OS tab in Quick Access** (Barry's head): PB-OS Tools and Barry Launcher settings with one native
   backend, instead of Decky plugins.
