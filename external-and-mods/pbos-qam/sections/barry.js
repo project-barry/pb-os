@@ -16,6 +16,13 @@ const getState = callable("get_state");
 const setBottomScreen = callable("set_bottom_screen");
 const setRgbDimmer = callable("set_rgb_dimmer");
 const setBrightness = callable("set_brightness");
+const setScreensLinked = callable("set_screens_linked");
+const getVolume = callable("get_volume");
+const setBottomVolume = callable("set_bottom_volume");
+const setVolumeLinked = callable("set_volume_linked");
+const watchRocker = callable("watch_rocker");
+const steamBuild = callable("steam_build");
+const steamBuildDone = callable("steam_build_done");
 const barryKeyboardAvailable = callable("barry_keyboard_available");
 const getTwoScreen = callable("get_two_screen");
 const setTwoScreen = callable("set_two_screen");
@@ -1110,8 +1117,190 @@ function ScreensPage() {
             ...(topSlider ? [slider("Top screen brightness", st.brightness.top, 0, (v) => bright("top", v), { step: 1 })] : []),
             slider("Bottom screen brightness", st.brightness.bottom, 0, (v) => bright("bottom", v), { step: 1, disabled: !st.on }),
         ] : []),
-        note(topSlider && st.steamBoth !== false ? "Steam's brightness slider sets both screens." : "Steam's brightness slider sets the top screen."),
+        ...(topSlider && st.linked !== undefined ? [row(jsx(DFL.ToggleField, {
+            label: "Link screens", icon: jsx(LinkIcon, { on: st.linked }), checked: st.linked,
+            description: st.linked ? "Steam's brightness slider sets both screens." : "Steam's brightness slider sets the top screen.",
+            onChange: (v) => {
+                setSt((s) => ({ ...s, linked: v }));
+                setScreensLinked(v).then(refresh).catch(refresh);
+            },
+        }))] : []),
         jsx(BottomSettings, { on: !!st.on, button }),
+    ] });
+}
+
+// A chain; broken while off (Tabler Icons outlines, as Barry's).
+function LinkIcon({ on }) {
+    const d = on
+        ? ["M9 15l6 -6", "M11 6l.463 -.536a5 5 0 0 1 7.071 7.072l-.534 .464", "M13 18l-.397 .534a5.068 5.068 0 0 1 -7.127 0a4.972 4.972 0 0 1 0 -7.071l.524 -.463"]
+        : ["M17 22v-2", "M11 6l.463 -.536a5 5 0 0 1 7.071 7.072l-.534 .464", "M13 18l-.397 .534a5.068 5.068 0 0 1 -7.127 0a4.972 4.972 0 0 1 0 -7.071l.524 -.463", "M20 17h2", "M2 7h2", "M7 2v2"];
+    return jsx("svg", { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor",
+        strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round", children: d.map((p) => jsx("path", { d: p }, p)) });
+}
+
+// An arrow, up for the top screen and down for the bottom one, and Steam's
+// own icon (of its slider) at scale, size its drawing's height.
+const ARROWS = {
+    top: "M10.5 4.9L21 18.3H14.3V31.1H6.7V18.3H0z",
+    bottom: "M10.5 31.1L21 17.7H14.3V4.9H6.7V17.7H0z",
+};
+function ScreenIcon({ screen, icon, scale, left }) {
+    const box = { position: "absolute", top: 0, height: "20px", width: "20px" };
+    return jsxs("div", { style: { position: "relative", width: "28px", height: "20px" }, children: [
+        jsx("svg", { viewBox: "0 0 36 36", fill: "currentColor", style: { ...box, left: 0 }, children: jsx("path", { d: ARROWS[screen] }) }),
+        jsx("div", { style: { ...box, left: `${left}px`, transform: `scale(${scale})`, transformOrigin: "0 50%" }, children: icon }),
+    ] });
+}
+const SunIcon = ({ screen }) => steamSun && jsx(ScreenIcon, { screen, icon: steamSun, scale: 0.82, left: 12.4 });
+const VolumeIcon = ({ screen, icon }) => jsx(ScreenIcon, { screen, icon, scale: 0.78, left: 12.9 });
+let steamSun = null, steamSpeaker = null;
+
+// The screens' state for the rows below, one for all of them: read when one
+// shows, then told by pbos-qamd (but not while its own slider moves).
+const screens = { st: null, movedAt: 0, subs: new Set() };
+function setScreens(next) {
+    screens.st = next;
+    for (const f of screens.subs) f(next);
+}
+function takeScreens(s) {
+    if (s && s.brightness && Date.now() - screens.movedAt > 600) setScreens({ ...screens.st, ...s });
+}
+api.addEventListener("screens", takeScreens);
+function useScreens() {
+    const [st, setSt] = useState(screens.st);
+    useEffect(() => {
+        screens.subs.add(setSt);
+        if (screens.st) setSt(screens.st);
+        getState().then(takeScreens).catch(() => {});
+        return () => { screens.subs.delete(setSt); };
+    }, []);
+    return st && st.brightness && st.linked !== undefined ? st : null;
+}
+
+// Every slider of the two screens snaps: Steam's slider sound at each percent
+// (Steam's own two go without steps, so they sound once, when let go).
+const SNAP = { step: 0.01, stepSound: true };
+
+// Steam's own brightness slider, as Steam draws it; while the screens are
+// not linked it is the top one's, and has that icon.
+function SteamSlider({ steam }) {
+    const st = useScreens();
+    const ret = steam.type(steam.props);
+    steamSun = (ret && ret.props && ret.props.icon) || null;
+    if (!steamSun) return ret;
+    return SP_REACT.cloneElement(ret, { ...SNAP, ...(st && !st.linked ? { icon: jsx(SunIcon, { screen: "top" }) } : {}) });
+}
+
+// In Steam's own Quick Settings, under its brightness slider: the bottom
+// screen's while they are not linked, and the link.
+function QuickBrightness() {
+    const st = useScreens();
+    const sendBottom = useThrottled(useCallback((v) => { setBrightness("bottom", v).catch(() => {}); }, []));
+    if (!st) return null;
+    return jsxs(SP_REACT.Fragment, { children: [
+        !st.linked && row(jsx(DFL.SliderField, {
+            "aria-label": "Bottom screen brightness",
+            ...(steamSun ? { icon: jsx(SunIcon, { screen: "bottom" }) } : { label: "Bottom screen" }),
+            value: st.brightness.bottom, min: 0, max: 100, step: 1, disabled: !st.on,
+            onChange: (v) => {
+                screens.movedAt = Date.now();
+                setScreens({ ...screens.st, brightness: { ...screens.st.brightness, bottom: v } });
+                sendBottom(v);
+            },
+        })),
+        row(jsx(DFL.ToggleField, {
+            label: "Link screens", icon: jsx(LinkIcon, { on: st.linked }), checked: st.linked,
+            onChange: (v) => {
+                screens.movedAt = 0;
+                setScreens({ ...screens.st, linked: v });
+                setScreensLinked(v).then(takeScreens).catch(() => getState().then(takeScreens).catch(() => {}));
+            },
+        })),
+    ] });
+}
+
+// The volumes, as the screens above: the bottom screen's apps' and the link.
+const volume = { st: null, movedAt: 0, subs: new Set() };
+function setVolume(next) {
+    volume.st = next;
+    for (const f of volume.subs) f(next);
+}
+function takeVolume(v) {
+    if (v && v.linked !== undefined && Date.now() - volume.movedAt > 600) setVolume(v);
+}
+api.addEventListener("volume", takeVolume);
+function useVolume() {
+    const [st, setSt] = useState(volume.st);
+    useEffect(() => {
+        volume.subs.add(setSt);
+        if (volume.st) setSt(volume.st);
+        getVolume().then(takeVolume).catch(() => {});
+        return () => { volume.subs.delete(setSt); };
+    }, []);
+    return st;
+}
+
+// Steam's volume row draws its slider a few components down (another one for
+// a TV's volume): each is drawn through one of ours, its own for each of
+// Steam's, until the slider with its icon.
+const drawnThrough = new Map();
+function through(el, map, depth) {
+    if (!el || !el.props) return el;
+    if (el.props.icon) return map(el);
+    if (depth > 4 || typeof el.type !== "function" || (el.type.prototype && el.type.prototype.isReactComponent)) return el;
+    let ours = drawnThrough.get(el.type);
+    if (!ours) {
+        const steams = el.type;
+        ours = ({ props, map, depth }) => through(steams(props), map, depth + 1);
+        drawnThrough.set(steams, ours);
+    }
+    return jsx(ours, { props: el.props, map, depth }, el.key);
+}
+function SteamVolume({ steam }) {
+    const st = useVolume();
+    return through(steam, (slider) => {
+        steamSpeaker = slider.props.icon;
+        return SP_REACT.cloneElement(slider, {
+            ...(slider.props.onChange ? { ...SNAP, onChangeComplete: undefined } : {}),  // Steam's volume sound
+            ...(st && !st.linked ? { icon: jsx(VolumeIcon, { screen: "top", icon: slider.props.icon }) } : {}),
+        });
+    }, 0);
+}
+
+// The volume rocker snaps too, at each of its steps.
+const navSounds = DFL.findModuleExport((e) => e && typeof e.PlayNavSound === "function" && e.RegisterCallbackOnPlaySound);
+const navSound = DFL.findModuleExport((e) => e && e.SliderUp !== undefined && e.VolSound !== undefined);
+api.addEventListener("volume_key", (way) => {
+    try { navSounds.PlayNavSound(way === "up" ? navSound.SliderUp : navSound.SliderDown); } catch (e) { P.fail("the rocker's sound", e); }
+});
+watchRocker().catch((e) => P.fail("the volume rocker", e));
+
+// Under Steam's volume: the bottom screen's while they are not linked, and
+// the link.
+function QuickVolume() {
+    const st = useVolume();
+    const sendBottom = useThrottled(useCallback((v) => { setBottomVolume(v).catch(() => {}); }, []));
+    if (!st) return null;
+    const speaker = steamSpeaker && SP_REACT.cloneElement(steamSpeaker, { flVolume: st.bottom / 100 });
+    return jsxs(SP_REACT.Fragment, { children: [
+        !st.linked && row(jsx(DFL.SliderField, {
+            "aria-label": "Bottom screen volume",
+            ...(speaker ? { icon: jsx(VolumeIcon, { screen: "bottom", icon: speaker }) } : { label: "Bottom screen" }),
+            value: st.bottom, min: 0, max: 100, step: 1,
+            onChange: (v) => {
+                volume.movedAt = Date.now();
+                setVolume({ ...volume.st, bottom: v });
+                sendBottom(v);
+            },
+        })),
+        row(jsx(DFL.ToggleField, {
+            label: "Link volumes", icon: jsx(LinkIcon, { on: st.linked }), checked: st.linked,
+            onChange: (v) => {
+                volume.movedAt = 0;
+                setVolume({ ...volume.st, linked: v });
+                setVolumeLinked(v).then(takeVolume).catch(() => getVolume().then(takeVolume).catch(() => {}));
+            },
+        })),
     ] });
 }
 
@@ -1176,6 +1365,34 @@ P.plugin({ id: "languages", page: "system", icon: LanguagesIcon, content: Langua
 getState().then((s) => {
     if (s && s.rgbDimmer != null) P.plugin({ id: "lights", page: "personalization", icon: RgbIcon, content: DimmerPage, order: 5 });
 }).catch((e) => P.fail("dimmer", e));
+
+// Steam's Quick Settings get the links and the bottom screen's sliders. A Steam
+// update can move what they hang on: with another Steam client than the last
+// one they were seen in, the loader tries again for a while and looks at
+// everything the tab needs; how it went is logged and kept.
+if (P.quickSettings) {
+    P.quickSettings([
+        { steamTitle: "#QuickAccess_Tab_Settings_Section_Brightness_Title", title: "Screens",
+            content: QuickBrightness, slider: SteamSlider, is: (el) => el.props.iconOnly },
+        { steamTitle: "#QuickAccess_Tab_Settings_Section_Audio_Title", title: "Volume", after: true,
+            content: QuickVolume, slider: SteamVolume, is: (el) => el.props.direction === 1 },  // output
+    ]);
+    (async () => {
+        const info = await SteamClient.System.GetSystemInfo();
+        const build = String(info.nSteamVersion || "");
+        const r = build && await steamBuild(build);
+        if (!r || !r.changed) return;
+        const where = await P.reapply(`Steam ${r.was || "?"} -> ${build}`);
+        await steamBuildDone(build, where);
+        if (where === "none") P.toaster.toast({ title: "PB-OS", body: "This Steam update changed Quick Settings. The bottom screen's brightness and volume are in Barry." });
+    })().catch((e) => P.fail("Quick Settings", e));
+}
+
+// Steam's brightness slider shows the top screen's when Barry (or the PB-OS
+// tab) set it.
+api.addEventListener("steam_brightness", (v) => {
+    try { window.SteamClient.System.Display.SetBrightness(v); } catch (e) { P.fail("Steam's brightness slider", e); }
+});
 
 // While Steam runs (as the Decky plugin did while loaded): Barry's keyboard
 // in place of Steam's, and the companion apps following running games.

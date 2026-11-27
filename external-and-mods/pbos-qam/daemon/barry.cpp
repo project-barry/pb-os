@@ -1,8 +1,6 @@
 // The Barry Launcher section (AYN Thor, Retroid Pocket Duo): the backend of
 // what was the Barry Launcher Decky plugin (folder dual-screen), method for
-// method. On the Duo Steam's slider is the top screen's alone (thor-backlight's
-// DUO profile): get_state says so ("steamBoth" false), and that the device has
-// no Barry button ("button" "").
+// method. On the Duo get_state says the device has no Barry button ("button" "").
 //
 // One switch for the bottom screen, and each screen's brightness, as on
 // AYN's Android: Steam's brightness slider sets both screens
@@ -62,6 +60,11 @@ const std::string TOP = "/sys/class/backlight/ae96000.dsi.0";
 const std::string BOTTOM = "/sys/class/backlight/ae94000.dsi.0";
 const std::string STATE = "/var/lib/steamos-sm8550/thor-bottom-screen";
 const std::string SCREENS = "/var/lib/steamos-sm8550/thor-screen-brightness.json";
+// The Steam client last seen with our rows in its Quick Settings.
+const std::string STEAM_UI = "/var/lib/steamos-sm8550/steam-ui.json";
+// Linked where each screen has its volume (pbos-thor-audio.service).
+const std::string TOP_SCREEN_AUDIO = "/etc/pipewire/pipewire.conf.d/60-pbos-top-screen.conf";
+const std::string STEAM_TELL = "/run/sm8550-thor/steam-tell";
 const std::string CONTROLS = "/run/sm8550-thor/controls.sock";
 constexpr long long RGB_DIM_MIN = 20;
 constexpr int SHELLD = 47824;
@@ -1379,6 +1382,8 @@ public:
         log("barry: Barry Launcher section ready");
         rewatch();
         keep_soon(0);
+        watch_tell();
+        watch_screens();
     }
 
     Value call(const std::string& m, const Value& a) override {
@@ -1390,6 +1395,108 @@ public:
     }
 
 private:
+    // sm8550-thor-backlightd: where the top screen's brightness was put by
+    // anything but Steam's slider; Steam sets its slider there.
+    void watch_tell() {
+        const std::string dir = dirname(STEAM_TELL);
+        if (host_->loop.watch(dir, IN_CLOSE_WRITE, [this](uint32_t, const std::string& n) {
+                if (n != basename(STEAM_TELL)) return;
+                auto text = read_file(STEAM_TELL);
+                auto v = text ? Value::parse(*text) : std::nullopt;
+                if (!v || !v->is_number()) return;
+                Value ev = Value::array();
+                ev.push(std::max(0.0, std::min(1.0, v->as_double())));
+                host_->emit(name(), "steam_brightness", ev);
+            }))
+            return;
+        // The daemon makes the folder; it is not up yet.
+        tell_parent_ = host_->loop.watch(dirname(dir), IN_CREATE, [this, dir](uint32_t, const std::string& n) {
+            if (n != basename(dir) || !tell_parent_) return;
+            host_->loop.unwatch(tell_parent_);
+            tell_parent_ = 0;
+            watch_tell();
+        });
+    }
+
+    Value screens_state() {
+        Value out = Value::object();
+        out["on"] = is_on();
+        out["brightness"] = brightness();
+        out["linked"] = screens_linked();
+        return out;
+    }
+
+    bool screens_linked() const {
+        auto d = Value::parse(read_file(barry_settings()).value_or(""));
+        return !d || !(*d)["screensLinked"].is_bool() || (*d)["screensLinked"].truthy();
+    }
+
+    std::string barry_settings() const { return home() + "/.config/barry_launcher/settings.json"; }
+
+    // The bottom screen's apps' volume, and whether it is linked to the top
+    // one's; {} without the "Top screen" output.
+    Value volume_state() const {
+        Value out = Value::object();
+        if (!exists(TOP_SCREEN_AUDIO)) return out;
+        auto q = Value::parse(read_file(barry_quick()).value_or(""));
+        double v = q ? (*q)["appsVolume"].as_double(100) : 100;
+        out["bottom"] = static_cast<long long>(v >= 0 && v <= 100 ? v : 100);
+        auto d = Value::parse(read_file(barry_settings()).value_or(""));
+        out["linked"] = d && (*d)["volumeLinked"].is_bool() && (*d)["volumeLinked"].truthy();
+        return out;
+    }
+
+    std::string barry_quick() const { return home() + "/.config/barry_launcher/quick.json"; }
+
+    // The frontend hears a change of the levels or the links (Steam's
+    // sliders, Barry), once for a burst. Loop thread.
+    void watch_screens() {
+        struct Watched {
+            std::string path;
+            bool screens, volume;
+        };
+        for (const Watched& w : {Watched{SCREENS, true, false}, Watched{barry_settings(), true, true},
+                                 Watched{barry_quick(), false, true}}) {
+            if (screens_watches_.count(w.path)) continue;
+            int id = host_->loop.watch(dirname(w.path), IN_MOVED_TO | IN_CLOSE_WRITE, [this, w](uint32_t, const std::string& n) {
+                if (n != basename(w.path)) return;
+                if (w.screens) soon(screens_timer_, [this] { tell("screens", screens_state()); });
+                if (w.volume) soon(volume_timer_, [this] { tell("volume", volume_state()); });
+            });
+            if (id) screens_watches_[w.path] = id;
+        }
+    }
+
+    // The volume rocker's steps (pbos-platformd's volume-keys). The folder is
+    // the session's: watched when the frontend asks, again in a new session.
+    void watch_rocker() {
+        if (rocker_) return;
+        const std::string dir = "/run/user/" + std::to_string(desktop_user().uid) + "/pbos";
+        mkdir(dir.c_str(), 0755);
+        if (chown(dir.c_str(), desktop_user().uid, desktop_user().gid) != 0) return;
+        rocker_ = host_->loop.watch(dir, IN_MOVED_TO | IN_DELETE_SELF, [this, dir](uint32_t mask, const std::string& n) {
+            if (mask & (IN_IGNORED | IN_DELETE_SELF)) {
+                rocker_ = 0;
+                return;
+            }
+            if (n == "volume-key") tell("volume_key", read_file(dir + "/volume-key").value_or(""));
+        });
+    }
+
+    void soon(uint64_t& timer, std::function<void()> fn) {
+        if (timer) return;
+        timer = host_->loop.after(0.04, [&timer, fn] {
+            timer = 0;
+            fn();
+        });
+    }
+
+    void tell(const char* event, Value v) {
+        Value ev = Value::array();
+        ev.push(std::move(v));
+        host_->emit(name(), event, ev);
+    }
+
     Value dispatch(const std::string& m, const Value& a) {
         if (m == "get_state") {
             Value out = Value::object();
@@ -1400,8 +1507,9 @@ private:
             // screen has a slider here.
             out["button"] = duo() ? "" : "AYN";
             out["topSlider"] = true;
-            // Steam's slider sets both screens, or (Duo) the top one alone.
-            out["steamBoth"] = !duo();
+            // Steam's slider sets both screens (linked), or the top one.
+            out["linked"] = out["steamBoth"] = screens_linked();
+            if (host_) host_->loop.post([this] { watch_screens(); });
             Value req = Value::object();
             req["op"] = "get";
             out["rgbDimmer"] = rgb_dimmer(controlsd(req));
@@ -1422,6 +1530,54 @@ private:
                 write_text(SCREENS, d.dump() + "\n");
             }
             return brightness();
+        }
+        if (m == "set_screens_linked") {
+            // Barry's setting too. Linking brings the bottom screen to the top one's.
+            bool on = arg(a, 0, true).truthy();
+            Value body = Value::object();
+            body["screensLinked"] = on;
+            http_json("POST", STATSD, "/settings", &body, 2);
+            Value d = screens();
+            if (on && d.has("top") && d.has("bottom") && d["bottom"].as_double(NAN) != d["top"].as_double(NAN)) {
+                d["bottom"] = d["top"];
+                write_text(SCREENS, d.dump() + "\n");
+            }
+            return screens_state();
+        }
+        if (m == "get_volume") return volume_state();
+        if (m == "watch_rocker") {
+            host_->loop.post([this] { watch_rocker(); });
+            return true;
+        }
+        if (m == "set_bottom_volume") {
+            Value body = Value::object();
+            body["apps"] = std::max(0LL, std::min(100LL, arg(a, 0, 100).as_int(100)));
+            http_json("POST", STATSD, "/volume", &body, 2);
+            return volume_state();
+        }
+        if (m == "set_volume_linked") {
+            // Linking brings the bottom screen to the top one's (barry-audio).
+            Value body = Value::object();
+            body["volumeLinked"] = arg(a, 0, true).truthy();
+            http_json("POST", STATSD, "/settings", &body, 2);
+            return volume_state();
+        }
+        if (m == "steam_build") {
+            // Whether Steam's client is another one than the last whose
+            // Quick Settings were seen with our rows (STEAM_UI).
+            Value d = Value::parse(read_file(STEAM_UI).value_or("")).value_or(Value::object());
+            Value out = Value::object();
+            out["changed"] = d["build"].str() != arg(a, 0, "").str();
+            out["was"] = d["build"].str();
+            return out;
+        }
+        if (m == "steam_build_done") {
+            Value d = Value::object();
+            d["build"] = arg(a, 0, "").str();
+            d["quickSettings"] = arg(a, 1, "").str();
+            write_text(STEAM_UI, d.dump() + "\n");
+            log("barry: Steam %s: Quick Settings' rows: %s", d["build"].str().c_str(), d["quickSettings"].str().c_str());
+            return true;
         }
         if (m == "set_rgb_dimmer") {
             long long v = std::max(RGB_DIM_MIN, std::min(100LL, arg(a, 0, 100).as_int(100)));
@@ -1729,6 +1885,10 @@ private:
     }
 
     Host* host_ = nullptr;
+    int tell_parent_ = 0;
+    std::map<std::string, int> screens_watches_;
+    uint64_t screens_timer_ = 0, volume_timer_ = 0;
+    int rocker_ = 0;
     std::map<std::string, int> watches_;
     std::set<pid_t> exit_watched_;
     uint64_t keep_timer_ = 0;

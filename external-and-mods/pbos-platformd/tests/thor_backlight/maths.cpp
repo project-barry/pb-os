@@ -16,9 +16,9 @@ int main() {
     }
     for (int v = 0; v <= bottom_max; ++v) {
         double level = level_of(v, bottom_max);
-        std::printf("pos %d %.17g %lld\n", v, steam_position(level), std::max<long long>(1, py_round(level * bottom_max)));
+        std::printf("pos %d %.8f %lld\n", v, steam_position(level), std::max<long long>(1, py_round(level * bottom_max)));
     }
-    for (int v = 0; v <= top_max; ++v) std::printf("tpos %d %.17g\n", v, steam_position(level_of(v, top_max)));
+    for (int v = 0; v <= top_max; ++v) std::printf("tpos %d %.8f\n", v, steam_position(level_of(v, top_max)));
     // The follow: a still target from each start, in 16 ms steps.
     const int ends[] = {1, 2, 10, 11, 100, 655, 1000, 3413, 30000, 65535};
     for (int a : ends)

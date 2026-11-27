@@ -1,0 +1,131 @@
+From: lavachemist <48248311+lavachemist@users.noreply.github.com>
+Subject: [PATCH] drm/msm/dpu: eliza: rotate UBWC RGB buffers at scanout
+
+The Retroid Pocket Duo's top panel is a portrait one mounted sideways, so
+every frame was turned on the GPU. Eliza's two VIG pipes have inline rotation
+2.0.1, which takes UBWC RGB buffers up to 1088 lines high (the vendor display
+driver's formats and limits, checked against the LineageOS copy).
+
+Inline rotation was only ever used for NV12 on SC7280; for RGB at 1:1 it also
+needs:
+- the pipe lookup to test the feature's bit, not its number;
+- the height limit checked on the framebuffer's height, not its width;
+- the scaler on, as the rotator's output goes through it;
+- the turn the other way around (DRM counter-clockwise, hardware clockwise).
+---
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.c
+@@ -190,6 +190,19 @@
+ 	/* TODO add formats after validation */
+ };
+ 
++/* inline rotation 2.0.1 (DPU 8.1 and later): UBWC RGB as well */
++static const u32 rotation_v201_formats[] = {
++	DRM_FORMAT_NV12,
++	DRM_FORMAT_ABGR8888,
++	DRM_FORMAT_XBGR8888,
++	DRM_FORMAT_ARGB8888,
++	DRM_FORMAT_XRGB8888,
++	DRM_FORMAT_ABGR2101010,
++	DRM_FORMAT_XBGR2101010,
++	DRM_FORMAT_ARGB2101010,
++	DRM_FORMAT_XRGB2101010,
++};
++
+ static const u32 wb2_formats_rgb_yuv[] = {
+ 	DRM_FORMAT_RGB565,
+ 	DRM_FORMAT_BGR565,
+@@ -319,6 +332,12 @@
+ 	.rot_format_list = rotation_v2_formats,
+ };
+ 
++static const struct dpu_rotation_cfg dpu_rot_cfg_v201 = {
++	.rot_maxheight = 1088,
++	.rot_num_formats = ARRAY_SIZE(rotation_v201_formats),
++	.rot_format_list = rotation_v201_formats,
++};
++
+ static const struct dpu_sspp_sub_blks dpu_vig_sblk_qseed2 =
+ 				_VIG_SBLK_QSEED2();
+ 
+@@ -356,6 +375,10 @@
+ static const struct dpu_sspp_sub_blks dpu_vig_sblk_qseed3_3_4 =
+ 				_VIG_SBLK(SSPP_SCALER_VER(3, 4));
+ 
++static const struct dpu_sspp_sub_blks dpu_vig_sblk_qseed3_3_4_rot_v201 =
++			_VIG_SBLK_ROT(SSPP_SCALER_VER(3, 4),
++				      &dpu_rot_cfg_v201);
++
+ static const struct dpu_sspp_sub_blks dpu_vig_sblk_qseed3_3_5 =
+ 				_VIG_SBLK_REC0_REC1(SSPP_SCALER_VER(3, 5));
+ 
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_rm.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_rm.c
+@@ -817,7 +817,7 @@
+ 		if (reqs->yuv && !hw_sspp->cap->sblk->csc_blk.len)
+ 			continue;
+ 
+-		if (reqs->rot90 && !(hw_sspp->cap->features & DPU_SSPP_INLINE_ROTATION))
++		if (reqs->rot90 && !test_bit(DPU_SSPP_INLINE_ROTATION, &hw_sspp->cap->features))
+ 			continue;
+ 
+ 		global_state->sspp_to_crtc_id[i] = crtc_id;
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_plane.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_plane.c
+@@ -475,8 +475,9 @@
+ 			scale_cfg->preload_y[i] = DPU_QSEED3_DEFAULT_PRELOAD_V;
+ 		}
+ 	}
++	/* The inline rotator's output goes through the scaler, also at 1:1 */
+ 	if (!(MSM_FORMAT_IS_YUV(fmt)) && (src_h == dst_h)
+-		&& (src_w == dst_w))
++		&& (src_w == dst_w) && !inline_rotation)
+ 		return;
+ 
+ 	scale_cfg->dst_width = dst_w;
+@@ -704,7 +705,8 @@
+ 		return -EINVAL;
+ 	}
+ 
+-	if (drm_rect_width(&src) > sblk->rotation_cfg->rot_maxheight) {
++	/* @src is in framebuffer coordinates: its height is the line to rotate */
++	if (drm_rect_height(&src) > sblk->rotation_cfg->rot_maxheight) {
+ 		DPU_DEBUG_PLANE(pdpu, "invalid height for inline rot:%d max:%d\n",
+ 				src.y2, sblk->rotation_cfg->rot_maxheight);
+ 		return -EINVAL;
+@@ -758,6 +760,13 @@
+ 	pipe_cfg->rotation = drm_rotation_simplify(new_plane_state->rotation,
+ 						   supported_rotations);
+ 
++	/*
++	 * DRM rotates counter-clockwise, the hardware clockwise: 90 degrees
++	 * one way is 90 degrees the other way and 180.
++	 */
++	if (pipe_cfg->rotation & DRM_MODE_ROTATE_90)
++		pipe_cfg->rotation ^= DRM_MODE_REFLECT_X | DRM_MODE_REFLECT_Y;
++
+ 	min_src_size = MSM_FORMAT_IS_YUV(fmt) ? 2 : 1;
+ 
+ 	if (MSM_FORMAT_IS_YUV(fmt) &&
+--- a/drivers/gpu/drm/msm/disp/dpu1/catalog/dpu_12_4_eliza.h
++++ b/drivers/gpu/drm/msm/disp/dpu1/catalog/dpu_12_4_eliza.h
+@@ -46,15 +46,15 @@
+ 	{
+ 		.name = "sspp_0", .id = SSPP_VIG0,
+ 		.base = 0x4000, .len = 0x344,
+-		.features = VIG_SDM845_MASK_SDMA,
+-		.sblk = &dpu_vig_sblk_qseed3_3_4,
++		.features = VIG_SC7280_MASK_SDMA,
++		.sblk = &dpu_vig_sblk_qseed3_3_4_rot_v201,
+ 		.xin_id = 0,
+ 		.type = SSPP_TYPE_VIG,
+ 	}, {
+ 		.name = "sspp_1", .id = SSPP_VIG1,
+ 		.base = 0x6000, .len = 0x344,
+-		.features = VIG_SDM845_MASK_SDMA,
+-		.sblk = &dpu_vig_sblk_qseed3_3_4,
++		.features = VIG_SC7280_MASK_SDMA,
++		.sblk = &dpu_vig_sblk_qseed3_3_4_rot_v201,
+ 		.xin_id = 4,
+ 		.type = SSPP_TYPE_VIG,
+ 	}, {

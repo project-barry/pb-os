@@ -70,28 +70,24 @@
 // retry, Desktop Mode's 10 s hold). Root window properties go through xprop,
 // as before, but only when they change.
 //
-// Retroid Pocket Duo (DUO): the panels are the other way round (top
-// ae94000, bottom ae96000) and Steam's slider finds the top panel first, so
-// it is the top screen's own and nothing goes over it: its writes are
-// followed into SCREENS' "top" (a place on Steam's slider) and "steam". A
-// "top" set elsewhere (the PB-OS tab's and Barry's sliders) is written to the
-// panel, until Steam writes again; as on the Thor it is kept across Game
-// Mode's starts (duo_top). The bottom panel follows SCREENS' "bottom" alone,
-// on a straight line (linear_bottom). No AYN button: Barry's quick settings put the bottom
+// Retroid Pocket Duo (DUO): the same, with the panels the other way round
+// (top ae94000, bottom ae96000): Steam's slider finds the top panel first, so
+// STEAM_BOTTOM goes over the top panel's file. Both screens are set as on
+// Retroid's Android (duo_top, duo_bottom). gamescope's panel is the top one
+// too, the file's: it gets a folder of its own (GAMESCOPE_BL), so the two
+// never write one file, and what it writes there counts as its write to the
+// top panel does on the Thor. No AYN button: Barry's quick settings put the bottom
 // screen to sleep through SLEEP (dark, its touchscreen on: a touch wakes it;
 // Barry closes, as the AYN button's hold closes it); the switch (STATE),
 // Barry's flags, the yield to Barry, the sleep timer, touch wake and the
 // idle-dim nudge are as on the Thor.
 //
 // Desktop Mode on the Duo is the Thor's the other way round: KWin gives
-// Plasma's hardware slider to DSI-1, here the top screen, and dims the
-// bottom one in software. Plasma's backlight helper takes the top panel
-// alone (plasma_alone) and writes it directly; both sliders' positions come
-// through DESKTOP_TOP and DESKTOP_BOTTOM into SCREENS. The bottom panel goes
-// to its highest once DESKTOP_BOTTOM is there (until then, and with a helper
-// that could not tell the screens apart, it follows SCREENS itself). The top
-// starts from what the panel shows as Desktop Mode begins; DESKTOP_START and
-// DESKTOP_TOP have it as a share of the panel's range.
+// Plasma's hardware slider to DSI-1, here the top screen, whose writes come
+// through Steam's file, and dims the bottom one in software. The bottom
+// panel goes to its highest once DESKTOP_BOTTOM is there (until then, and
+// with a helper that could not tell the screens apart, it follows SCREENS
+// itself).
 //
 // Two departures from the Python, for a smooth slider: a new brightness is
 // followed continuously rather than glided to from scratch on every new
@@ -144,20 +140,18 @@ using namespace thor_bl;
 struct Profile {
     const char* bottom;  // the bottom panel's backlight
     const char* top;     // the top panel's
-    // Steam's slider writes the bottom panel's file (STEAM_BOTTOM goes over
-    // it) and sets both screens; the top panel is written here too (TOP_CAP),
-    // and Desktop Mode shares SCREENS through Plasma's sliders.
-    bool steam_both;
+    // The panel Steam's slider writes, and Plasma's hardware one (DSI-1's):
+    // STEAM_BOTTOM goes over its brightness file. The other panel's slider
+    // dims in software in Desktop Mode.
+    const char* steam;
+    bool duo;
     bool ayn_button;  // gpio-keys-ayn's KEY_F24
     bool sleep_flag;  // SLEEP: Barry's Screen off
-    // Desktop Mode: the panel Plasma's hardware slider writes (DSI-1's); the
-    // other one's slider dims in software.
-    const char* plasma;
 };
-const Profile THOR{"/sys/class/backlight/ae94000.dsi.0", "/sys/class/backlight/ae96000.dsi.0", true, true, false,
-                   "/sys/class/backlight/ae94000.dsi.0"};
-const Profile DUO{"/sys/class/backlight/ae96000.dsi.0", "/sys/class/backlight/ae94000.dsi.0", false, false, true,
-                  "/sys/class/backlight/ae94000.dsi.0"};
+const Profile THOR{"/sys/class/backlight/ae94000.dsi.0", "/sys/class/backlight/ae96000.dsi.0",
+                   "/sys/class/backlight/ae94000.dsi.0", false, true, false};
+const Profile DUO{"/sys/class/backlight/ae96000.dsi.0", "/sys/class/backlight/ae94000.dsi.0",
+                  "/sys/class/backlight/ae94000.dsi.0", true, false, true};
 // This device's (make_thor_backlight).
 const Profile* P = &THOR;
 const char* const VAR_DIR = "/var/lib/steamos-sm8550";
@@ -180,7 +174,14 @@ const char* const LEVEL = "/run/sm8550-thor/steam-brightness";
 // of its slider, so the screens keep their own settings across restarts.
 const char* const SCREENS_NAME = "thor-screen-brightness.json";
 const char* const SCREENS = "/var/lib/steamos-sm8550/thor-screen-brightness.json";
+// Where the top screen is put by anything but Steam's slider, for that
+// slider to show (0-1): pbos-qamd has Steam set it there.
+const char* const STEAM_TELL = "/run/sm8550-thor/steam-tell";
 const char* const STEAM_BOTTOM = "/run/sm8550-thor/steam-bottom-brightness";
+// DUO: gamescope's backlight (gamescope-session gives it this folder while
+// Steam's file is over the panel it would take): plain brightness,
+// actual_brightness and max_brightness files, kept across restarts of this.
+const char* const GAMESCOPE_BL = "/run/sm8550-thor/gamescope-backlight";
 const char* const FIRMWARE_TYPE = "/run/sm8550-thor/bottom-backlight-type";
 const char* const DESKTOP_MAX = "/run/sm8550-thor/bottom-backlight-max";
 const char* const OVERLAY = "/run/sm8550-thor/overlay";  // "1": Barry Launcher is open
@@ -214,6 +215,7 @@ const char* const DESKTOP_SWITCH = "/usr/lib/barry_launcher/barry_launcher_deskt
 // Asleep is due, but a game draws on the bottom screen: looked at again after.
 constexpr double SLEEP_CHECK_S = 5;
 const char* const TOUCH_NAME = "bottom_touchscreen";
+const char* const TOP_TOUCH_NAME = "top_touchscreen";
 const char* const AYN_KEYS_NAME = "gpio-keys-ayn";
 const char* const BL_ON = "0";   // FB_BLANK_UNBLANK
 const char* const BL_OFF = "4";  // FB_BLANK_POWERDOWN
@@ -246,9 +248,31 @@ constexpr double REST_REAP_S = 0.1;
 // has passed since this or Game Mode started), that is not a move of its
 // slider, so each screen keeps its own brightness.
 constexpr double STEAM_RESTORE_S = 120;
-// DUO: Steam's level has been back on the top panel this long: its fade is
-// over, and SCREENS' top goes on.
-constexpr double TOP_BACK_S = 1;
+// DUO: what gamescope writes this soon after Steam's file changed is its part
+// of the same move (on a scale of its own), not one of its brightness keys'.
+constexpr double GAMESCOPE_AFTER_S = 1;
+// Steam's idle dim fades its level down through the file its slider writes
+// (to 3 %, a hair every ~65 ms for half a minute) and puts the exact level
+// back on input. Both screens dim with it, each from its own brightness, and
+// SCREENS keeps theirs. It is told from the slider by its first step, in
+// slider position: the slider's are 1 % or a pixel (0.3 %), the fade's
+// 0.06 % at most, after the level was still; and no finger is on a screen.
+constexpr double DIM_FIRST = 0.0025;
+constexpr double DIM_STEP = 0.02;
+constexpr double DIM_STILL_S = 1;
+// Coming back up, but not to its level: after this long it is the slider's.
+constexpr double DIM_UP_S = 2;
+// Steam told (STEAM_TELL) when its slider is this far off the top screen's,
+// at most this often. What it then writes is its slider following, not a
+// move of it: anything this soon after, or the place told a while longer.
+constexpr double TELL_OFF = 0.004;
+constexpr double TELL_EVERY_S = 0.1;
+constexpr double TELL_ANY_S = 0.3;
+constexpr double TELL_ANSWER_S = 5;
+constexpr double TELL_NEAR = 0.02;
+// Its new level goes into SCREENS once the telling stops (Barry's drag
+// writes SCREENS too).
+constexpr double TELL_SAVE_S = 0.5;
 // The kernel's evdev queue for a small device; input that comes while
 // resting on the charger is kept up to this many events, as it was there.
 constexpr size_t KEY_QUEUE = 64;
@@ -641,41 +665,50 @@ public:
     ~ThorBacklight() override {
         top_.writer.stop();
         bottom_.writer.stop();
-        for (int fd : {bl_fd_, key_fd_, touch_fd_, cn_})
+        for (int fd : {bl_fd_, top_fd_, key_fd_, touch_fd_, cn_})
             if (fd >= 0) close(fd);
     }
 
     void start(pq::Loop& loop) override {
         loop_ = &loop;
         test_sysfs_ = env_set("PBOS_PLATFORMD_TEST_THOR_SYSFS");
-        if (!P->steam_both) return start_duo(loop);
         // A copy left over a panel's attributes by a run that died goes first.
-        for (const char* name : {"type", "max_brightness"}) unshadow(pq::realpath(std::string(P->bottom) + "/" + name));
+        for (const char* panel : {P->steam, P->bottom})
+            for (const char* name : {"type", "max_brightness"}) unshadow(pq::realpath(std::string(panel) + "/" + name));
         bottom_max_ = static_cast<int>(to_int(pq::rd(std::string(P->bottom) + "/max_brightness", "0")));
-        top_max_ = static_cast<int>(std::min<long long>(TOP_CAP, to_int(pq::rd(std::string(P->top) + "/max_brightness", "0"))));
+        top_max_ = static_cast<int>(to_int(pq::rd(std::string(P->top) + "/max_brightness", "0")));
+        if (!P->duo) top_max_ = std::min(TOP_CAP, top_max_);
         if (bottom_max_ <= 0 || top_max_ <= 0) fail("no usable backlights");
+        steam_max_ = P->duo ? top_max_ : bottom_max_;
         setup_overlay();
         clear_desktop();
         for (const char* path : LEFTOVERS)
             if (unlink(path) == 0) pq::log("thor-backlight: removed %s: both screens follow Steam's slider", path);
 
-        // The real bottom panel, opened before Steam's file goes over it.
+        // The real panel, opened before Steam's file goes over it.
         bottom_path_ = pq::realpath(std::string(P->bottom) + "/brightness");
-        type_path_ = pq::realpath(std::string(P->bottom) + "/type");
+        steam_path_ = pq::realpath(std::string(P->steam) + "/brightness");
+        type_path_ = pq::realpath(std::string(P->steam) + "/type");
         max_path_ = pq::realpath(std::string(P->bottom) + "/max_brightness");
-        unshadow(bottom_path_);
-        if (mounted(bottom_path_)) fail("Steam's file is still over the bottom panel; cannot reach the panel");
+        unshadow(steam_path_);
+        if (mounted(steam_path_))
+            fail(P->duo ? "Steam's file is still over the top panel; cannot reach the panel"
+                        : "Steam's file is still over the bottom panel; cannot reach the panel");
         bl_fd_ = open(bottom_path_.c_str(), O_RDWR | O_CLOEXEC);
         if (bl_fd_ < 0) fail(("cannot open " + bottom_path_ + ": " + os_error(errno)).c_str());
+        if (P->duo) {
+            top_fd_ = open(steam_path_.c_str(), O_RDWR | O_CLOEXEC);
+            if (top_fd_ < 0) fail(("cannot open " + steam_path_ + ": " + os_error(errno)).c_str());
+        }
         shadowed_ = true;
 
-        open_ayn_key();
+        if (P->ayn_button) open_ayn_key();
         open_touch();
         double level;
         if (auto v = py_float(pq::rd(LEVEL))) level = *v;
-        else level = level_of(bottom_set(), bottom_max_);
+        else level = level_of(P->duo ? top_set() : bottom_set(), steam_max_);
         write(LEVEL, fmt_level(level));
-        steam_value_ = std::max<long long>(1, py_round(level * bottom_max_));
+        steam_value_ = std::max<long long>(1, py_round(level * steam_max_));
         auto screens = read_screens();
         if (!screens) {
             double f = steam_position(level);
@@ -683,9 +716,17 @@ public:
             save_screens();
         } else {
             screens_ = *screens;
-            if (screens_.steam > 0) steam_value_ = screens_.steam;
+            if (screens_.steam > 0) {
+                steam_value_ = screens_.steam;
+            } else if (P->duo) {
+                // From a version that left the top panel to Steam.
+                screens_.top = duo_top_place(top_set(), top_max_);
+                screens_.steam = steam_value_;
+                save_screens();
+            }
         }
-        shadow_bottom(steam_value_);
+        shadow_panel(steam_value_);
+        if (P->duo) gamescope_folder();
         // Steam's writes, through the mount (and Plasma's in Desktop Mode).
         if (!loop.watch(STEAM_BOTTOM, IN_MODIFY, [this](uint32_t, const std::string&) { tick(); }))
             pq::log("thor-backlight: cannot watch Steam's brightness file");
@@ -703,62 +744,24 @@ public:
             },
             [this](uint64_t seq, int value, int err, double took) { written(false, seq, value, err, took); });
         top_.writer.start(
-            loop, write_top,
+            loop, [this](int value) { return write_top(value); },
             [this](uint64_t seq, int value, int err, double took) { written(true, seq, value, err, took); });
         watch_all(loop);
+        // DUO, Game Mode already up (this one crashed or was updated): Steam
+        // is not putting its level back.
+        if (P->duo && user_of(Proc::SteamGamescope)) restoring_until_ = 0;
         pq::log("thor-backlight: following %s (max %d) -> %s (max %d)", P->bottom, bottom_max_, P->top, top_max_);
         tick();
     }
 
-    static int write_top(int value) {
+    int write_top(int value) {
         std::string v = std::to_string(value);
+        if (top_fd_ >= 0) return pwrite(top_fd_, v.data(), v.size(), 0) >= 0 ? 0 : errno;
         int fd = open((std::string(P->top) + "/brightness").c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0666);
         if (fd < 0) return errno;
         int err = ::write(fd, v.data(), v.size()) == static_cast<ssize_t>(v.size()) ? 0 : (errno ? errno : EIO);
         close(fd);
         return err;
-    }
-
-    // The Retroid Pocket Duo (DUO): see the top.
-    void start_duo(pq::Loop& loop) {
-        // A copy left over a panel's attributes by a run that died goes first.
-        type_path_ = pq::realpath(std::string(P->plasma) + "/type");
-        max_path_ = pq::realpath(std::string(P->bottom) + "/max_brightness");
-        unshadow(type_path_);
-        unshadow(max_path_);
-        bottom_max_ = static_cast<int>(to_int(pq::rd(std::string(P->bottom) + "/max_brightness", "0")));
-        top_max_ = static_cast<int>(to_int(pq::rd(std::string(P->top) + "/max_brightness", "0")));
-        if (bottom_max_ <= 0) fail("no usable bottom backlight");
-        setup_overlay();
-        clear_desktop();
-        bottom_path_ = pq::realpath(std::string(P->bottom) + "/brightness");
-        bl_fd_ = open(bottom_path_.c_str(), O_RDWR | O_CLOEXEC);
-        if (bl_fd_ < 0) fail(("cannot open " + bottom_path_ + ": " + os_error(errno)).c_str());
-        open_touch();
-        // First start: both sliders where the panels are now (the top one's
-        // also after a version that did not follow it: steam 0).
-        auto screens = read_screens();
-        wrote_top_ = top_.shown = top_set();
-        if (screens) screens_ = *screens;
-        else screens_ = {0, level_of(bottom_set(), bottom_max_), 0};
-        if (screens_.steam > 0) restoring_until_ = monotonic() + STEAM_RESTORE_S;
-        else duo_top_moved(wrote_top_);
-        top_f_ = screens_.top;
-        top_.writer.start(
-            loop, write_top,
-            [this](uint64_t seq, int value, int err, double took) { written(true, seq, value, err, took); });
-        bottom_.shown = bottom_set();
-        bottom_.writer.start(
-            loop,
-            [this](int value) {
-                std::string v = std::to_string(value);
-                return pwrite(bl_fd_, v.data(), v.size(), 0) >= 0 ? 0 : errno;
-            },
-            [this](uint64_t seq, int value, int err, double took) { written(false, seq, value, err, took); });
-        watch_all(loop);
-        pq::log("thor-backlight: following SCREENS on %s (max %d) and, with Steam, %s (max %d)", P->bottom,
-                bottom_max_, P->top, top_max_);
-        tick();
     }
 
     // What brings a pass, both profiles.
@@ -788,7 +791,8 @@ public:
         if (test_sysfs_) {
             // Test only (tests/thor_backlight): a fake sysfs sends no uevents;
             // its files' writes stand in for them.
-            for (std::string f : {std::string(P->top) + "/brightness", std::string(P->bottom) + "/bl_power"})
+            for (std::string f : {top_fd_ < 0 ? std::string(P->top) + "/brightness" : "/proc/self/fd/" + std::to_string(top_fd_),
+                                  std::string(P->bottom) + "/bl_power"})
                 loop.watch(f, IN_MODIFY | IN_CLOSE_WRITE, [this](uint32_t, const std::string&) { backlight_changed(); });
         }
         if (!env_set("PBOS_PLATFORMD_TEST_THOR_SCAN")) {
@@ -810,7 +814,7 @@ public:
         bottom_.writer.stop();
         if (!type_path_.empty()) unshadow(type_path_);
         if (!max_path_.empty()) unshadow(max_path_);
-        if (shadowed_) unshadow(bottom_path_);
+        if (shadowed_) unshadow(steam_path_);
     }
 
 private:
@@ -847,13 +851,57 @@ private:
         for (const char* path : {DESKTOP_START, DESKTOP_READY, DESKTOP_TOP, DESKTOP_BOTTOM}) unlink(path);
     }
 
-    // Steam's writes to the bottom panel go to STEAM_BOTTOM from now on.
-    void shadow_bottom(long long value) {
+    // Steam's writes to its panel go to STEAM_BOTTOM from now on.
+    void shadow_panel(long long value) {
         if (!write(STEAM_BOTTOM, std::to_string(value) + "\n")) fail("cannot write Steam's file");
         if (chown(STEAM_BOTTOM, static_cast<uid_t>(-1), group_id("video")) != 0 || chmod(STEAM_BOTTOM, 0664) != 0)
             fail(("cannot set up " + std::string(STEAM_BOTTOM) + ": " + os_error(errno)).c_str());
-        if (mount(STEAM_BOTTOM, bottom_path_.c_str(), nullptr, MS_BIND, nullptr) != 0)
-            fail(("cannot put Steam's file over " + bottom_path_ + ": " + os_error(errno)).c_str());
+        if (mount(STEAM_BOTTOM, steam_path_.c_str(), nullptr, MS_BIND, nullptr) != 0)
+            fail(("cannot put Steam's file over " + steam_path_ + ": " + os_error(errno)).c_str());
+    }
+
+    // DUO: gamescope's backlight, where it has the top panel at Steam's level.
+    // It keeps the file open and writes from its start ("99\n" over "1151\n"
+    // leaves the rest there), so its value is the first number.
+    void gamescope_folder() {
+        pq::makedirs(GAMESCOPE_BL);
+        gid_t video = group_id("video");
+        const std::string dir = std::string(GAMESCOPE_BL) + "/";
+        for (const auto& [name, value] : {std::pair<const char*, long long>{"max_brightness", top_max_},
+                                          {"actual_brightness", steam_value_},
+                                          {"brightness", steam_value_}})
+            if (!write(dir + name, std::to_string(value) + "\n")) return;
+        if (chown(GAMESCOPE_BL, static_cast<uid_t>(-1), video) != 0 ||
+            chown((dir + "brightness").c_str(), static_cast<uid_t>(-1), video) != 0 ||
+            chmod((dir + "brightness").c_str(), 0664) != 0)
+            pq::log("thor-backlight: cannot set up %s: %s", GAMESCOPE_BL, std::strerror(errno));
+        gamescope_value_ = gamescope_set();
+        // With a move of Steam's slider it comes a few ms before Steam's own:
+        // a follow step later Steam's is read first (see backlight_changed).
+        if (!loop_->watch(dir + "brightness", IN_MODIFY, [this](uint32_t, const std::string&) {
+                gamescope_at_ = monotonic();
+                settle();
+            }))
+            pq::log("thor-backlight: cannot watch %s", GAMESCOPE_BL);
+    }
+
+    // A new value from gamescope that stands for itself (its brightness keys').
+    bool gamescope_moved() {
+        long long v = gamescope_set();
+        if (v == gamescope_value_) return false;
+        if (monotonic() - gamescope_at_ < GLIDE_MS / 1000.0 * 0.9) {
+            settle();  // Steam's own may still come
+            return false;
+        }
+        gamescope_value_ = v;
+        return v > 0 && restoring_until_ == 0 && monotonic() - steam_at_ >= GAMESCOPE_AFTER_S;
+    }
+
+    static long long gamescope_set() {
+        std::string text = pq::rd(std::string(GAMESCOPE_BL) + "/brightness", "0");
+        size_t n = 0;
+        while (n < text.size() && n < 9 && text[n] >= '0' && text[n] <= '9') ++n;
+        return n ? std::stoll(text.substr(0, n)) : 0;
     }
 
     // Desktop Mode: PowerDevil's backlight helper takes every backlight of
@@ -918,20 +966,39 @@ private:
     // Barry Launcher's bottomSleepSeconds (0: never), read again only when
     // its settings file changes.
     int sleep_seconds() {
+        read_barry_settings();
+        return sleep_limit_;
+    }
+
+    // Its screensLinked: Steam's slider sets both screens (the default), or
+    // the top one alone.
+    bool screens_linked() {
+        read_barry_settings();
+        return linked_;
+    }
+
+    void read_barry_settings() {
         auto st = stamp(barry_settings_);
-        if (!st) return 0;
+        if (!st) {
+            settings_stamp_.reset();
+            sleep_limit_ = 0;
+            linked_ = true;
+            return;
+        }
         if (!settings_stamp_ || !(*settings_stamp_ == *st)) {
             settings_stamp_ = st;
             sleep_limit_ = 0;
+            linked_ = true;
             auto text = pq::read_file(barry_settings_);
             auto d = text ? pj::Value::parse(*text) : std::nullopt;
             if (d && d->is_object()) {
                 const pj::Value* v = d->find("bottomSleepSeconds");
                 if (v && v->is_number() && v->as_double() > 0)
                     sleep_limit_ = static_cast<int>(std::min(v->as_double(), 1e9));
+                const pj::Value* l = d->find("screensLinked");
+                if (l && l->is_bool()) linked_ = l->truthy();
             }
         }
-        return sleep_limit_;
     }
 
     // sm8550-charge-rest is resting (CHARGE_REST holds its live PID).
@@ -1154,12 +1221,12 @@ private:
             return;
         }
         int top_now = top_set();
-        if (!P->steam_both) {
-            // Steam's slider (in Desktop Mode it is Plasma's panel).
-            if (!desktop_ && top_now != wrote_top_ && !top_.sending(top_now)) tick();
-            return;
-        }
-        if (top_now != wrote_top_ && !top_.sending(top_now) && !top_settle_)
+        if (top_now != wrote_top_ && !top_.sending(top_now)) settle();
+    }
+
+    // A pass, a follow step from now.
+    void settle() {
+        if (!top_settle_)
             top_settle_ = loop_->after(GLIDE_MS / 1000.0, [this] {
                 top_settle_ = 0;
                 tick();
@@ -1335,9 +1402,11 @@ private:
     // --- The panels ---
 
     // Not actual_brightness: that reads 0 while bl_power is off.
-    int bottom_set() {
+    int bottom_set() const { return brightness_of(bl_fd_); }
+
+    static int brightness_of(int fd) {
         char buf[32];
-        ssize_t n = pread(bl_fd_, buf, sizeof buf - 1, 0);
+        ssize_t n = pread(fd, buf, sizeof buf - 1, 0);
         if (n <= 0) return 0;
         return static_cast<int>(to_int(pq::trim(std::string_view(buf, static_cast<size_t>(n)))));
     }
@@ -1368,7 +1437,7 @@ private:
             // back in as the new level, down to 1, and the screens stayed
             // black once they came back on.
             wrote_top_ = value;
-            if (desktop_) {
+            if (desktop_ && !P->duo) {
                 if (refused) top_refused_ = true;  // as the Python: not cleared there
             } else {
                 if (refused != top_refused_)
@@ -1393,24 +1462,31 @@ private:
         // waiting: the next step at once, not at the next pass, so the panel
         // is never left idle. Quick writes keep the passes' GLIDE_MS pace.
         if (took >= GLIDE_MS / 1000.0 && !p.busy() && p.way && !charge_rest() && (top || !desktop_ || on_)) {
-            int want = top ? (!P->steam_both ? top_want_
-                              : desktop_     ? (ready_ ? top_max_ : stock_top(screens_.top, top_max_))
-                                             : stock_top(screens_.top, top_max_))
-                           : bottom_target();
+            int want = top ? top_target() : bottom_target();
             int step = follow(p.way, want, p.shown, monotonic());
             if (step != p.shown) submit(p, step);
         }
         arm();
     }
 
-    // Where the bottom panel goes for its slider: AYN's curve on the Thor, a
-    // straight line on the Duo.
+    // Where the bottom panel goes for its slider: AYN's curve on the Thor,
+    // Retroid's line on the Duo.
     int bottom_target() const {
         if (desktop_ && soft_bottom_) return bottom_max_;  // DUO: Plasma dims it in software
-        return P->steam_both ? stock_bottom(screens_.bottom, bottom_max_) : linear_bottom(screens_.bottom, bottom_max_);
+        double f = dimmed(screens_.bottom);
+        return P->duo ? duo_bottom(f, bottom_max_) : stock_bottom(f, bottom_max_);
     }
 
-    static int top_set() { return static_cast<int>(to_int(pq::rd(std::string(P->top) + "/brightness", "0"))); }
+    // The top panel's: in Desktop Mode the Thor's is dimmed in software.
+    int top_target() const {
+        if (P->duo) return duo_top(dimmed(screens_.top), top_max_);
+        return desktop_ && ready_ ? top_max_ : stock_top(dimmed(screens_.top), top_max_);
+    }
+
+    int top_set() const {
+        if (top_fd_ >= 0) return brightness_of(top_fd_);
+        return static_cast<int>(to_int(pq::rd(std::string(P->top) + "/brightness", "0")));
+    }
 
     void set_touch_inhibited(bool on, bool only_if_differs) {
         for (const auto& d : touch_dirs_) {
@@ -1526,26 +1602,23 @@ private:
         was_on_ = on_;
 
         bool desktop_now = desktop_mode();
-        if (desktop_now != desktop_ && !P->steam_both) {
-            desktop_ = !desktop_;
-            plasma_alone(desktop_);
-            if (desktop_) duo_enter_desktop();
-            else duo_leave_desktop();
-            pq::log(desktop_ ? "thor-backlight: Desktop Mode: Plasma's sliders" : "thor-backlight: Game Mode");
-        } else if (desktop_now != desktop_) {
+        if (desktop_now != desktop_) {
             desktop_ = !desktop_;
             plasma_alone(desktop_);
             if (desktop_) {
                 // The helper may have been quicker; it then read SCREENS.
                 desktop_since_ = monotonic();
-                desktop_top_seen_.reset();
+                desktop_soft_seen_.reset();
                 if (!pq::exists(DESKTOP_READY)) write(DESKTOP_START, screens_json(screens_) + "\n");
             } else {
                 clear_desktop();
+                soft_bottom_ = false;
+                told_ = -1;
+                told_open_ = steam_unsaved_ = false;
                 restoring_until_ = monotonic() + STEAM_RESTORE_S;
             }
             if (!desktop_ && screens_.steam > 0) {
-                // Plasma's bottom slider wrote into Steam's file: it gets
+                // Plasma's hardware slider wrote into Steam's file: it gets
                 // back what Steam last wrote, which a move of Steam's slider
                 // is told from.
                 steam_value_ = screens_.steam;
@@ -1554,9 +1627,12 @@ private:
             pq::log(desktop_ ? "thor-backlight: Desktop Mode: Plasma's sliders, sharing Game Mode's brightness"
                              : "thor-backlight: Game Mode: Steam's level on both, as on Android");
         }
-        if (!P->steam_both) duo_pass();
-        else if (desktop_) desktop_pass();
-        else game_pass();
+        if (desktop_) {
+            dim_ = Dim::none;
+            desktop_pass();
+        } else {
+            game_pass();
+        }
         arm();
     }
 
@@ -1565,22 +1641,28 @@ private:
     // file (STEAM_BOTTOM) on the top panel's scale (plasma_alone), the top
     // one dims in software and comes through DESKTOP_TOP. Until the helper
     // is ready, both panels hold SCREENS. The top never goes above TOP_CAP,
-    // whoever writes it.
+    // whoever writes it. DUO: the other way round, the top slider in Steam's
+    // file and the bottom one in software, through DESKTOP_BOTTOM; Barry's
+    // sliders set SCREENS here too (the top one's is the panel's).
     void desktop_pass() {
         ready_ = pq::exists(DESKTOP_READY) || monotonic() - desktop_since_ >= DESKTOP_READY_S;
+        if (P->duo)
+            if (auto s = read_screens()) screens_ = *s;
         auto steam_now = steam_bottom();
         if (ready_) {
             bool changed = false;
             if (steam_now && *steam_now != steam_value_) {
-                screens_.bottom = level_of(*steam_now, top_max_);
+                (P->duo ? screens_.top : screens_.bottom) = level_of(*steam_now, top_max_);
                 changed = true;
             }
-            auto st = stamp(DESKTOP_TOP);
-            if (st && !(desktop_top_seen_ && *desktop_top_seen_ == *st)) {
-                desktop_top_seen_ = st;
-                if (auto v = py_float(pq::rd(DESKTOP_TOP))) {
-                    screens_.top = clamp01(*v);
+            const char* soft = P->duo ? DESKTOP_BOTTOM : DESKTOP_TOP;
+            auto st = stamp(soft);
+            if (st && !(desktop_soft_seen_ && *desktop_soft_seen_ == *st)) {
+                desktop_soft_seen_ = st;
+                if (auto v = py_float(pq::rd(soft))) {
+                    (P->duo ? screens_.bottom : screens_.top) = clamp01(*v);
                     changed = true;
+                    soft_bottom_ = P->duo;
                 }
             }
             if (changed) save_screens();
@@ -1600,8 +1682,8 @@ private:
             resync_top(top_now);
             wrote_top_ = top_now;  // Plasma's: no level for Game Mode
         }
-        int want_top = follow(top_.way, ready_ ? top_max_ : stock_top(screens_.top, top_max_), top_.shown, monotonic());
-        if (want_top != top_.shown) submit(top_, want_top);
+        int want_top = follow(top_.way, top_target(), top_.shown, monotonic());
+        if (want_top != top_.shown || (P->duo && top_refused_ && monotonic() >= panel_retry_at_)) submit(top_, want_top);
     }
 
     // Someone else's value on the top panel (nothing of this one's under
@@ -1612,8 +1694,92 @@ private:
         top_.way.reset();
     }
 
+    // What Steam writes after it was told where the top screen is.
+    bool steam_follows(long long now) {
+        if (told_ < 0) return false;
+        double ago = monotonic() - told_at_;
+        return ago <= TELL_ANY_S || (told_open_ && dim_ == Dim::none && ago <= TELL_ANSWER_S &&
+                                     std::fabs(slider_at(now) - told_) <= TELL_NEAR);
+    }
+
+    // Steam's slider shows the top screen's brightness: told when something
+    // else set it (Barry, the PB-OS tab, Desktop Mode).
+    void tell_steam() {
+        tell_due_ = 0;
+        double now = monotonic();
+        if (steam_unsaved_) {
+            if (now - told_at_ >= TELL_SAVE_S) {
+                screens_.steam = steam_value_;
+                save_screens();
+                steam_unsaved_ = false;
+            } else {
+                tell_due_ = told_at_ + TELL_SAVE_S;
+            }
+        }
+        if (restoring_until_ != 0 && now < restoring_until_) {
+            tell_due_ = restoring_until_;
+            return;
+        }
+        if (dim_ != Dim::none || screens_.steam <= 0) return;
+        double want = screens_.top;
+        if (std::fabs(slider_at(steam_value_) - want) <= TELL_OFF || std::fabs(want - told_) < 1e-6) return;
+        if (now - told_at_ < TELL_EVERY_S) {
+            tell_due_ = tell_due_ > 0 ? std::min(tell_due_, told_at_ + TELL_EVERY_S) : told_at_ + TELL_EVERY_S;
+            return;
+        }
+        told_ = want;
+        told_at_ = now;
+        told_open_ = true;
+        write(STEAM_TELL, fmt_level(want) + "\n");
+    }
+
+    // Whether Steam's file going from was to now, still seconds after its
+    // last change, is its idle dim (see DIM_FIRST) or that one's end.
+    bool idle_dim(long long was, long long now, double still) {
+        const long long level = screens_.steam;
+        double step = slider_at(was) - slider_at(now);
+        if (dim_ == Dim::none) {
+            if (was != level || now >= was || step > DIM_FIRST || still < DIM_STILL_S || finger_down()) return false;
+            pq::log("thor-backlight: Steam dims from %lld: both screens with it", level);
+            dim_ = Dim::down;
+            return true;
+        }
+        if (now == level) {
+            pq::log("thor-backlight: Steam's dim is over: each screen back at its own");
+            dim_ = Dim::none;
+            return true;
+        }
+        if (now > level || (now < was && (dim_ == Dim::up || step > DIM_STEP))) return false;  // its slider
+        if (now > was) dim_ = Dim::up;
+        return true;
+    }
+
+    double slider_at(long long steam) const { return steam_position(level_of(steam, steam_max_)); }
+
+    // A screen's own position, or where Steam's idle dim has it.
+    double dimmed(double f) const {
+        if (dim_ == Dim::none) return f;
+        double from = slider_at(screens_.steam);
+        return from > 0 ? f * clamp01(slider_at(steam_value_) / from) : f;
+    }
+
+    // Whether a finger is on either screen now.
+    bool finger_down() {
+        for (const char* name : {TOUCH_NAME, TOP_TOUCH_NAME}) {
+            int fd = open_input(name, false);
+            if (fd < 0) continue;
+            unsigned long keys[KEY_CNT / (8 * sizeof(unsigned long)) + 1] = {};
+            bool down = ioctl(fd, EVIOCGKEY(sizeof keys), keys) >= 0 &&
+                        (keys[BTN_TOUCH / (8 * sizeof(unsigned long))] >> (BTN_TOUCH % (8 * sizeof(unsigned long))) & 1);
+            close(fd);
+            if (down) return true;
+        }
+        return false;
+    }
+
     // Steam's level: a new value in Steam's file (or on the top panel) sets
-    // both screens, as Android's "both screens" slider does; the plugin's
+    // both screens, as Android's "both screens" slider does (the top one
+    // alone while Barry's link is off); the plugin's
     // sliders change one screen in SCREENS.
     void game_pass() {
         if (auto s = read_screens()) screens_ = *s;
@@ -1622,146 +1788,62 @@ private:
         bool moved = false;
         double level = 0;
         if (steam_now && *steam_now != steam_value_) {
+            long long was = steam_value_;
+            double still = monotonic() - steam_at_;
             steam_value_ = *steam_now;
-            if (restoring_until_ != 0 && *steam_now == screens_.steam) {
+            steam_at_ = monotonic();
+            if (restoring_until_ != 0) dim_ = Dim::none;
+            if (steam_follows(*steam_now)) {
+                told_open_ = false;
+                steam_unsaved_ = true;
+                restoring_until_ = 0;
+                dim_ = Dim::none;
+            } else if (restoring_until_ != 0 && *steam_now == screens_.steam) {
                 pq::log("thor-backlight: Steam's level back at %lld: each screen keeps its own", *steam_now);
                 restoring_until_ = 0;
             } else if (restoring_until_ != 0 && monotonic() < restoring_until_) {
                 // Steam still putting its level back.
+            } else if (restoring_until_ == 0 && idle_dim(was, *steam_now, still)) {
+                // Steam's idle dim, or its end.
             } else {
                 if (restoring_until_ != 0) {
                     pq::log("thor-backlight: Steam's level not back after Game Mode's start: its slider sets both again");
                     restoring_until_ = 0;
                 }
-                level = level_of(*steam_now, bottom_max_);
+                level = level_of(*steam_now, steam_max_);
                 moved = true;
             }
         } else if (top_now != wrote_top_ && !top_.sending(top_now) && top_now > 0) {
             level = level_of(top_now, top_max_);
             wrote_top_ = top_now;
             moved = true;
+        } else if (P->duo && gamescope_moved()) {
+            level = level_of(gamescope_value_, top_max_);
+            moved = true;
+        } else if (dim_ == Dim::up && monotonic() - steam_at_ >= DIM_UP_S) {
+            level = level_of(steam_value_, steam_max_);
+            moved = true;
         }
         if (moved) {
+            dim_ = Dim::none;
+            told_ = -1;
+            told_open_ = steam_unsaved_ = false;
             write(LEVEL, fmt_level(level));
             double f = steam_position(level);
-            screens_ = {f, f, steam_value_};
+            screens_ = {f, screens_linked() ? f : screens_.bottom, steam_value_};
             save_screens();
         }
+        tell_steam();
         bool retry = (top_refused_ || bottom_refused_) && monotonic() >= panel_retry_at_;
         // Each panel's writes go to its writer; their outcomes (refused or
         // taken, and wrote_top_) come back in written().
         int want_bottom = follow(bottom_.way, bottom_target(), bottom_.shown, monotonic());
         if (want_bottom != bottom_.shown || (bottom_refused_ && retry)) submit(bottom_, want_bottom);
         if (!top_.busy()) resync_top(top_now);
-        int want_top = follow(top_.way, stock_top(screens_.top, top_max_), top_.shown, monotonic());
+        int want_top = follow(top_.way, top_target(), top_.shown, monotonic());
         if (want_top != top_.shown || (top_refused_ && retry)) submit(top_, want_top);
         if ((top_refused_ || bottom_refused_) && monotonic() >= panel_retry_at_)
             panel_retry_at_ = monotonic() + PANEL_RETRY_S;
-    }
-
-    // DUO: a place on Steam's slider, as the top panel's value.
-    int duo_top_raw(double f) const {
-        return std::max(1, static_cast<int>(py_round(steam_level(f) * top_max_)));
-    }
-
-    // DUO: Desktop Mode begins. The top slider's place is what the panel
-    // shows, or where it belongs while Steam still puts its own level back.
-    void duo_enter_desktop() {
-        desktop_top_seen_.reset();
-        desktop_bottom_seen_.reset();
-        if (auto s = read_screens()) screens_ = *s;
-        int top_now = restoring_until_ != 0 ? duo_top_raw(screens_.top) : top_set();
-        top_.way.reset();
-        top_want_ = 0;
-        if (!pq::exists(DESKTOP_READY) && top_now > 0 && top_max_ > 0)
-            write(DESKTOP_START, screens_json({level_of(top_now, top_max_), screens_.bottom, screens_.steam}) + "\n");
-    }
-
-    void duo_leave_desktop() {
-        clear_desktop();
-        soft_bottom_ = false;
-        top_back_since_.reset();
-        wrote_top_ = top_.shown = top_set();
-        if (screens_.steam > 0) restoring_until_ = monotonic() + STEAM_RESTORE_S;
-    }
-
-    // DUO: the helper's slider positions.
-    void duo_desktop_sliders() {
-        bool changed = false;
-        auto take = [&changed](const char* path, std::optional<Stamp>& seen, double& to) {
-            auto st = stamp(path);
-            if (!st || (seen && *seen == *st)) return false;
-            seen = st;
-            auto v = py_float(pq::rd(path));
-            if (!v) return false;
-            to = clamp01(*v);
-            changed = true;
-            return true;
-        };
-        if (take(DESKTOP_TOP, desktop_top_seen_, screens_.top)) screens_.top = steam_position(screens_.top);
-        if (take(DESKTOP_BOTTOM, desktop_bottom_seen_, screens_.bottom)) soft_bottom_ = true;
-        if (changed) save_screens();
-    }
-
-    // DUO, Game Mode: the top panel is at v from Steam's slider.
-    void duo_top_moved(int v) {
-        if (v > 0) {
-            screens_.top = steam_position(level_of(v, top_max_));
-            screens_.steam = v;
-        }
-        top_f_ = screens_.top;
-        top_want_ = 0;
-        save_screens();
-    }
-
-    // DUO, Game Mode: Steam's writes to the top panel and SCREENS' top.
-    void duo_top() {
-        double t = monotonic();
-        // The plugin's or Barry's slider (not a rounding of what Steam set).
-        if (std::fabs(screens_.top - top_f_) > 1e-6) {
-            top_f_ = screens_.top;
-            top_want_ = duo_top_raw(top_f_);
-        }
-        int top_now = top_set();
-        if (top_now != wrote_top_ && !top_.sending(top_now) && top_now > 0) {
-            wrote_top_ = top_.shown = top_now;
-            top_.way.reset();
-            top_want_ = 0;
-            if (restoring_until_ == 0) {
-                duo_top_moved(top_now);
-            } else {
-                // Steam putting its level back: no move of its slider.
-                top_back_since_.reset();
-                if (top_now == screens_.steam) top_back_since_ = t;
-            }
-        }
-        if (restoring_until_ != 0 && top_back_since_ && t - *top_back_since_ >= TOP_BACK_S) {
-            restoring_until_ = 0;
-            int want = duo_top_raw(screens_.top);
-            pq::log("thor-backlight: Steam's level back at %lld: the top screen keeps its own", screens_.steam);
-            if (std::abs(want - top_now) > 1) top_want_ = want;
-        } else if (restoring_until_ != 0 && t >= restoring_until_) {
-            restoring_until_ = 0;
-            duo_top_moved(top_now);
-        }
-        if (top_want_ > 0) {
-            int want = follow(top_.way, top_want_, top_.shown, t);
-            if (want != top_.shown || (top_refused_ && t >= panel_retry_at_)) submit(top_, want);
-        } else {
-            top_refused_ = false;
-        }
-    }
-
-    // DUO, both modes: the bottom panel follows SCREENS' bottom (dark
-    // underneath while off, as game_pass); the top, Steam's or Plasma's.
-    void duo_pass() {
-        if (auto s = read_screens()) screens_ = *s;
-        if (desktop_) duo_desktop_sliders();
-        else duo_top();
-        bool retry = (bottom_refused_ || top_refused_) && monotonic() >= panel_retry_at_;
-        int want_bottom = follow(bottom_.way, bottom_target(), bottom_.shown, monotonic());
-        if (want_bottom != bottom_.shown || (bottom_refused_ && retry)) submit(bottom_, want_bottom);
-        if (retry) panel_retry_at_ = monotonic() + PANEL_RETRY_S;
     }
 
     // The next pass, when the soonest thing is due (nothing due: none).
@@ -1776,11 +1858,11 @@ private:
             due(std::max(last_active_ + limit_, game_checked_ + SLEEP_CHECK_S));
         // A refused panel's retry, where the pass makes one (in Desktop
         // Mode only the lit bottom panel's, as in the Python).
-        if (desktop_ ? (bottom_refused_ && on_) : (top_refused_ || bottom_refused_)) due(panel_retry_at_);
+        if (desktop_ ? (bottom_refused_ && on_) || (P->duo && top_refused_) : (top_refused_ || bottom_refused_)) due(panel_retry_at_);
         if ((!yield_sent_ || *yield_sent_ != want_yield_) && yield_retry_at_ > now) due(yield_retry_at_);
-        if (desktop_ && !ready_ && P->steam_both) due(desktop_since_ + DESKTOP_READY_S);
-        if (!P->steam_both && !desktop_ && restoring_until_ != 0)
-            due(top_back_since_ ? *top_back_since_ + TOP_BACK_S : restoring_until_);
+        if (desktop_ && !ready_) due(desktop_since_ + DESKTOP_READY_S);
+        if (dim_ == Dim::up) due(steam_at_ + DIM_UP_S);
+        if (tell_due_ > 0 && !desktop_) due(tell_due_);
         if (!on_) due(now + DARK_RECHECK_S);
         if (cn_ < 0) due(mode_checked_ + MODE_CHECK_S);
         if (timer_) loop_->cancel(timer_);
@@ -1797,9 +1879,12 @@ private:
     pq::Loop* loop_ = nullptr;
     bool test_sysfs_ = false;
     int bottom_max_ = 0, top_max_ = 0;
-    std::string bottom_path_, type_path_, max_path_, barry_settings_;
+    int steam_max_ = 0;  // the range Steam's values are on
+    std::string bottom_path_, steam_path_, type_path_, max_path_, barry_settings_;
     bool shadowed_ = false;
-    int bl_fd_ = -1, key_fd_ = -1, touch_fd_ = -1, cn_ = -1;
+    int bl_fd_ = -1;   // the bottom panel
+    int top_fd_ = -1;  // DUO: the top panel, under Steam's file
+    int key_fd_ = -1, touch_fd_ = -1, cn_ = -1;
     uint64_t timer_ = 0, key_retry_ = 0, top_settle_ = 0;
     std::vector<std::string> touch_dirs_;
     std::vector<input_event> key_queue_;
@@ -1813,10 +1898,15 @@ private:
     double mode_checked_ = 0;
 
     Screens screens_{};
-    std::optional<Stamp> screens_stamp_, settings_stamp_, desktop_top_seen_, desktop_bottom_seen_;
+    std::optional<Stamp> screens_stamp_, settings_stamp_, desktop_soft_seen_;
     std::optional<Screens> screens_cache_;
     int sleep_limit_ = 0, limit_ = 0;
     long long steam_value_ = 0;
+    bool linked_ = true;  // Barry's screensLinked
+    enum class Dim { none, down, up } dim_ = Dim::none;  // Steam's idle dim
+    double told_ = -1, told_at_ = -TELL_SAVE_S;          // STEAM_TELL
+    bool told_open_ = false, steam_unsaved_ = false;
+    double tell_due_ = 0;
     double restoring_until_ = 0;
     int wrote_top_ = 0;
     // A panel refused its last write (EINVAL while it is off or coming up,
@@ -1842,10 +1932,11 @@ private:
     double yield_retry_at_ = 0;  // after Game Mode's display failed
     bool desktop_ = false;
     double desktop_since_ = 0;
-    bool soft_bottom_ = false;              // DUO: Plasma dims the bottom screen
-    std::optional<double> top_back_since_;  // DUO: Steam's level back on the top panel
-    double top_f_ = 0;  // DUO: SCREENS' top as last taken
-    int top_want_ = 0;  // DUO: where this takes the top panel (0: Steam's level is on it)
+    bool soft_bottom_ = false;  // DUO: Plasma dims the bottom screen
+    // DUO: gamescope's value as last taken, when it last wrote one, and when
+    // Steam's file last changed.
+    long long gamescope_value_ = 0;
+    double gamescope_at_ = 0, steam_at_ = -GAMESCOPE_AFTER_S;
 };
 
 }  // namespace

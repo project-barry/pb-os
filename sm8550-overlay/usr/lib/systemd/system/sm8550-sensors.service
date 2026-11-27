@@ -1,9 +1,11 @@
 [Unit]
 Description=Motion sensors: the ADSP sensors process's files (hexagonrpcd, SensorsPD)
-# Only where /usr/lib/steamos-sm8550/sm8550-sensors has a profile (the AYN
-# Thor for now) and the kernel has the ADSP FastRPC node.
+# Only where /usr/lib/steamos-sm8550/sm8550-sensors has a profile and the
+# kernel has the ADSP FastRPC node. On the Retroid Pocket Duo the node (and
+# the files) come with the firmware rpduo-firmware copies:
+# 76-rpduo-sensors.rules starts this when it appears.
 ConditionPathExists=/dev/fastrpc-adsp
-After=sound.target systemd-udevd.service
+After=sound.target systemd-udevd.service rpduo-firmware.service
 Wants=sm8550-sensors-root.service pbos-motiond.service
 
 [Service]

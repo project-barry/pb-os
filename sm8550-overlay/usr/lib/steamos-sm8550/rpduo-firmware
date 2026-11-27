@@ -22,6 +22,7 @@ file found on those partitions is listed in
 """
 import os
 import re
+import shutil
 import struct
 import subprocess
 import sys
@@ -82,10 +83,20 @@ PERSIST_ONLY = {
     "rpduo-persist/wlan_mac.bin",
     "rpduo-persist/joys",
 }
+# The motion sensors' files (sm8550-sensors), whole folders: destination ->
+# (partition, folder). Stock's sensor config is Retroid's own (QMI8658 as
+# nicobar_qmi8658_0.json), and the registry the ADSP works from is this
+# unit's, as its Android made it: the Eliza ADSP names the registry's files
+# <config file>.<group>, not as the Kailua one that sscregistrygen serves.
+WANTED_DIRS = {
+    "rpduo-sensors/vendor": ("vendor", "etc/sensors"),
+    "rpduo-sensors/registry": ("persist", "sensors/registry"),
+}
 # Bumped when WANTED or the sources change: everything is copied again once
 # (2: vendor_b read whole through device-mapper; the video firmware; MACs;
 # the stick calibration. 3: board.bin from persist only, so a wrong one
-# taken from modem is replaced).
+# taken from modem is replaced). The motion sensors' folders (WANTED_DIRS)
+# needed no bump: a missing folder is copied without the rest.
 VERSION = "3"
 STAMP = FWROOT / "rpduo-version"
 WLAN_LINK = Path("/etc/systemd/network/10-rpduo-wlan.link")
@@ -325,6 +336,28 @@ def sources(parts):
                 break
 
 
+def copy_dir(src, dst):
+    """A folder's regular files (no links), world-readable, put in place whole."""
+    tmp = dst.with_name(dst.name + ".tmp")
+    try:
+        shutil.rmtree(tmp, ignore_errors=True)
+        for p in sorted(src.rglob("*")):
+            if p.is_symlink() or not p.is_file():
+                continue
+            to = tmp / p.relative_to(src)
+            to.parent.mkdir(parents=True, exist_ok=True)
+            to.write_bytes(p.read_bytes())
+        if not tmp.is_dir():
+            return False
+        shutil.rmtree(dst, ignore_errors=True)
+        tmp.rename(dst)
+        return True
+    except OSError as e:
+        log(f"{dst.name}: {e}")
+        shutil.rmtree(tmp, ignore_errors=True)
+        return False
+
+
 def collect(force):
     if not force and STAMP.exists() and STAMP.read_text().strip() != VERSION:
         log(f"extractor version changed ({STAMP.read_text().strip()} -> {VERSION}): copying everything again")
@@ -333,7 +366,8 @@ def collect(force):
         log("files from an older extractor: copying everything again")
         force = True
     missing = {k: v for k, v in WANTED.items() if force or not (FWROOT / k).exists()}
-    if not missing:
+    missing_dirs = {k: v for k, v in WANTED_DIRS.items() if force or not (FWROOT / k).is_dir()}
+    if not missing and not missing_dirs:
         return []
     parts = partitions()
     listing, copied = [], []
@@ -380,10 +414,15 @@ def collect(force):
                     copied.append(want)
                     del missing[want]
                     break
+            for want, (part, folder) in list(missing_dirs.items()):
+                if part in label and (root / folder).is_dir() and copy_dir(root / folder, FWROOT / want):
+                    log(f"{want} <- {label}/{folder}")
+                    copied.append(want)
+                    del missing_dirs[want]
     LIST.parent.mkdir(parents=True, exist_ok=True)
     LIST.write_text("\n".join(sorted(listing)) + "\n")
     STAMP.write_text(VERSION + "\n")
-    for want in missing:
+    for want in [*missing, *missing_dirs]:
         log(f"{want}: not found (see {LIST})")
     return copied
 

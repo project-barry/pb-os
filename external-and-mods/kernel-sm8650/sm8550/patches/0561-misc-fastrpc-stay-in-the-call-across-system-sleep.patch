@@ -1,0 +1,32 @@
+From: lavachemist <48248311+lavachemist@users.noreply.github.com>
+Subject: [PATCH] misc: fastrpc: stay in the call across system sleep
+
+A call from user space waits for the DSP in an interruptible sleep. The
+freezer wakes it with a fake signal, the ioctl returns -ERESTARTSYS, and
+after the wake it starts over and sends its message to the DSP again while
+the first one is still being handled there.
+
+hexagonrpcd's listener (the adsp_listener next2 call, which waits for the
+DSP to ask for a file) is always in such a call. On the Retroid Pocket Duo
+(SM7750), with the sensors running, each wake crashed the ADSP:
+
+  fatal error received: err_qdi.c:1215:EF:qsh_process:0x4:
+  listener_hexagon.c:326:Assertion prevCtx == notify failed
+
+and the sound card did not come back from its restart.
+
+Wait in a freezable state instead: the freezer leaves the task where it is
+and the call goes on after the wake. Signals still end the wait.
+---
+--- a/drivers/misc/fastrpc.c
++++ b/drivers/misc/fastrpc.c
+@@ -1444,7 +1444,8 @@ static inline int fastrpc_wait_for_response(struct fastrpc_invoke_ctx *ctx,
+ 		if (!wait_for_completion_timeout(&ctx->work, 10 * HZ))
+ 			err = -ETIMEDOUT;
+ 	} else {
+-		err = wait_for_completion_interruptible(&ctx->work);
++		err = wait_for_completion_state(&ctx->work,
++						TASK_INTERRUPTIBLE | TASK_FREEZABLE);
+ 	}
+ 
+ 	return err;

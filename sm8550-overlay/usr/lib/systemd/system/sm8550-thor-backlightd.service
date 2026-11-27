@@ -1,8 +1,8 @@
 [Unit]
 Description=AYN Thor, Retroid Pocket Duo: bottom-screen brightness, switch and sleep
 ConditionPathExists=/sys/class/backlight/ae96000.dsi.0
-# Before Game Mode: Steam must open the bottom panel's brightness after this
-# has put its own file over it.
+# Before Game Mode: Steam must open ae94000's brightness (the Thor's bottom
+# panel, the Duo's top one) after this has put its own file over it.
 Before=display-manager.service
 
 [Service]

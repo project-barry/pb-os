@@ -10,6 +10,10 @@
 //   - each bottom-screen app's stream straight on the real output, at the
 //     bottom screen's volume (quick.json's appsVolume) as its own volume.
 //     Neither volume moves the other.
+// The top volume is also kept in $XDG_RUNTIME_DIR/pbos/volume.json as it
+// moves, for Barry's slider.
+// Linked (Barry's volumeLinked, off by default), the bottom screen's volume
+// is the top one's, muted with it, and quick.json follows.
 // When the default output becomes a real one (sm8550-audio-pipewire on an
 // HDMI or DisplayPort change, an output picked in Steam, Bluetooth
 // connecting), that one is the real output from then on: the top volume
@@ -24,7 +28,7 @@
 // (jack_choice).
 //
 // The sound server's events (outputs, streams, the default output) and
-// SIGUSR1 (barry_quick, when the bottom volume moves) start a look at
+// SIGUSR1 (barry_quick, when the bottom volume or the link changes) start a look at
 // everything 150 ms later, as the Python did. A stream is checked against
 // the bottom screen's processes once, when it first shows up; the Python
 // walked /proc and ran pactl 3-10 times on every event. Without the "Top
@@ -172,6 +176,12 @@ int apps_volume(const std::string& path) {
     // Python's bool is an int (true: 1).
     double d = v->is_bool() ? (v->as_bool() ? 1 : 0) : v->is_number() ? v->as_double() : -1;
     return d >= 0 && d <= 100 ? static_cast<int>(d) : 100;
+}
+
+bool volume_linked(const std::string& path) {
+    pj::Value data = pq::read_json(path);
+    const pj::Value* v = data.find("volumeLinked");
+    return v && v->is_bool() && v->as_bool();
 }
 
 std::string jack_choice(const std::vector<Port>& ports, const std::string& real) {
@@ -344,6 +354,9 @@ public:
     void start(pq::Loop&) override {
         path_ = xdg("XDG_STATE_HOME", "/.local/state") + "/barry_launcher_audio.json";
         apps_path_ = xdg("XDG_CONFIG_HOME", "/.config") + "/barry_launcher/quick.json";
+        settings_path_ = pq::dirname(apps_path_) + "/settings.json";
+        shown_path_ = xdg("XDG_RUNTIME_DIR", "/.cache") + "/pbos/volume.json";
+        linked_ = volume_linked(settings_path_);
         state_ = pq::read_json(path_);
         if (!state_["top"].is_object()) state_["top"] = Value::object();  // real output -> top volume there
         if (const Value* r = state_.find("real"); r && r->is_string()) real_ = r->as_string();
@@ -368,10 +381,11 @@ public:
         ml_ = nullptr;
     }
 
-    // barry_quick: the bottom volume moved.
+    // barry_quick: the bottom volume moved, or the link changed.
     void user_signal(int sig) override {
         if (sig != SIGUSR1 || !ml_) return;
         pa_threaded_mainloop_lock(ml_);
+        linked_ = volume_linked(settings_path_);
         wake();
         pa_threaded_mainloop_unlock(ml_);
     }
@@ -398,6 +412,7 @@ private:
         settle_ = nullptr;
         phase_ = Phase::Idle;
         asked_ = pending_ = 0;  // their answers never come
+        level_asked_ = level_again_ = false;
         apps_of_.clear();  // stream ids start over with the server
         ++generation_;     // answers still on their way are dropped
         api_->time_new(api_, in(RECONNECT_US),
@@ -418,6 +433,7 @@ private:
                                                                               PA_SUBSCRIPTION_MASK_SINK_INPUT |
                                                                               PA_SUBSCRIPTION_MASK_SERVER),
                                           nullptr, nullptr));
+            self->level();
             self->wake();  // (re)connected: look at everything once
             break;
         case PA_CONTEXT_FAILED:
@@ -435,9 +451,41 @@ private:
         if (facility == PA_SUBSCRIPTION_EVENT_SINK_INPUT &&
             (t & PA_SUBSCRIPTION_EVENT_TYPE_MASK) == PA_SUBSCRIPTION_EVENT_REMOVE)
             self->apps_of_.erase(idx);
+        if (facility == PA_SUBSCRIPTION_EVENT_SINK) self->level();
         // Output, card (headphones), stream and default-output changes (the
         // mask has no others).
         self->wake();
+    }
+
+    // The top volume now, for Barry's slider: one question at a time.
+    void level() {
+        if (level_asked_) {
+            level_again_ = true;
+            return;
+        }
+        pa_operation* o = pa_context_get_sink_info_by_name(
+            ctx_, TOP,
+            [](pa_context*, const pa_sink_info* i, int eol, void* p) {
+                auto* self = static_cast<BarryAudio*>(p);
+                if (i && eol == 0) return self->show(percent(i->volume), i->mute);
+                self->level_asked_ = false;
+                if (std::exchange(self->level_again_, false)) self->level();
+            },
+            this);
+        if (!o) return;
+        level_asked_ = true;
+        pa_operation_unref(o);
+    }
+
+    void show(std::optional<int> pct, bool mute) {
+        if (!pct) return;
+        Value data = Value::object();
+        data["top"] = std::min(*pct, 100);
+        data["muted"] = mute;
+        std::string text = py_json(data);
+        if (text == shown_) return;
+        shown_ = text;
+        if (!pq::write_text(shown_path_, text)) pq::log("cannot write %s", shown_path_.c_str());
     }
 
     // As the Python: the first event starts the 150 ms wait, those during it
@@ -568,6 +616,13 @@ private:
             changed = true;
         }
         if (changed) save_state(path_, state_);
+    }
+
+    // As barry_quick writes it.
+    void save_apps_volume(int pct) {
+        Value data = Value::object();
+        data["appsVolume"] = pct;
+        if (!pq::write_text(apps_path_, py_json(data))) pq::log("cannot save %s", apps_path_.c_str());
     }
 
     static Port port_of(const pa_sink_info* i) {
@@ -705,6 +760,11 @@ private:
         std::map<uint32_t, Seen> seen;
         std::optional<Apps> apps;
         std::optional<int> apps_pct;
+        if (linked_ && top_pct) {
+            int pct = std::min(*top_pct, 100);
+            if (pct != apps_volume(apps_path_)) save_apps_volume(pct);
+            apps_pct = top->mute ? 0 : pct;
+        }
         for (const auto& i : inputs_) {
             if (i.link_group || i.node_name == TOP_OUT) continue;
             auto known = apps_of_.find(i.index);
@@ -741,7 +801,9 @@ private:
         bool app;
     };
 
-    std::string path_, apps_path_;
+    std::string path_, apps_path_, settings_path_, shown_path_, shown_;
+    bool level_asked_ = false, level_again_ = false;
+    bool linked_ = false;  // Barry's volumeLinked
     Value state_;
     std::string real_;
     std::string jacks_;  // the headphones' outputs and whether plugged, as last seen

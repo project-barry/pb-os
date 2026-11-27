@@ -1,0 +1,8 @@
+#!/bin/sh
+# Retroid Pocket Duo: Turnip chooses per render pass between tiles and direct
+# drawing. Mesa's drirc (00-turnip-defaults.conf) pins every DXVK and
+# vkd3d-proton game to direct drawing, a choice made for GPUs with much faster
+# memory. Tomb Raider (2013), 1080p benchmark, average/minimum fps: 30.4/22
+# pinned, 40.6/31 with Mesa's own chooser. The environment wins over drirc.
+grep -qa 'retroidpocket,rpduo' /sys/firmware/devicetree/base/compatible 2>/dev/null || exit 0
+echo TU_AUTOTUNE_ALGO=bandwidth

@@ -17,7 +17,8 @@ Python of its own:
                   (the first the default), [] for none
   GET  /settings  {"skin": name, "idleSeconds": n, "standbySeconds": n,
                   "heroArt": bool, "bottomSleepSeconds": n,
-                  "skinVariants": {skin: id}, "quickLayout": [...] or null}
+                  "skinVariants": {skin: id}, "quickLayout": [...] or null,
+                  "screensLinked": bool, "volumeLinked": bool}
   POST /settings  any of those keys; skin applies from the next opening,
                   idleSeconds 0 keeps the dashboard in until swiped away;
                   standbySeconds: untouched this long, Barry goes back to
@@ -31,7 +32,10 @@ Python of its own:
                   quick settings page's widgets in order, [{"id", "span":
                   1-4}] (null: the default, DEFAULT_QUICK_LAYOUT, which
                   GET returns then; ids: QuickSettings.qml's own widgets
-                  and "w-<name>" for a widget pack's)
+                  and "w-<name>" for a widget pack's); screensLinked: the
+                  quick settings have one brightness slider for both screens
+                  (false: one for each); volumeLinked: one volume for both
+                  screens, the top one's (false, the default: one for each)
   GET  /widgets   {"widgets": [{id, name, title, kind, minSpan, span,
                   builtin, ...}]}: every widget the quick settings page can
                   show: Barry's own (kind "barry", BARRY_WIDGETS) and those
@@ -61,6 +65,9 @@ Python of its own:
                   top screen to ~/Videos) or {"screenOff": true} (the bottom
                   screen asleep until a touch); replies as GET, with "saved": the
                   screenshot's file and "error": what went wrong
+
+  POST /volume    {"apps": 0-100}: the bottom screen's apps' volume alone, as
+                  /quick's, without reading the rest of it; {"ok": true}
 
 A POST needs a JSON body, a Host of 127.0.0.1 or localhost and no Origin,
 so a web page cannot change the fan or the settings.
@@ -148,7 +155,7 @@ if os.environ.get("BARRY_LIGHTS", "1") == "":
     DEFAULT_QUICK_LAYOUT = [w for w in DEFAULT_QUICK_LAYOUT if w["id"] != "lights"]
 SETTINGS = os.path.join(os.environ.get("XDG_CONFIG_HOME", f"{HOME}/.config"), "barry_launcher/settings.json")
 DEFAULTS = {"skin": "ayn", "idleSeconds": 0, "standbySeconds": 15, "heroArt": True,
-            "bottomSleepSeconds": 0, "skinVariants": {}, "quickLayout": None}
+            "bottomSleepSeconds": 0, "skinVariants": {}, "quickLayout": None, "screensLinked": True, "volumeLinked": False}
 
 
 def read(path: str, default: str = "") -> str:
@@ -397,6 +404,10 @@ def clean(new: dict, strict: bool = True) -> dict:
         out["standbySeconds"] = int(standby)
     if isinstance(new.get("heroArt"), bool):
         out["heroArt"] = new["heroArt"]
+    if isinstance(new.get("screensLinked"), bool):
+        out["screensLinked"] = new["screensLinked"]
+    if isinstance(new.get("volumeLinked"), bool):
+        out["volumeLinked"] = new["volumeLinked"]
     sleep = new.get("bottomSleepSeconds")
     if isinstance(sleep, (int, float)) and not isinstance(sleep, bool) and 0 <= sleep <= 86400:
         out["bottomSleepSeconds"] = int(sleep)
@@ -536,6 +547,13 @@ class Handler(BaseHTTPRequestHandler):
             self._json(*set_controls(body))
         elif path == "/quick":
             self._json(*self.quick.set(body))
+        elif path == "/volume":
+            v = body.get("apps")
+            if set(body) != {"apps"} or not isinstance(v, (int, float)) or isinstance(v, bool) or not 0 <= v <= 100:
+                self._json(400, {"error": "{apps}: 0-100"})
+                return
+            self.quick.apps.set(int(v))
+            self._json(200, {"ok": True})
         elif path == "/overlay":
             try:
                 with open(OVERLAY, "w", encoding="utf-8") as fh:
@@ -558,6 +576,8 @@ class Handler(BaseHTTPRequestHandler):
             with open(tmp, "w", encoding="utf-8") as fh:
                 json.dump(merged, fh, indent=2)
             os.replace(tmp, SETTINGS)
+            if merged["volumeLinked"] != old["volumeLinked"]:
+                barry_quick.tell_audio()
             self._json(200, merged)
         else:
             self._json(404, {"error": "not found"})

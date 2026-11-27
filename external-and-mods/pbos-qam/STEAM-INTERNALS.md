@@ -67,6 +67,8 @@ view" and "running tab: drawn" are informational.
 | `SteamClient.Apps.AddShortcut`, `RemoveShortcut`, `SetShortcutName`, `SetShortcutLaunchOptions`, `RunGame` | non-Steam shortcuts: made (returns the new app id), removed, started by game id `(appid << 32) \| 0x02000000` | the App Store's library entries, Add a Non-Steam Game | `sections/store.js` |
 | `SteamClient.Apps.SetCustomArtworkForApp`, `SetShortcutIcon` | a shortcut's artwork: `(appid, base64, "jpg"\|"png", type)` with type 0 cover, 1 hero, 2 logo, 3 wide cover (checked 2026-10-22: Steam writes `grid/APPIDp`, `_hero`, `_logo`, `APPID`); the icon by file path | the App Store's artwork | `sections/store.js` `applyArt` |
 | `SteamClient.GameSessions.RegisterForAppLifetimeNotifications` | a game starting or ending (`unAppID`, `bRunning`) | the Performance tab's per-game mode | `sections/tools.js` |
+| `SteamClient.System.Display.SetBrightness` | `(0-1)`, the brightness slider's place | Steam's slider following the top screen's brightness set in Barry or the PB-OS tab (Thor, Duo) | `sections/barry.js` |
+| Quick Settings | the tab whose panel's source has `#QuickAccess_Tab_Settings_Section_Brightness_Title` (else the one titled `#QuickAccess_Tab_Settings_Title`); in what it draws, the section with that title; in that, the row whose child has `iconOnly` (Steam's slider; its `icon` changes while the screens are not linked); the same for `#QuickAccess_Tab_Settings_Section_Audio_Title`, where Steam's volume is the row whose child has `direction` 1 (its slider is the first element with an `icon` that its components draw); `LocalizationManager.LocalizeString` | the links and the bottom screen's brightness and volume in Steam's own Quick Settings (Thor, Duo) | `intoQuickSettings` in `loader.js` |
 | settingsStore, collectionStore | `m_Settings.strCompatTool`, local and all games | Proton PB-OS, game lists | `sections/tools.js`, `sections/barry.js` |
 | virtual keyboard manager | `SteamUIStore.ActiveWindowInstance.VirtualKeyboardManager` with `SetVirtualKeyboardShownInternal` | Barry's keyboard instead of Steam's (Thor) | `sections/barry.js` |
 | SteamUIStore.WindowStore | `SteamUIWindows` | Barry's trackpad clicks in text fields (Thor) | `sections/barry.js` |
@@ -94,6 +96,15 @@ Outside the frontend:
   `~/.steam/steam.pid`. If Steam stops writing those, the tab only appears
   when pbos-qamd restarts. The journal then shows no "connected to Steam's
   …" line after Steam starts.
+
+## After a Steam update
+
+The frontend keeps the Steam client (`nSteamVersion`) it was last seen in
+(`/var/lib/steamos-sm8550/steam-ui.json`, Thor and Duo). In another one it
+runs the check by itself, tries the tab hook again for a while if it did not
+take, and logs where the Quick Settings rows went (`journalctl -u pbos-qamd`:
+"Steam A -> B: …"): "in their sections" is right; "end of the tab (…)" and
+"after the tab" are its fallbacks; with "none" the user gets a toast.
 
 ## When something fails
 

@@ -18,7 +18,7 @@ const BINDING = "__pbosQamCall";
 const QAM_TAB_KEY = 998; // Decky's own tab is 999 (QuickAccessTab.Decky)
 const GROUPS = { tools: "PB-OS Tools", barry: "Barry Launcher" };
 
-const status = { dfl: "", tabPatched: false, tabRendered: 0, toaster: "", sections: [], errors: [] };
+const status = { dfl: "", tabPatched: false, tabRendered: 0, quickSettings: "", toaster: "", sections: [], errors: [] };
 
 function note(msg) {
     try {
@@ -482,6 +482,127 @@ function makePanel(DFL) {
     return { Panel, Head, VisibleProvider };
 }
 
+// ---------------------------------------------- Steam's Quick Settings ---
+// Sections' rows (api.quickSettings: [{ title, content, slider, is, after }])
+// in Steam's own sections of the Settings tab, found by the text of their
+// titles, not by Steam's minified names: after the row `is` knows (Steam's
+// slider) with after, else at the section's end. slider, if given, draws
+// Steam's slider instead, with it as steam. Whatever does not fit leaves
+// Steam's as it is, with our rows after it. status.quickSettings: where they
+// went ("in their sections", "end of the tab (titles)", "after the tab"),
+// "none" (the Settings tab was not found), "" (not drawn yet).
+let quickRows = null;
+const quickWrapped = new Map();  // Steam's panel component -> ours around it
+const quickWaiting = [];
+
+function quickWent(where) {
+    if (status.quickSettings !== where) status.quickSettings = where;
+    while (quickWaiting.length) quickWaiting.shift()(where);
+}
+
+function localized(token) {
+    try { return window.LocalizationManager.LocalizeString(token); } catch (e) { return undefined; }
+}
+
+// Steam's slider in a section (a row's only child) through our own component.
+function steamSlider(q, row) {
+    const el = row && row.props && row.props.children;
+    if (!q.is || !el || !el.props || typeof el.type !== "function" ||
+        (el.type.prototype && el.type.prototype.isReactComponent)) return null;
+    return q.is(el) ? el : null;
+}
+
+function withRows(q, kids, rows) {
+    const { SP_REACT: React, SP_JSX: { jsx } } = window;
+    const out = [];
+    let placed = false;
+    for (const row of kids) {
+        const el = steamSlider(q, row);
+        out.push(el && q.slider ? React.cloneElement(row, undefined, jsx(q.slider, { steam: el })) : row);
+        if (el && q.after && !placed) { out.push(rows); placed = true; }
+    }
+    if (!placed) out.push(rows);
+    return out;
+}
+
+function intoSection(el, q, title, rows, depth) {
+    if (!el || !el.props || depth > 6) return null;
+    const React = window.SP_REACT;
+    const kids = el.props.children == null ? [] : [].concat(el.props.children);
+    if (el.props.title === title && kids.length) return React.cloneElement(el, undefined, ...withRows(q, kids, rows));
+    for (let i = 0; i < kids.length; i++) {
+        const k = intoSection(kids[i], q, title, rows, depth + 1);
+        if (k) return React.cloneElement(el, undefined, ...kids.slice(0, i), k, ...kids.slice(i + 1));
+    }
+    return null;
+}
+
+function intoQuickSettings(DFL, tabs) {
+    if (!quickRows) return;
+    const { jsx, jsxs, Fragment } = window.SP_JSX;
+    // The component function of a panel (through memo); none for a class.
+    const inner = (type) => {
+        const f = typeof type === "function" ? type : type && typeof type.type === "function" ? type.type : null;
+        return f && !(f.prototype && f.prototype.isReactComponent) ? f : null;
+    };
+    const about = (t) => {
+        const f = t && t.panel && inner(t.panel.type);
+        return !!f && Function.prototype.toString.call(f).includes(quickRows[0].steamTitle);
+    };
+    const name = localized("#QuickAccess_Tab_Settings_Title");
+    const tab = tabs.find((t) => t && t.pbosQuick) || tabs.find((t) => t && t.panel && t.panel.type && t.panel.type.pbosQuick) || tabs.find(about) || tabs.find((t) => t && name && t.strTitle === name);
+    if (!tab || !tab.panel) return quickWent("none");
+    if (tab.pbosQuick || (tab.panel.type && tab.panel.type.pbosQuick)) return;
+    const rows = (q) => jsx(DFL.ErrorBoundary, { children: jsx(q.content, {}) }, `pbos-quick ${q.title}`);
+    const section = (q) => jsx(DFL.PanelSection, { title: q.title, children: rows(q) }, `pbos-quick-section ${q.title}`);
+    const f = inner(tab.panel.type);
+    if (!f) {
+        tab.panel = jsxs(Fragment, { children: [tab.panel, ...quickRows.map(section)] });
+        tab.pbosQuick = true;
+        return quickWent("after the tab");
+    }
+    let wrapped = quickWrapped.get(f);
+    if (!wrapped) {
+        wrapped = function PbosQuickSettings(props) {
+            let ret = f(props);
+            try {
+                const left = [];
+                for (const q of quickRows) {
+                    const title = localized(q.steamTitle);
+                    const done = title && intoSection(ret, q, title, rows(q), 0);
+                    if (done) ret = done;
+                    else left.push(q);
+                }
+                quickWent(left.length ? `end of the tab (${left.map((q) => q.title).join(", ")})` : "in their sections");
+                return left.length ? jsxs(Fragment, { children: [ret, ...left.map(section)] }) : ret;
+            } catch (e) {
+                fail("Quick Settings", e);
+                return ret;
+            }
+        };
+        wrapped.pbosQuick = true;
+        quickWrapped.set(f, wrapped);
+    }
+    tab.panel = jsx(wrapped, tab.panel.props);
+}
+
+// After a Steam update: everything looked at, the tab hook tried again for a
+// while if it did not take, and the answer where the rows went once Quick
+// Access was drawn.
+async function reapply(DFL, view, why) {
+    for (const t of [2, 10, 30, 120]) {
+        if (status.tabPatched) break;
+        await sleep(t * 1000);
+        try { hookTabs(DFL, view); } catch (e) { note(`${why}: Quick Access tab: ${e}`); }
+    }
+    const where = !status.tabPatched ? "none" : status.quickSettings ||
+        await new Promise((resolve) => quickWaiting.push(resolve));
+    const p = await probe(DFL).catch((e) => ({ items: [{ name: "probe", ok: false, detail: String(e) }] }));
+    const bad = p.items.filter((i) => !i.ok && i.name !== "Quick Access embedded view").map((i) => i.name);
+    note(`${why}: ${bad.length ? "not as expected: " + bad.join(", ") : "all as expected"}`);
+    return where;
+}
+
 // -------------------------------------------------------------- QAM tab ---
 function hookTabs(DFL, view) {
     const { jsx } = window.SP_JSX;
@@ -491,6 +612,7 @@ function hookTabs(DFL, view) {
     const embedded = Object.values(qamModule).find((e) => e && e.type && e.type.toString && e.type.toString().includes("QuickAccessMenuEmbedded"));
     const render = (tabs, visible) => {
         status.tabRendered++;
+        try { intoQuickSettings(DFL, tabs); } catch (e) { fail("Quick Settings", e); }
         const ours = tabs.find((t) => t && t.pbos);
         if (ours) {
             if (ours.qAMVisibilitySetter) ours.qAMVisibilitySetter(visible);
@@ -569,7 +691,9 @@ async function probe(DFL) {
         // The App Store's shortcuts.
         "Apps.AddShortcut", "Apps.SetShortcutName", "Apps.SetShortcutLaunchOptions", "Apps.RunGame",
         // Their artwork.
-        "Apps.SetCustomArtworkForApp", "Apps.SetShortcutIcon"]) {
+        "Apps.SetCustomArtworkForApp", "Apps.SetShortcutIcon",
+        // Its brightness slider, from Barry's.
+        "System.Display.SetBrightness"]) {
         item(`SteamClient.${path}`, typeof fn(path) === "function");
     }
     item("settingsStore.m_Settings", () => window.settingsStore && window.settingsStore.m_Settings, "strCompatTool");
@@ -584,6 +708,9 @@ async function probe(DFL) {
     item("SteamUIStore.WindowStore", () => window.SteamUIStore && window.SteamUIStore.WindowStore && window.SteamUIStore.WindowStore.SteamUIWindows,
         "SteamUIWindows (Barry's trackpad clicks)");
     item("running tab: patched", status.tabPatched);
+    for (const t of ["Brightness", "Audio"]) item(`LocalizationManager: ${t}`, () => localized(`#QuickAccess_Tab_Settings_Section_${t}_Title`), `Quick Settings' ${t} title`);
+    if (quickRows) item("running Quick Settings rows", status.quickSettings === "in their sections",
+        status.quickSettings || "open Quick Access's Settings tab once");
     item("running tab: drawn", status.tabRendered > 0, `${status.tabRendered} renders (open Quick Access once if 0)`);
     item("running sections", status.sections.length > 0, status.sections.join(", "));
     item("running errors", status.errors.length === 0, status.errors.slice(-3).join(" | "));
@@ -592,7 +719,7 @@ async function probe(DFL) {
         const info = SC.System && SC.System.GetSystemInfo ? await SC.System.GetSystemInfo() : null;
         if (info) steam = Object.entries(info).filter(([k]) => /steam|build|version/i.test(k)).map(([k, v]) => `${k}=${v}`).join(" ");
     } catch (e) { steam = String(e); }
-    const optional = new Set(["Quick Access embedded view", "running tab: drawn"]);
+    const optional = new Set(["Quick Access embedded view", "running tab: drawn", "running Quick Settings rows"]);
     return { ok: items.every((i) => i.ok || optional.has(i.name)), steam, items };
 }
 
@@ -627,6 +754,9 @@ async function start() {
         openFilePicker: (_select, startPath, includeFiles, includeFolders, _filter, extensions, showHidden) =>
             filePicker(DFL, startPath, includeFiles, includeFolders, extensions, showHidden),
         plugin: (p) => addPlugin(name, p),
+        // Rows in Steam's own Quick Settings (see quickRows).
+        quickSettings: (q) => { quickRows = q; },
+        reapply: (why) => reapply(DFL, view, why),
         // The open page's own back step (see setBack); null drops it.
         setBack,
         unplug: (id) => removePlugin(name, id),

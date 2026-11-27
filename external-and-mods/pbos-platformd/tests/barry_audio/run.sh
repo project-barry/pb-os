@@ -57,4 +57,10 @@ for scen in ${SCENARIOS:-startup switch apps usr1 linkgroup saved notop restart}
     rc=1
   fi
 done
+# The link is the C++'s alone.
+if [[ -z "${SCENARIOS:-}" ]]; then
+  rm -f "$OUT"/linked.cpp.*
+  bw /bin/bash /tmp/t/inner.sh linked cpp >"$OUT/linked.cpp.run" 2>&1 || echo "linked: runner failed"
+  if diff "$HERE/linked.expected" "$OUT/linked.cpp.snap" >"$OUT/linked.diff"; then echo "linked OK"; else echo "linked DIFF (see $OUT/linked.diff)"; rc=1; fi
+fi
 exit $rc

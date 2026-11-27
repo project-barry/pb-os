@@ -1,0 +1,17 @@
+From: lavachemist <48248311+lavachemist@users.noreply.github.com>
+Subject: [PATCH] cpufreq: dt-platdev: leave Eliza to qcom-cpufreq-hw
+
+With CPU OPP tables (they carry the L3 votes) the generic driver tried to
+register on Eliza as well and failed, -EEXIST, at every boot. Every other
+Qualcomm SoC with qcom-cpufreq-hw is on this list.
+---
+--- a/drivers/cpufreq/cpufreq-dt-platdev.c
++++ b/drivers/cpufreq/cpufreq-dt-platdev.c
+@@ -155,6 +155,7 @@
+ 	{ .compatible = "nvidia,tegra234", },
+ 
+ 	{ .compatible = "qcom,apq8096", },
++	{ .compatible = "qcom,eliza", },
+ 	{ .compatible = "qcom,msm8909", },
+ 	{ .compatible = "qcom,msm8996", },
+ 	{ .compatible = "qcom,msm8998", },

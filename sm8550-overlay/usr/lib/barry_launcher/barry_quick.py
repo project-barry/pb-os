@@ -245,23 +245,26 @@ def apps_volume() -> int:
         return 100
 
 
+def tell_audio() -> None:
+    """barry_launcher_audio reads the bottom volume and the link again."""
+    run("systemctl", "--user", "kill", "--signal=USR1", AUDIO_UNIT)
+
+
 class AppsVolume:
     """The bottom screen's apps' volume: kept in APPS_STATE, which
     barry_launcher_audio applies to their streams."""
 
     def __init__(self) -> None:
         self.lock = threading.Lock()
-        self.pct = apps_volume()
 
     def set(self, pct: int) -> None:
         with self.lock:
-            self.pct = pct
             os.makedirs(os.path.dirname(APPS_STATE), exist_ok=True)
             tmp = APPS_STATE + ".tmp"
             with open(tmp, "w", encoding="utf-8") as fh:
                 json.dump({"appsVolume": pct}, fh)
             os.replace(tmp, APPS_STATE)
-        run("systemctl", "--user", "kill", "--signal=USR1", AUDIO_UNIT)
+        tell_audio()
 
 
 # Screenshot and recording: the top screen
@@ -423,7 +426,7 @@ class Quick:
         return {
             "wifi": wifi(),
             "bluetooth": bluetooth(),
-            "volume": {"system": vol[0], "muted": vol[1], "apps": self.apps.pct} if vol else None,
+            "volume": {"system": vol[0], "muted": vol[1], "apps": apps_volume()} if vol else None,
             "capture": self.recorder.state(),
             "screenOff": {} if screen_off_here() else None,
         }

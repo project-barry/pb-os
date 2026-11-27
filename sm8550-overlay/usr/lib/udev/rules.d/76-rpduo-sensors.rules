@@ -1,0 +1,6 @@
+# Retroid Pocket Duo: the ADSP may start late (its firmware is copied from the
+# device's Android on the first boot), after sm8550-sensors.service was
+# skipped for want of its FastRPC node.
+ACTION=="add", SUBSYSTEM=="misc", KERNEL=="fastrpc-adsp", \
+  PROGRAM=="/usr/bin/grep -qa retroidpocket,rpduo /sys/firmware/devicetree/base/compatible", \
+  TAG+="systemd", ENV{SYSTEMD_WANTS}+="sm8550-sensors.service"

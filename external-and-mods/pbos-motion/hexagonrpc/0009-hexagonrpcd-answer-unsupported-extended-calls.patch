@@ -1,0 +1,53 @@
+Answer extended calls that aren't implemented
+
+hexagonrpcd quit on them, with every open file. The Eliza ADSP (Retroid
+Pocket Duo) makes one in each process soon after it starts, before it uses
+the methods there are; systemd started hexagonrpcd again, a few seconds late.
+
+--- a/hexagonrpcd/listener.c
++++ b/hexagonrpcd/listener.c
+@@ -295,6 +295,23 @@
+ 		}
+ 	}
+ 
++	/*
++	 * An extended method that isn't implemented (newer ADSPs, such as
++	 * Eliza's, try some before the older ones): answer it and go on.
++	 */
++	if (method == 31 && decoded != NULL && REMOTE_SCALARS_INBUFS(sc) > 0
++	 && decoded[0].s >= sizeof(uint32_t)
++	 && ifaces[handle]->procs[31].def != NULL
++	 && (REMOTE_SCALARS_INBUFS(sc) != ifaces[handle]->procs[31].def->in_bufs + 1
++	  || decoded[0].s != 4U * (ifaces[handle]->procs[31].def->in_nums
++				 + ifaces[handle]->procs[31].def->in_bufs
++				 + ifaces[handle]->procs[31].def->out_bufs))) {
++		fprintf(stderr, "Extended method %u isn't supported (%08x)\n",
++			*(const uint32_t *) decoded[0].p, sc);
++		*result = AEE_EUNSUPPORTED;
++		return 2;
++	}
++
+ 	impl = &ifaces[handle]->procs[method];
+ 
+ 	if (impl->def == NULL || impl->impl == NULL) {
+@@ -368,12 +385,19 @@
+ 		ret = invoke_requested_procedure(n_ifaces, ifaces,
+ 						 handle, sc, &result,
+ 						 decoded, &returned);
+-		if (ret)
++		if (ret == 1)
+ 			break;
+ 
+ 		if (decoded != NULL)
+ 			iobuf_free(REMOTE_SCALARS_INBUFS(sc), decoded);
+ 
++		/* A call that wasn't run has no output buffers to return. */
++		if (ret == 2) {
++			returned = NULL;
++			sc = REMOTE_SCALARS_MAKE(0, 0, 0);
++			ret = 0;
++		}
++
+ 		n_outbufs = REMOTE_SCALARS_OUTBUFS(sc);
+ 	}
+ 

@@ -159,6 +159,7 @@ Rectangle {
             delegate: Row {
                 id: row
                 required property var modelData
+                required property int index
                 anchors.horizontalCenter: parent.horizontalCenter
                 spacing: panel.gap
 
@@ -167,6 +168,7 @@ Rectangle {
                     delegate: Key {
                         required property string modelData
                         k: modelData
+                        bottomRow: row.index === panel.controller.rows.length - 1
                         rowKeys: row.modelData
                     }
                 }
@@ -267,6 +269,7 @@ Rectangle {
         opacity: panel.controller.cursorMode && k !== "space" ? 0.35 : 1
         id: key
         property string k
+        property bool bottomRow: false
         property var rowKeys: []
         readonly property bool special: panel.controller.isNamed(k)
         readonly property bool action: (k === "Return" || k === "space") && Skin.colors.keyAction !== ""
@@ -334,18 +337,24 @@ Rectangle {
         Component.onCompleted: panel.controller.registerKey(k, key)
         Component.onDestruction: panel.controller.unregisterKey(k, key)
 
-        TapHandler {
-            id: tap
-            gesturePolicy: TapHandler.ReleaseWithinBounds  // exclusive: not a tap outside too
-            // Text keys: held, their alternatives. Named keys keep the
-            // default: Backspace and the arrows repeat instead.
-            longPressThreshold: key.special ? 0.8 : 0.4
-            onPressedChanged: pressed ? panel.controller.keyDown(key.k) : panel.controller.keyUp(key.k)
-            onTapped: panel.controller.tap(key.k)
-            onLongPressed: {
-                const p = key.mapToItem(panel, key.width / 2, 0)
-                panel.moreAt = Qt.point(p.x, p.y)
-                panel.controller.longPress(key.k)
+        // The bottom row is touched down to the screen's edge: thumbs land
+        // below it, in the panel's margin.
+        Item {
+            anchors { fill: parent; bottomMargin: key.bottomRow ? -12 * panel.s : 0 }
+
+            TapHandler {
+                id: tap
+                gesturePolicy: TapHandler.ReleaseWithinBounds  // exclusive: not a tap outside too
+                // Text keys: held, their alternatives. Named keys keep the
+                // default: Backspace and the arrows repeat instead.
+                longPressThreshold: key.special ? 0.8 : 0.4
+                onPressedChanged: pressed ? panel.controller.keyDown(key.k) : panel.controller.keyUp(key.k)
+                onTapped: panel.controller.tap(key.k)
+                onLongPressed: {
+                    const p = key.mapToItem(panel, key.width / 2, 0)
+                    panel.moreAt = Qt.point(p.x, p.y)
+                    panel.controller.longPress(key.k)
+                }
             }
         }
     }

@@ -290,6 +290,15 @@ private:
 
     static void on_set(pa_context*, int, void* p) { static_cast<Sound*>(p)->done(); }
 
+    // Each step, for the PB-OS tab (its snap, as Steam's sliders make).
+    static void on_stepped(pa_context*, int, void* p) {
+        auto* self = static_cast<Sound*>(p);
+        const char* run = std::getenv("XDG_RUNTIME_DIR");
+        std::string dir = (run && *run ? run : "/run/user/" + std::to_string(getuid())) + std::string("/pbos");
+        pq::write_text(dir + "/volume-key", self->up_ ? "up" : "down");
+        self->done();
+    }
+
     // pactl get-sink-volume, then pactl set-sink-volume "<min(LIMIT, now + STEP)>%".
     static void on_up(pa_context* c, const pa_sink_info* i, int, void* p) {
         auto* self = static_cast<Sound*>(p);
@@ -313,7 +322,8 @@ private:
             return;
         }
         pa_cvolume cv = fill_volume(s, i->volume, i->channel_map.channels);
-        pa_operation_unref(pa_context_set_sink_volume_by_name(c, SINK, &cv, &Sound::on_set, self));
+        self->up_ = true;
+        pa_operation_unref(pa_context_set_sink_volume_by_name(c, SINK, &cv, &Sound::on_stepped, self));
     }
 
     // pactl set-sink-volume "-<STEP>".
@@ -330,7 +340,8 @@ private:
             return;
         }
         pa_cvolume cv = fill_volume(self->cfg_.down, i->volume, i->channel_map.channels);
-        pa_operation_unref(pa_context_set_sink_volume_by_name(c, SINK, &cv, &Sound::on_set, self));
+        self->up_ = false;
+        pa_operation_unref(pa_context_set_sink_volume_by_name(c, SINK, &cv, &Sound::on_stepped, self));
     }
 
     // pactl set-sink-mute toggle.
@@ -351,6 +362,7 @@ private:
     pa_context* ctx_ = nullptr;
     std::deque<int> queue_;
     bool busy_ = false;
+    bool up_ = false;     // the step under way
     bool acted_ = false;  // the sink info came (its end-of-list call follows)
 };
 

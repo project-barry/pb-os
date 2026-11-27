@@ -860,6 +860,9 @@ if [[ "$SOC" != sm8650 ]]; then
     "$R/usr/lib/steamos-sm8550/rpduo-firmware" 0755
   install_file "$SM8550_OVL/usr/lib/systemd/system/rpduo-firmware.service" \
     "$R/usr/lib/systemd/system/rpduo-firmware.service" 0644
+  # ...and its Turnip mode for DXVK games (the script checks for the Duo).
+  install_file "$SM8550_OVL/usr/lib/systemd/user-environment-generators/62-rpduo-turnip" \
+    "$R/usr/lib/systemd/user-environment-generators/62-rpduo-turnip" 0755
   install_file "$SM8550_OVL/usr/lib/systemd/system/sm8550-powerbuttond.service" \
     "$R/usr/lib/systemd/system/sm8550-powerbuttond.service" 0644
   install_file "$SM8550_OVL/usr/lib/steamos-sm8550/sm8550-touch-inhibit" \

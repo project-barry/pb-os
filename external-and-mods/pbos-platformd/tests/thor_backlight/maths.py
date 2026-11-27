@@ -4,7 +4,8 @@ are there) over maths.cpp's grid; prints the same lines."""
 import math
 import sys
 
-STEAM_GAMMA, STEAM_LOWEST, STEPS, PANEL_MIN, TOP_CAP = 2.2, 0.01, 4095, 10, 3413
+STEAM_LOWEST, STEPS, PANEL_MIN, TOP_CAP = 0.01, 4095, 10, 3413
+STEAM_MID, STEAM_HIGH = 0.29730177875068026, 0.8408964152537145
 BOTTOM_CURVE = (0.514020912017522, -0.0624984606065165, 0.00882449823664514, 4.45251742834015e-05)
 FOLLOW_TAU, FOLLOW_SNAP_RATIO = 0.05, 1.002
 top_max, bottom_max = 3413, 65535
@@ -30,9 +31,14 @@ def stock_bottom(f):
 
 
 def steam_position(level):
-    lowest = STEAM_LOWEST ** (1 / STEAM_GAMMA)
-    position = max(0.0, min(1.0, level)) ** (1 / STEAM_GAMMA)
-    return max(0.0, (position - lowest) / (1 - lowest))
+    l = max(0.0, min(1.0, level))
+    if l <= STEAM_LOWEST:
+        return 0.0
+    if l <= STEAM_MID:
+        return 0.5 * (math.log2(l / STEAM_LOWEST) / 4.893856189774724)
+    if l <= STEAM_HIGH:
+        return 0.5 + 0.4 * (math.log2(l / STEAM_MID) / 1.5)
+    return 0.9 + 0.1 * (math.log2(l / STEAM_HIGH) / 0.25)
 
 
 def follow(g, want, frm, t):
@@ -60,9 +66,9 @@ for i in range(-100, 10101):
     out.write(f"top {i} {stock_top(f)}\nbottom {i} {stock_bottom(f)}\n")
 for v in range(0, bottom_max + 1):
     level = level_of(v, bottom_max)
-    out.write(f"pos {v} {'%.17g' % steam_position(level)} {max(1, round(level * bottom_max))}\n")
+    out.write(f"pos {v} {'%.8f' % steam_position(level)} {max(1, round(level * bottom_max))}\n")
 for v in range(0, top_max + 1):
-    out.write(f"tpos {v} {'%.17g' % steam_position(level_of(v, top_max))}\n")
+    out.write(f"tpos {v} {'%.8f' % steam_position(level_of(v, top_max))}\n")
 ends = [1, 2, 10, 11, 100, 655, 1000, 3413, 30000, 65535]
 for a in ends:
     for b in ends:

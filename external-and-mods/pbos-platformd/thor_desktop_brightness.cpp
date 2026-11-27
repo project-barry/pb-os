@@ -24,13 +24,14 @@
 // before, for at most CHECK_S.
 //
 // Retroid Pocket Duo: the other way round. The hardware slider is the top
-// screen's (KWin gives it to DSI-1), the bottom one dims in software, and
-// sm8550-thor-backlightd writes neither while Plasma has them. The top panel
-// is the one checked, with a level a little off the one wanted, as the panel
-// shows the wanted one already; then both sliders are set, and both
-// positions written on each change (DESKTOP_TOP, DESKTOP_BOTTOM, whose first
-// is the sign for the daemon to leave the bottom screen to Plasma). Should
-// neither display move the panel, both sliders go back to where they were.
+// screen's (KWin gives it to DSI-1) and comes to the daemon through Steam's
+// file over the top panel's; the bottom one dims in software. The top
+// panel's file is the one checked, with a level a little off the one wanted,
+// as it may hold the wanted one already; then both sliders are set, and both
+// positions written on each change (the daemon takes DESKTOP_BOTTOM, whose
+// first is also the sign to leave the bottom screen's dimming to Plasma).
+// Should neither display move the panel, both sliders go back to where they
+// were.
 //
 // The session bus is a connection of this module's own (sd-bus, the user's
 // bus). The D-Bus calls are synchronous, as they were in Python; they happen
@@ -77,7 +78,7 @@ const std::string DESKTOP_BOTTOM = RUN_DIR + "/desktop-bottom";  // the Duo
 // Duo's top one (ae94000 is DSI-1 on both).
 const std::string PANEL_FILE = "/sys/class/backlight/ae94000.dsi.0/brightness";
 const std::string PANEL_FILE_MAX = "/sys/class/backlight/ae94000.dsi.0/max_brightness";
-// The Duo's bottom panel at its lowest (linear_bottom's 10 of 3445), for its
+// The Duo's bottom panel at its lowest (duo_bottom's 10 of 3445), for its
 // software slider, as the Thor's top one's.
 constexpr double DUO_BOTTOM_LOWEST = 10.0 / 3445;
 // How far off the wanted level the Duo's check is.

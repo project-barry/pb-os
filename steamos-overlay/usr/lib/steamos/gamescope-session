@@ -181,6 +181,13 @@ if [[ -z "${GAMESCOPE_BACKLIGHT_PATH:-}" ]]; then
       DSI-2) bl=/sys/class/backlight/ae96000.dsi.0 ;;
       *) bl= ;;
     esac
+    # Retroid Pocket Duo: Steam's slider goes to this panel too, through a file
+    # sm8550-thor-backlightd has over its brightness, and two writers in one
+    # plain file garble it; gamescope gets a folder of that service's own.
+    if [[ "$OUTPUT" == DSI-1 && -w /run/sm8550-thor/gamescope-backlight/brightness ]] \
+      && mountpoint -q "$(realpath "$bl")/brightness"; then
+      bl=/run/sm8550-thor/gamescope-backlight
+    fi
     if [[ -n "$bl" && -e "$bl" ]]; then
       export GAMESCOPE_BACKLIGHT_PATH="$bl"
     fi

@@ -111,6 +111,10 @@ constexpr Profile kProfiles[] = {
     // the same sensor and stock orientation (-x/-y/+z); not yet measured.
     {"retroidpocket,rpnova", "rpnova", {{0, -1, 0}, {1, 0, 0}, {0, 0, 1}}},
     {"retroidpocket,rp6", "rp6", {{0, -1, 0}, {1, 0, 0}, {0, 0, 1}}},
+    // Retroid Pocket Duo (QMI8658, +y/+x/-z in its stock config, which the
+    // ADSP applies; Android's landscape is the same quarter turn): the same;
+    // the directions checked on a Duo.
+    {"retroidpocket,rpduo", "rpduo", {{0, -1, 0}, {1, 0, 0}, {0, 0, 1}}},
 };
 
 std::optional<Profile> detect_profile() {

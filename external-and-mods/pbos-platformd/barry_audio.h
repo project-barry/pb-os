@@ -30,6 +30,10 @@ bool is_app_stream(const char* process_id, const char* process_binary, const App
 // appsVolume (barry_quick.apps_volume).
 int apps_volume(const std::string& path);
 
+// The bottom screen's volume is the top one's: settings.json's volumeLinked
+// (false when never set).
+bool volume_linked(const std::string& path);
+
 // A real output's port: its card (-1 none), whether it is a headphone jack,
 // and what the jack says.
 struct Port {

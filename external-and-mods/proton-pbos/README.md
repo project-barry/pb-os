@@ -7,7 +7,7 @@ submodule) in Valve's arm64 Proton SDK image, with the patch here.
 
 | Steam tool | Valve tool (app) | Built from |
 |---|---|---|
-| Proton 11.0-2 PB-OS (ARM) | Proton 11.0 (ARM64) (4628740) | `proton-11.0-2e` |
+| Proton 11.0-3 PB-OS (ARM) | Proton 11.0 (ARM64) (4628740) | `proton-11.0-3` (also `-2e`) |
 | Proton Experimental PB-OS (ARM) | Proton Experimental (ARM64) (4427310) | `experimental-11.0-20261008` (also `-20261001`) |
 
 ## What the patch fixes

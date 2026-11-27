@@ -2,8 +2,8 @@ pragma ComponentBehavior: Bound
 // Barry Launcher's quick settings: the page to the right of the apps, a
 // grid of widgets the user picks and arranges (a long press on a toggle or
 // a widget's name: Customize). Wi-Fi and Bluetooth, the screens' brightness
-// (both at once, or each), the volume (the top screen's, which is the
-// system's, and the bottom screen's apps' on top of it), the stick lights, a
+// and the volume (the top screen's, which is the system's, and the bottom
+// screen's apps'; both linked, or each its own), the stick lights, a
 // screenshot or recording of the top screen, the fan profile, how soon Barry
 // goes back to the game art, charging, and the game profile of the game
 // running (else the one Steam played last). Brightness, charging and game
@@ -41,9 +41,19 @@ Rectangle {
     readonly property string statsd: "http://127.0.0.1:47823"
     property var screens: null      // { top, bottom } 0-100
     property bool topSlider: true   // the top screen's brightness is set here (pbos-qamd's get_state)
-    // Where the "Both screens" slider was last put (-1: never, it starts at
-    // the two screens' average): moving one screen's slider leaves it be.
-    property int both: -1
+    // The screens' brightness linked: one slider sets both; else each has
+    // its own (Barry's setting, statsd's settings screensLinked).
+    property bool linked: true
+    readonly property bool linkedSaved: Skin.settings.screensLinked !== false  // Steam's Quick Settings set it too
+    onLinkedSavedChanged: linked = linkedSaved
+    // The same for the volume (volumeLinked; barry-audio keeps them together).
+    property bool volumeLinked: false
+    readonly property bool volumeLinkedSaved: Skin.settings.volumeLinked === true
+    onVolumeLinkedSavedChanged: volumeLinked = volumeLinkedSaved
+    Component.onCompleted: {
+        linked = linkedSaved
+        volumeLinked = volumeLinkedSaved
+    }
     property var controls: ({})     // statsd /controls
     property var quick: ({})        // statsd /quick
     readonly property var light: controls.lighting || null
@@ -128,18 +138,58 @@ Rectangle {
     }
 
     function setVolume(which, value) {
+        volumeAt = Date.now()
         const v = {}
         v[which] = value
         quick = Object.assign({}, quick, { volume: Object.assign({}, quick.volume, v) })
         setQuick({ volume: v })
     }
 
+    // Steam's sliders or the volume keys as they move; not what these sliders
+    // just sent coming back.
+    function takeVolume() {
+        const now = quick.volume
+        if (!now)
+            return
+        if (Date.now() - volumeAt < 600) {
+            volumeLater.restart()
+            return
+        }
+        const next = { system: VolumeLevels.top < 0 ? now.system : VolumeLevels.top,
+                       muted: VolumeLevels.top < 0 ? now.muted : VolumeLevels.muted,
+                       apps: VolumeLevels.bottom < 0 ? now.apps : VolumeLevels.bottom }
+        if (next.system !== now.system || next.muted !== now.muted || next.apps !== now.apps)
+            quick = Object.assign({}, quick, { volume: next })
+    }
+    property double volumeAt: 0  // when they last sent
+    Timer {
+        id: volumeLater
+        interval: 620
+        onTriggered: qs.takeVolume()
+    }
+    Connections {
+        target: VolumeLevels
+        function onChanged() { qs.takeVolume() }
+    }
+
+    function setVolumeLinked(on) {
+        volumeLinked = on
+        statsdRequest("POST", "/settings", { volumeLinked: on }, function () { qs.refresh() })
+    }
+
     function setBoth(value) {
         movedAt = Date.now()
-        both = value
         screens = { top: value, bottom: value }
         sendBrightness("top", value)
         sendBrightness("bottom", value)
+    }
+
+    // Linking brings the bottom screen to the top one's.
+    function setLinked(on) {
+        linked = on
+        statsdRequest("POST", "/settings", { screensLinked: on }, function () {})
+        if (on && screens && screens.top !== screens.bottom)
+            setBoth(screens.top)
     }
 
     // set_brightness, one call at a time: pbos-qamd runs each call on a
@@ -151,6 +201,7 @@ Rectangle {
     property bool brightnessBusy: false
     function sendBrightness(screen, value) {
         brightnessPending[screen] = value
+        brightnessAt = Date.now()
         flushBrightness()
     }
     function flushBrightness() {
@@ -166,6 +217,27 @@ Rectangle {
             qs.brightnessBusy = false
             qs.flushBrightness()
         })
+    }
+
+    // Steam's slider (or the PB-OS tab) as it moves; not what these sliders
+    // just sent coming back.
+    function takeLevels() {
+        if (!screens || ScreenLevels.top < 0)
+            return
+        if (brightnessBusy || Date.now() - brightnessAt < 300)
+            levelsLater.restart()
+        else if (screens.top !== ScreenLevels.top || screens.bottom !== ScreenLevels.bottom)
+            screens = { top: ScreenLevels.top, bottom: ScreenLevels.bottom }
+    }
+    property double brightnessAt: 0  // when they last sent
+    Timer {
+        id: levelsLater
+        interval: 320
+        onTriggered: qs.takeLevels()
+    }
+    Connections {
+        target: ScreenLevels
+        function onChanged() { qs.takeLevels() }
     }
 
     function setLight(patch) {
@@ -214,10 +286,6 @@ Rectangle {
 
     function setBrightness(screen, value) {
         movedAt = Date.now()
-        // "Both screens" keeps where it showed (else, at the average, it
-        // moved along with this one).
-        if (both < 0 && screens)
-            both = Math.round((screens.top + screens.bottom) / 2)
         const next = Object.assign({}, screens)
         next[screen] = value
         screens = next
@@ -368,7 +436,7 @@ Rectangle {
         switch (id) {
         case "wifi": case "bluetooth": case "screenshot": case "record": case "screenoff":
             return 120 * s
-        case "brightness": return topSlider ? box + 3 * r + 2 * spacing : box + r
+        case "brightness": return topSlider ? box + 2 * r + spacing : box + r  // linked or not, so nothing moves
         case "volume": return box + 2 * r + spacing
         case "lights": return box + t + 46 * s + spacing + r
         case "fan": case "standby": return box + t + r
@@ -701,6 +769,31 @@ Rectangle {
     }
 
     // A widget with a name over its controls, as a home screen tile.
+    // Linked: a chain, lit; not: a broken one.
+    component LinkButton: Rectangle {
+        id: link
+        property bool on: false
+        signal tapped()
+        Layout.preferredWidth: qs.rowHeight * qs.placed.k
+        Layout.preferredHeight: width
+        radius: height / 2
+        color: linkTap.pressed ? Skin.colors.pressed : on ? Skin.colors.lit : Skin.colors.raised
+        Icon {
+            anchors.centerIn: parent
+            width: 32 * qs.ws
+            height: width
+            kind: link.on ? "link" : "unlink"
+            color: link.on && !linkTap.pressed ? Skin.colors.litText : Skin.colors.text
+            lineWidth: 4 * qs.ws
+        }
+        TapHandler {
+            id: linkTap
+            gesturePolicy: TapHandler.ReleaseWithinBounds
+            longPressThreshold: 0.6
+            onTapped: link.tapped()
+            onLongPressed: qs.editing = true
+        }
+    }
     component Panel: Rectangle {
         id: panel
         property string title
@@ -783,25 +876,39 @@ Rectangle {
         id: brightnessWidget
         Panel {
             // Without a top slider (Steam's is the top screen's): the bottom's alone.
-            Slider {
-                visible: qs.topSlider
-                icon: "sun"
-                label: "Both screens"
-                value: qs.both >= 0 ? qs.both : qs.screens ? Math.round((qs.screens.top + qs.screens.bottom) / 2) : 0
-                onMoved: function (v) { qs.setBoth(v) }
-            }
-            Slider {
-                visible: qs.topSlider
-                icon: "sun"
-                label: "Top screen"
-                value: qs.screens ? qs.screens.top : 0
-                onMoved: function (v) { qs.setBrightness("top", v) }
-            }
-            Slider {
-                icon: "sun"
-                label: "Bottom screen"
-                value: qs.screens ? qs.screens.bottom : 0
-                onMoved: function (v) { qs.setBrightness("bottom", v) }
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: qs.spacing * qs.placed.k
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: qs.spacing * qs.placed.k
+                    Slider {
+                        visible: qs.topSlider && qs.linked
+                        icon: "sun"
+                        label: "Both screens"
+                        value: qs.screens ? Math.round((qs.screens.top + qs.screens.bottom) / 2) : 0
+                        onMoved: function (v) { qs.setBoth(v) }
+                    }
+                    Slider {
+                        visible: qs.topSlider && !qs.linked
+                        icon: "sun"
+                        label: "Top screen"
+                        value: qs.screens ? qs.screens.top : 0
+                        onMoved: function (v) { qs.setBrightness("top", v) }
+                    }
+                    Slider {
+                        visible: !qs.topSlider || !qs.linked
+                        icon: "sun"
+                        label: "Bottom screen"
+                        value: qs.screens ? qs.screens.bottom : 0
+                        onMoved: function (v) { qs.setBrightness("bottom", v) }
+                    }
+                }
+                LinkButton {
+                    visible: qs.topSlider
+                    on: qs.linked
+                    onTapped: qs.setLinked(!qs.linked)
+                }
             }
         }
     }
@@ -817,17 +924,30 @@ Rectangle {
     Component {
         id: volumeWidget
         Panel {
-            Slider {
-                icon: "volume"
-                label: "Top screen" + (qs.quick.volume && qs.quick.volume.muted ? " (muted)" : "")
-                value: qs.quick.volume ? qs.quick.volume.system : 0
-                onMoved: function (v) { qs.setVolume("system", v) }
-            }
-            Slider {
-                icon: "volume"
-                label: "Bottom screen apps"
-                value: qs.quick.volume ? qs.quick.volume.apps : 0
-                onMoved: function (v) { qs.setVolume("apps", v) }
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: qs.spacing * qs.placed.k
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: qs.spacing * qs.placed.k
+                    Slider {
+                        icon: "volume"
+                        label: (qs.volumeLinked ? "Both screens" : "Top screen") + (qs.quick.volume && qs.quick.volume.muted ? " (muted)" : "")
+                        value: qs.quick.volume ? qs.quick.volume.system : 0
+                        onMoved: function (v) { qs.setVolume("system", v) }
+                    }
+                    Slider {
+                        visible: !qs.volumeLinked
+                        icon: "volume"
+                        label: "Bottom screen apps"
+                        value: qs.quick.volume ? qs.quick.volume.apps : 0
+                        onMoved: function (v) { qs.setVolume("apps", v) }
+                    }
+                }
+                LinkButton {
+                    on: qs.volumeLinked
+                    onTapped: qs.setVolumeLinked(!qs.volumeLinked)
+                }
             }
         }
     }

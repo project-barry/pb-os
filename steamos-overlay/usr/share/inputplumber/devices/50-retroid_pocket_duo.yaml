@@ -66,6 +66,13 @@ source_devices:
       name: Barry Deck Buttons
       handler: event*
     capability_map_id: barry_deck_buttons
+  # The built-in accelerometer and gyroscope (pbos-motiond, through the
+  # ADSP's sensor hub), already in the Deck's frame: Steam's gyro settings.
+  # Needs InputPlumber patch 0006 (evdev motion sensors).
+  - group: imu
+    evdev:
+      name: PB-OS Motion Sensors
+      handler: event*
 
 options:
   auto_manage: true

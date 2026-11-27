@@ -20,6 +20,8 @@
 #   socinfo/              the selectors the stock config filters on
 #   dsp/adsp/             DSP libraries the device's stock firmware ships
 #                         (/usr/share/sm8550-sensors/ID/dsp/adsp, if any)
+# The Retroid Pocket Duo (SM7750, another sensor hub generation) takes its
+# own Android's config and registry instead, copied by rpduo-firmware.
 # Adapted from MaSi's SteamOS-ARM-SM8550 (S28qcom-sensors, by suckbluefrog
 # for Batocera).
 set -euo pipefail
@@ -27,6 +29,7 @@ set -euo pipefail
 SHARE=/usr/share/sm8550-sensors
 CONFIG=$SHARE/kailua/sensors
 LIB=/usr/lib/sm8550-sensors
+DUO=/var/lib/pbos-firmware/rpduo-sensors
 ROOT=/var/lib/sm8550-sensors/root
 
 log() { echo "sm8550-sensors: $*" >&2; }
@@ -38,6 +41,7 @@ profiles() {
 ayn,thor thor sh5001_0_platform.config
 retroidpocket,rpnova rpnova qmi8658_0_platform.config
 retroidpocket,rp6 rp6 qmi8658_0_platform.config
+retroidpocket,rpduo rpduo nicobar_qmi8658_0.json.qmi8658_0_platform.config
 EOF
 }
 
@@ -45,6 +49,12 @@ profile() {
   local compat id marker
   while read -r compat id marker; do
     if tr '\0' '\n' </sys/firmware/devicetree/base/compatible | grep -qx "$compat"; then
+      # The Duo's files come from its own Android: without them, no profile.
+      if [[ "$id" == rpduo && ! ( -f "$DUO/vendor/sns_reg_config" && -d "$DUO/vendor/config" &&
+            -f "$DUO/registry/sns_reg_version" && -s "$DUO/registry/registry/$marker" ) ]]; then
+        log "no sensor files from this Duo's Android yet (rpduo-firmware)"
+        return 1
+      fi
       echo "$id $marker"
       return 0
     fi
@@ -55,7 +65,11 @@ profile() {
 prepare() {
   local id marker state reg tmp soc
   read -r id marker < <(profile) || { log "no sensor profile for this device"; exit 1; }
-  [[ -d "$CONFIG/config" ]] || { log "missing $CONFIG"; exit 1; }
+  local config=$CONFIG/config conf=$CONFIG/sns_reg.conf
+  if [[ "$id" == rpduo ]]; then
+    config=$DUO/vendor/config conf=$DUO/vendor/sns_reg_config
+  fi
+  [[ -d "$config" && -f "$conf" ]] || { log "missing $config or $conf"; exit 1; }
 
   # Audio shares the ADSP: let its sound card bind before the sensors
   # process opens FastRPC sessions (an ADSP restart after that is not
@@ -73,7 +87,10 @@ prepare() {
     soc=$(tr -d '\0\r\n ' </sys/devices/soc0/soc_id 2>/dev/null || true)
     tmp=$(mktemp -d "$state/registry.new.XXXX")
     # The stock Thor, Odin 2, Nova and RP6 registries are the Kailua HDK profile.
-    if ! "$LIB/sscregistrygen" -p HDK -s "${soc:-603}" "$CONFIG/config" "$tmp" >&2 \
+    if [[ "$id" == rpduo ]]; then
+      cp -r "$DUO/registry/registry/." "$tmp/"
+      [[ -s "$tmp/$marker" ]] || { rm -rf "$tmp"; log "could not copy the sensor registry"; exit 1; }
+    elif ! "$LIB/sscregistrygen" -p HDK -s "${soc:-603}" "$CONFIG/config" "$tmp" >&2 \
       || [[ ! -s "$tmp/$marker" ]]; then
       rm -rf "$tmp"
       log "could not make the sensor registry"
@@ -84,13 +101,30 @@ prepare() {
     log "made the sensor registry in $reg"
   fi
 
+  # The Eliza ADSP keeps lists of the registry files it knows beside the
+  # registry, and rewrites them there: carried over from the last start.
+  local list
+  if [[ "$id" == rpduo ]]; then
+    for list in parsed_file_list.csv corrupted_file_list.csv; do
+      if [[ -s "$ROOT/sensors/$list" ]]; then cp "$ROOT/sensors/$list" "$state/$list"; fi
+    done
+  fi
   rm -rf "$ROOT"
   mkdir -p "$ROOT/sensors" "$ROOT/dsp" "$ROOT/socinfo"
-  ln -s "$CONFIG/config" "$ROOT/sensors/config"
-  ln -s "$CONFIG/sns_reg.conf" "$ROOT/sensors/sns_reg.conf"
+  ln -s "$config" "$ROOT/sensors/config"
+  ln -s "$conf" "$ROOT/sensors/sns_reg.conf"
   ln -s "$reg" "$ROOT/sensors/registry"
-  printf 'version=%s\0' "$(sed -n 's/^version=//p' "$CONFIG/sns_reg.conf" | head -n1)" \
-    >"$ROOT/sensors/sns_reg_version"
+  if [[ "$id" == rpduo ]]; then
+    # As its Android wrote it: another version makes the ADSP redo the registry.
+    cp "$DUO/registry/sns_reg_version" "$ROOT/sensors/sns_reg_version"
+    for list in parsed_file_list.csv corrupted_file_list.csv; do
+      if [[ -s "$state/$list" ]]; then cp "$state/$list" "$ROOT/sensors/$list"
+      elif [[ -s "$DUO/registry/$list" ]]; then cp "$DUO/registry/$list" "$ROOT/sensors/$list"; fi
+    done
+  else
+    printf 'version=%s\0' "$(sed -n 's/^version=//p' "$conf" | head -n1)" \
+      >"$ROOT/sensors/sns_reg_version"
+  fi
   if [[ -d "$SHARE/$id/dsp/adsp" ]]; then
     ln -s "$SHARE/$id/dsp/adsp" "$ROOT/dsp/adsp"
   else
@@ -101,7 +135,7 @@ prepare() {
   for f in soc_id revision machine family; do
     [[ -r /sys/devices/soc0/$f ]] && tr -d '\0' </sys/devices/soc0/$f >"$ROOT/socinfo/$f"
   done
-  echo HDK >"$ROOT/socinfo/hw_platform"
+  if [[ "$id" == rpduo ]]; then echo MTP; else echo HDK; fi >"$ROOT/socinfo/hw_platform"
   for f in platform_subtype platform_subtype_id platform_version; do echo 0 >"$ROOT/socinfo/$f"; done
 }
 

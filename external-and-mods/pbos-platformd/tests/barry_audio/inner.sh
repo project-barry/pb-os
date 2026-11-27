@@ -129,6 +129,26 @@ notop)  # no "Top screen" output: nothing to do
   start; step=started; snap
   step=change; vol spk 45%; pactl set-default-sink hdmi; snap
   ;;
+linked)  # Barry's volumeLinked: the bottom apps at the top's volume, quick.json too (C++ only)
+  SETTINGS=${QUICK%/*}/settings.json
+  link() { echo "{\"volumeLinked\": $1}" >"$SETTINGS"; kill -USR1 "$dpid"; }
+  lsnap() { sleep 1.2; { echo "== $step"; cat "$QUICK"; echo; pactl -f json list sink-inputs | python3 -c 'import json,sys
+for i in sorted(json.load(sys.stdin), key=lambda i: str(i["properties"].get("test.label"))):
+    l = i["properties"].get("test.label")
+    if l: print(l, {c["value_percent"] for c in i["volume"].values()}, "muted" if i["mute"] else "")'
+    pactl get-sink-volume pbos_top_screen | grep -o "[0-9]*%" | head -1; pactl get-sink-volume spk | grep -o "[0-9]*%" | head -1; } >>"/tmp/out/$scen.$impl.snap"; }
+  bottom app1; play game1; sleep 1
+  start; step=off; lsnap
+  step=on; link true; lsnap
+  step=top-30; vol pbos_top_screen 30%; lsnap
+  step=new-app; bottom app2; lsnap
+  step=top-muted; pactl set-sink-mute pbos_top_screen 1; lsnap
+  step=top-unmuted; pactl set-sink-mute pbos_top_screen 0; lsnap
+  step=top-over; vol pbos_top_screen 130%; lsnap
+  step=top-45; vol pbos_top_screen 45%; lsnap
+  step=off-again; link false; vol pbos_top_screen 80%; lsnap
+  step=apps-20; echo '{"appsVolume": 20}' >"$QUICK"; kill -USR1 "$dpid"; lsnap
+  ;;
 restart)  # PipeWire restarts under it
   bottom app1; play game1; sleep 1
   start; step=started; snap
