@@ -429,7 +429,15 @@ function MoveProgress({ st, onBack }) {
     return jsx(DFL.PanelSection, { title, children: items });
 }
 
-function HomeChoice({ value, onChange, sizes, room, choices = HOME_CHOICES }) {
+// Under a greyed-out Install / Copy button: why it can't be pressed yet.
+function WhyNot({ ack, fits, starting, ackLabel }) {
+    if (starting) return null;
+    if (!fits) return warn("Not enough room for what you bring along (see above), so this can't start yet.");
+    if (!ack) return note(`Turn on "${ackLabel}" above to continue.`);
+    return null;
+}
+
+function HomeChoice({ value, onChange, sizes, room, choices = HOME_CHOICES, fix = 'Pick "No games".' }) {
     const need = (id) => (id === "keep" ? 0 : sizes ? sizes[id] : null);
     const fits = (id) => need(id) == null || room == null || need(id) < room * 0.95;
     const choice = choices.find((c) => c.data === value) || choices[0];
@@ -442,7 +450,7 @@ function HomeChoice({ value, onChange, sizes, room, choices = HOME_CHOICES }) {
             onChange: (o) => onChange(o.data),
         })),
         !sizes && value !== "keep" ? note("Measuring the home folder…") : null,
-        !fits(value) ? warn(`That doesn't fit: ${gb(need(value))} to copy, ${gb(room)} of room. Pick "No games".`) : null,
+        !fits(value) ? warn(`That doesn't fit: ${gb(need(value))} to copy, ${gb(room)} of room. ${fix}`) : null,
     ];
 }
 
@@ -540,6 +548,8 @@ function InstallTab() {
                         armada ? "Erase and install" : keep ? "Install" : "Erase and install", armada ? "armada" : "pbos"),
                     children: armada ? "Install over ArmadaOS" : "Reinstall on internal storage",
                 })),
+                WhyNot({ ack, fits, starting,
+                    ackLabel: armada ? "Erase ArmadaOS" : keep ? "Replace the internal system" : "Erase the internal SteamOS" }),
             );
         } else if (p.MODE === "occupied") {
             items.push(warn(`Other partitions follow Android's (${p.OCCUPIED}). Remove them first with Uninstall CFW in the OpenABL menu (it also erases Android's user data).`), again);
@@ -547,21 +557,27 @@ function InstallTab() {
             items.push(failure("Internal storage has too little room after Android for SteamOS."));
         } else if (p.MODE === "fresh") {
             const mn = Number(p.MIN_ANDROID_GIB), mx = Number(p.MAX_ANDROID_GIB);
-            const a = Math.min(mx, Math.max(mn, android != null ? android : Number(p.RECOMMENDED_ANDROID_GIB)));
             const total = Number(p.ORIG_ANDROID_GIB), boot = Number(p.BOOT_PART_GIB || 2), root = Number(p.ROOT_PART_GIB || 20);
-            const room = (total - a - boot - root) * GIB;
             const needed = st.sizes ? st.sizes[home] : null;
+            // The most Android can keep while what is brought along still fits (the slider's steps of 4 from its minimum).
+            const fitMax = needed == null ? mx
+                : mn + Math.floor((total - boot - root - needed / (0.95 * GIB) - mn - 1e-6) / 4) * 4;
+            const amax = Math.max(mn, Math.min(mx, fitMax));
+            const a = Math.min(amax, Math.max(mn, android != null ? android : Number(p.RECOMMENDED_ANDROID_GIB)));
+            const room = (total - a - boot - root) * GIB;
             const fits = needed == null || needed < room * 0.95;
             items.push(
                 row(jsx(DFL.Field, { label: "Internal storage", children: null,
                     description: `${p.DISK_TOTAL_GIB} GB · Android has ${total} GB now` })),
                 row(jsx(DFL.SliderField, {
                     label: `Android keeps ${a} GB`,
-                    description: `SteamOS gets the rest: about ${Math.max(0, total - a)} GB (${root} GB system, ~${Math.max(0, total - a - boot - root)} GB for games and saves)`,
-                    value: a, min: mn, max: mx, step: 4,
+                    description: `SteamOS gets the rest: about ${Math.max(0, total - a)} GB (${root} GB system, ~${Math.max(0, total - a - boot - root)} GB for games and saves)`
+                        + (amax < mx && fits ? `. At most ${amax} GB with what you bring along.` : ""),
+                    value: a, min: mn, max: amax > mn ? amax : mx, step: 4,
                     onChange: (v) => setAndroid(v),
                 })),
-                ...HomeChoice({ value: home, onChange: setHome, sizes: st.sizes, room }),
+                ...HomeChoice({ value: home, onChange: setHome, sizes: st.sizes, room,
+                    fix: 'Pick "No games", or "Fresh start".' }),
                 row(jsx(DFL.ToggleField, {
                     label: "Erase Android's data",
                     description: "Android stays, but its apps, photos and accounts are erased. Its partition table is saved to this card first.",
@@ -576,6 +592,7 @@ function InstallTab() {
                         + "It takes a while; keep the device charging.", "Erase and install"),
                     children: "Install to internal storage",
                 })),
+                WhyNot({ ack, fits, starting, ackLabel: "Erase Android's data" }),
             );
         } else {
             items.push(failure(`Unexpected internal storage state: ${p.MODE || "unknown"}`), again);
@@ -611,6 +628,7 @@ function InstallTab() {
                         + "It takes a while; keep the device charging and the card in.", "Erase and copy"),
                     children: "Copy SteamOS to the card",
                 })),
+                c.ERROR ? null : WhyNot({ ack, fits, starting, ackLabel: "Erase the card" }),
             );
         }
     }
