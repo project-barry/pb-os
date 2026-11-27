@@ -47,13 +47,15 @@ done
 # Force-off leaves .crash; Steam then opens -child-update-ui (the wheel)
 # and logs "Looks like steam didn't shutdown cleanly".
 rm -f "${STEAMROOT}/.crash" "${STEAMROOT}/steam.pid" 2>/dev/null || true
-printf '%s\n' \
-  'BootStrapperInhibitAll=enable' \
-  'BootStrapperForceSelfUpdate=disable' \
-  'BootStrapperInhibitClientChecksum=enable' \
-  'BootStrapperInhibitBootstrapperChecksum=enable' \
-  'BootStrapperInhibitUpdateOnLaunch=enable' \
-  >"${STEAMROOT}/steam.cfg" 2>/dev/null || true
+# Steam updates itself (its bootstrapper works on ARM). Older PB-OS wrote a
+# steam.cfg that turned the updater off; remove it where it is still ours.
+for _cfg in "${STEAMROOT}/steam.cfg" "${STEAMROOT}/steamrtarm64/steam.cfg"; do
+  if [[ -f "$_cfg" ]] && grep -qx 'BootStrapperInhibitAll=enable' "$_cfg" \
+    && grep -qx 'BootStrapperInhibitUpdateOnLaunch=enable' "$_cfg"; then
+    rm -f "$_cfg"
+  fi
+done
+unset _cfg
 # Version 0 / "no bootstrapper found" keeps Gamepad UI on the update spinner.
 if [[ ! -s "${STEAMROOT}/steam.inf" ]]; then
   ver=1788652215
@@ -158,10 +160,10 @@ if [[ "${IS_SIDELOAD}" == "0" ]]; then
     -steamos3
     -steampal
     -steamdeck
+    # Keep: PB-OS edits steamwebhelper.sh (graphics flags) at every start, and a
+    # file check would make the updater reinstall the client at every start.
     -noverifyfiles
     -noshaders
-    -inhibitbootstrap
-    -nobootstrapperupdate
     ${STEAM_EXTRA_ARGS:-}
   )
 else

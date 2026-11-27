@@ -76,16 +76,10 @@ sanitize_steam_user_data() {
     "${d}/steam.pid" \
     "${d}/.crash"
   mkdir -p "${d}/userdata" "${d}/steamapps"
-  # ARM CDN self-update fails (http error 0) and OOBE sits on Retry.
-  printf '%s\n' \
-    'BootStrapperInhibitAll=enable' \
-    'BootStrapperForceSelfUpdate=disable' \
-    'BootStrapperInhibitClientChecksum=enable' \
-    'BootStrapperInhibitBootstrapperChecksum=enable' \
-    'BootStrapperInhibitUpdateOnLaunch=enable' \
-    >"${d}/steam.cfg"
+  # No steam.cfg: Steam updates itself (its bootstrapper works on ARM now; the
+  # baked client is Valve's current one, so a first start has nothing to fetch).
+  rm -f "${d}/steam.cfg" "${d}/steamrtarm64/steam.cfg"
   mkdir -p "${d}/steamrtarm64"
-  cp -f "${d}/steam.cfg" "${d}/steamrtarm64/steam.cfg" 2>/dev/null || true
 
   # Steam > Settings > Developer > Force WPA Supplicant, on. Off, every Steam
   # start asks steamos-manager for iwd (which this kernel can't run) and

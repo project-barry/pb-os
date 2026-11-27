@@ -388,6 +388,15 @@ for u in steamvr-program-ble.service steamvr-v4l2loopback.service \
   ln -sfn /dev/null "$R/etc/systemd/system/${u}"
 done
 
+# Steam's own crash handler (crashhandler.so, in the client and in games) uploads
+# minidumps to Valve by itself, outside steamos-log-submitter, and has no switch
+# to turn that off. PB-OS sends nothing to Valve: the crash server's name
+# resolves nowhere, so the dumps stay in /tmp/dumps.
+if ! grep -q 'crash\.steampowered\.com' "$R/etc/hosts" 2>/dev/null; then
+  printf '%s\n' '' '# PB-OS: Steam crash dumps stay on the device' \
+    '0.0.0.0 crash.steampowered.com' ':: crash.steampowered.com' >>"$R/etc/hosts"
+fi
+
 # ---------------------------------------------------------------------------
 # Audio UCM + Wi-Fi (wpa, not iwd) + BT power + gamescope Wayland session
 # ---------------------------------------------------------------------------

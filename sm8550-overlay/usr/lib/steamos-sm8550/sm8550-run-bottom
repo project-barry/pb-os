@@ -29,6 +29,9 @@ orientation="$BARRY_TOUCH_TURN"
 # the US layout go there through XTest).
 export BARRY_TOP_DISPLAY="${DISPLAY:-}"
 unset DISPLAY WAYLAND_DISPLAY GAMESCOPE_WAYLAND_DISPLAY
+# Its PipeWire stream gets a name of its own: Steam's game recorder connects to
+# the stream named "gamescope" and otherwise could pick this one (no game here).
+export GAMESCOPE_PIPEWIRE_NAME=gamescope-bottom
 exec gamescope \
   --backend drm \
   --drm-lease-client "$sock" \
