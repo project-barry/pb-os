@@ -4,7 +4,9 @@
 // and land on the Cortex-A510s (cpu0-2). Android's game mode / WALT raises
 // their utilization floor; this does the same:
 //
-//   game threads  (descendants of Steam's `reaper SteamLaunch`): uclamp.min 256
+//   game threads  (descendants of Steam's `reaper SteamLaunch`): uclamp.min 256,
+//                  or just above the little cores' capacity where that is
+//                  higher (see game_uclamp())
 //   UI threads    (gamescope, Xwayland, Steam, its webhelper, mangoapp,
 //                  InputPlumber): uclamp.min 200
 //
@@ -65,7 +67,7 @@ constexpr double TICK_S = 1;
 // Process events come in bursts (a game starting forks and execs dozens of
 // processes): one look through /proc this long after the first.
 constexpr double RESCAN_DELAY_S = 0.1;
-constexpr unsigned GAME_UCLAMP = 256;
+constexpr unsigned GAME_UCLAMP_BASE = 256;
 constexpr unsigned UI_UCLAMP = 200;
 const std::set<std::string> UI_COMMS = {"gamescope-wl", "Xwayland", "steam", "steamwebhelper",
                                         "gamescopereaper", "mangoapp", "inputplumber"};
@@ -83,6 +85,29 @@ struct SchedAttr {
 };
 constexpr uint64_t SCHED_FLAG_KEEP_ALL = 0x08 | 0x10;
 constexpr uint64_t SCHED_FLAG_UTIL_CLAMP_MIN = 0x20;
+
+// The game floor. 256 is above the SM8550's Cortex-A510s (cpu_capacity 206),
+// so EAS only fully fits a game thread on a mid or big core, and below its
+// mid cores (610). On the Retroid Pocket Duo the Cortex-A520s are 364
+// (1.84 GHz, the mid cores 829): 256 fits them, and game threads could stay
+// there. The floor is the lowest capacity + 1 where that is above 256: 365
+// on the Duo, still 256 on the SM8550. The mid cores' clock floor scales the
+// same way (256 of 610 there, 365 of 829 here).
+unsigned lowest_capacity_floor() {
+    unsigned low = 0;
+    for (const auto& c : glob("/sys/devices/system/cpu/cpu[0-9]*/cpu_capacity")) {
+        std::string v = rd(c);
+        if (!is_digits(v)) continue;
+        unsigned cap = static_cast<unsigned>(std::atol(v.c_str()));
+        if (low == 0 || cap < low) low = cap;
+    }
+    return (low >= GAME_UCLAMP_BASE && low < 1024) ? low + 1 : GAME_UCLAMP_BASE;
+}
+
+unsigned game_uclamp() {
+    static const unsigned value = lowest_capacity_floor();
+    return value;
+}
 
 bool set_uclamp_min(pid_t tid, unsigned value) {
     SchedAttr attr{};
@@ -153,7 +178,7 @@ std::map<pid_t, unsigned> scan_procs(std::set<pid_t>& roots) {
         auto it = children.find(p);
         if (it == children.end()) continue;
         for (pid_t c : it->second)
-            if (out.emplace(c, GAME_UCLAMP).second) stack.push_back(c);
+            if (out.emplace(c, game_uclamp()).second) stack.push_back(c);
     }
     for (pid_t u : ui) out.emplace(u, UI_UCLAMP);  // a game's own stays the game's
     return out;
@@ -197,7 +222,7 @@ public:
     explicit Boost(Loop& loop, bool events) : loop_(loop), events_(events) {}
 
     void start() {
-        log("sm8550-boostd: game uclamp.min %u, UI %u; Steam UI pins widened to all CPUs", GAME_UCLAMP, UI_UCLAMP);
+        log("sm8550-boostd: game uclamp.min %u, UI %u; Steam UI pins widened to all CPUs", game_uclamp(), UI_UCLAMP);
         if (events_) {
             cn_ = open_proc_events();
             if (cn_ < 0) log("sm8550-boostd: no process events from this kernel (%s), looking once a second",

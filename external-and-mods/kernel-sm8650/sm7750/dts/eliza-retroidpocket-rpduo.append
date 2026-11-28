@@ -2436,6 +2436,40 @@
 };
 
 /*
+ * pb-os: the GPU's own throttling. retroid/patches/0026 put its cooling-maps
+ * inside trips {}, where thermal_of reads every child as a trip; that one has
+ * no temperature, so both GPU zones failed to register ("missing temperature
+ * property") and took the 95 C passive and 115 C critical trips with them.
+ * The maps move to the zone (the fan's maps are gone above): the GPU slows
+ * down at 95 C, and the zones are back in the fan curve's zone average.
+ */
+&{/thermal-zones/gpuss0-thermal/trips} {
+	/delete-node/ cooling-maps;
+};
+
+&{/thermal-zones/gpuss1-thermal/trips} {
+	/delete-node/ cooling-maps;
+};
+
+&{/thermal-zones/gpuss0-thermal} {
+	cooling-maps {
+		map0 {
+			trip = <&gpuss0_alert0>;
+			cooling-device = <&gpu THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
+		};
+	};
+};
+
+&{/thermal-zones/gpuss1-thermal} {
+	cooling-maps {
+		map0 {
+			trip = <&gpuss1_alert0>;
+			cooling-device = <&gpu THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
+		};
+	};
+};
+
+/*
  * pb-os: the controller MCU's joystick frame (SET_PAR 0x01) is 10,4 on the
  * Duo, the value stock Android's librsinput sends; ROCKNIX's driver default
  * 40,7 stays for the RP6 and Nova. Read by all/patches/0566 (it used to be
